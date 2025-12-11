@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tournament Signup</title>
+
+	<!-- PWA Meta Tags -->
+	<meta name="description" content="Sign up for Neil's Bahr gaming tournaments">
+	<meta name="theme-color" content="#111827">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Tournament Signup">
+	<link rel="manifest" href="/manifest.json">
+
+	<!-- Apple Touch Icons -->
+	<link rel="apple-touch-icon" href="/icons/icon-152x152.svg">
+	<link rel="apple-touch-icon" sizes="72x72" href="/icons/icon-72x72.svg">
+	<link rel="apple-touch-icon" sizes="96x96" href="/icons/icon-96x96.svg">
+	<link rel="apple-touch-icon" sizes="128x128" href="/icons/icon-128x128.svg">
+	<link rel="apple-touch-icon" sizes="144x144" href="/icons/icon-144x144.svg">
+	<link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.svg">
+	<link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192x192.svg">
+	<link rel="apple-touch-icon" sizes="384x384" href="/icons/icon-384x384.svg">
+	<link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512x512.svg">
+
+	<!-- Favicon -->
+	<link rel="icon" type="image/svg+xml" href="/icons/icon-72x72.svg">
+
+	<script src="https://cdn.tailwindcss.com"></script>
+	<style>
+		/* CSS Custom Properties from Style Guide */
+		:root {
+			--color-black-deep: #111827;
+			--gray-800: #1f2937;
+			--gray-700: #374151;
+			--gray-600: #4b5563;
+			--gray-500: #6b7280;
+			--gray-400: #9ca3af;
+			--gray-300: #d1d5db;
+			--gray-200: #e5e7eb;
+			--gray-100: #f3f4f6;
+			--color-white-soft: #f3f4f6;
+			--color-action: #3b82f6;
+			--color-success: #10b981;
+			--color-warning: #f59e0b;
+			--color-error: #ef4444;
+			--color-accent: #E63946;
+			--radius-sm: 4px;
+			--radius-md: 8px;
+			--radius-lg: 12px;
+			--space-xs: 4px;
+			--space-sm: 8px;
+			--space-md: 16px;
+			--space-lg: 24px;
+			--space-xl: 32px;
+			--duration-fast: 150ms;
+			--duration-normal: 300ms;
+			--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+		}
+
+		body {
+			background: var(--color-black-deep);
+			min-height: 100vh;
+			color: var(--color-white-soft);
+		}
+
+		/* Light mode overrides */
+		.light body,
+		html.light body {
+			background: var(--gray-100);
+			color: var(--gray-800);
+		}
+
+		.tournament-card {
+			background: var(--gray-800);
+			border: 1px solid var(--gray-700);
+		}
+
+		.light .tournament-card {
+			background: #ffffff;
+			border-color: var(--gray-200);
+		}
+
+		.loading {
+			display: inline-block;
+			width: 20px;
+			height: 20px;
+			border: 3px solid var(--gray-600);
+			border-radius: 50%;
+			border-top-color: var(--color-action);
+			animation: spin 0.8s ease-in-out infinite;
+		}
+
+		@keyframes spin {
+			to { transform: rotate(360deg); }
+		}
+
+		.btn-primary {
+			background: var(--color-action);
+			transition: transform var(--duration-fast) var(--ease-standard),
+			            box-shadow var(--duration-fast) var(--ease-standard),
+			            background var(--duration-fast) var(--ease-standard);
+		}
+
+		.btn-primary:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4);
+			background: #2563eb;
+		}
+
+		.btn-primary:active {
+			transform: translateY(0);
+		}
+
+		.btn-primary:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+			transform: none;
+		}
+
+		.btn-secondary {
+			background: var(--gray-700);
+			transition: background var(--duration-fast) var(--ease-standard);
+		}
+
+		.btn-secondary:hover {
+			background: var(--gray-600);
+		}
+
+		.light .btn-secondary {
+			background: var(--gray-200);
+			color: var(--gray-800);
+		}
+
+		.light .btn-secondary:hover {
+			background: var(--gray-300);
+		}
+
+		/* Form inputs */
+		.form-input {
+			background: var(--gray-700);
+			border: 1px solid var(--gray-600);
+			color: var(--color-white-soft);
+			transition: border-color var(--duration-fast) var(--ease-standard),
+			            box-shadow var(--duration-fast) var(--ease-standard);
+		}
+
+		.form-input::placeholder {
+			color: var(--gray-500);
+		}
+
+		.form-input:focus {
+			border-color: var(--color-action);
+			box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+			outline: none;
+		}
+
+		.light .form-input {
+			background: #ffffff;
+			border-color: var(--gray-300);
+			color: var(--gray-800);
+		}
+
+		.light .form-input:focus {
+			border-color: var(--color-action);
+		}
+
+		/* Focus visible for accessibility */
+		:focus-visible {
+			outline: 2px solid var(--color-action);
+			outline-offset: 2px;
+		}
+
+		button:focus-visible,
+		a:focus-visible,
+		input:focus-visible {
+			outline: 2px solid var(--color-action);
+			outline-offset: 2px;
+		}
+
+		/* State cards */
+		.state-card {
+			background: var(--gray-700);
+			border: 1px solid var(--gray-600);
+		}
+
+		.state-card-warning {
+			background: rgba(245, 158, 11, 0.1);
+			border-color: var(--color-warning);
+		}
+
+		.state-card-error {
+			background: rgba(239, 68, 68, 0.1);
+			border-color: var(--color-error);
+		}
+
+		.state-card-success {
+			background: rgba(16, 185, 129, 0.1);
+			border-color: var(--color-success);
+		}
+
+		.state-card-info {
+			background: rgba(59, 130, 246, 0.1);
+			border-color: var(--color-action);
+		}
+
+		/* Theme transition */
+		body, .tournament-card, .form-input, .btn-secondary {
+			transition: background var(--duration-normal) var(--ease-standard),
+			            border-color var(--duration-normal) var(--ease-standard),
+			            color var(--duration-normal) var(--ease-standard);
+		}
+	</style>
+</head>
+<body class="flex items-center justify-center p-4">
+	<div class="tournament-card rounded-xl shadow-2xl p-6 max-w-md w-full">
+		<!-- Theme Toggle -->
+		<div class="flex justify-end mb-4">
+			<button id="theme-toggle" class="p-2 rounded-lg btn-secondary" aria-label="Toggle theme">
+				<!-- Sun icon (shown in dark mode) -->
+				<svg id="sun-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+				</svg>
+				<!-- Moon icon (shown in light mode) -->
+				<svg id="moon-icon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+				</svg>
+			</button>
+		</div>
+
+		<!-- Tournament Name -->
+		<div id="tournament-header" class="text-center mb-6">
+			<div id="loading-tournament" class="text-gray-400">
+				<div class="loading mx-auto mb-2"></div>
+				<p class="text-sm">Loading tournament...</p>
+			</div>
+			<div id="tournament-info" class="hidden">
+				<h1 id="tournament-name" class="text-2xl font-bold mb-2"></h1>
+				<p id="game-name" class="text-sm text-gray-400 uppercase tracking-wide"></p>
+
+				<!-- Participant Count -->
+				<div class="mt-4 inline-flex items-center bg-blue-500/20 text-blue-400 px-4 py-2 rounded-lg text-sm">
+					<svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+						<path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/>
+					</svg>
+					<span><span id="participant-count">0</span> participants</span>
+				</div>
+
+			</div>
+			<div id="error-tournament" class="hidden text-red-400">
+				<svg class="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+				</svg>
+				<p class="text-sm">No active tournament</p>
+			</div>
+		</div>
+
+		<!-- Participant Lookup Section -->
+		<div id="lookup-section" class="mb-6">
+			<button id="lookup-toggle" class="w-full text-center text-sm text-gray-400 hover:text-gray-300 transition-colors py-2">
+				Already registered? Check your status
+			</button>
+			<div id="lookup-form" class="hidden mt-3">
+				<div class="flex gap-2">
+					<input
+						type="text"
+						id="lookup-name"
+						placeholder="Enter your name..."
+						autocomplete="off"
+						autocorrect="off"
+						autocapitalize="off"
+						spellcheck="false"
+						class="form-input flex-1 px-3 py-2 rounded-lg text-sm"
+					>
+					<button id="lookup-btn" class="btn-primary text-white font-medium px-4 py-2 rounded-lg text-sm">
+						Search
+					</button>
+				</div>
+			</div>
+			<div id="lookup-result" class="hidden mt-3">
+				<!-- Found result -->
+				<div id="lookup-found" class="hidden state-card state-card-success rounded-lg p-4">
+					<div class="flex items-center gap-3">
+						<div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+							<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+							</svg>
+						</div>
+						<div>
+							<p class="font-semibold text-green-400" id="lookup-found-name"></p>
+							<p class="text-sm text-gray-400">You're registered!</p>
+						</div>
+					</div>
+				</div>
+				<!-- Not found result -->
+				<div id="lookup-not-found" class="hidden state-card state-card-warning rounded-lg p-4">
+					<div class="flex items-center gap-3">
+						<div class="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
+							<svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+							</svg>
+						</div>
+						<div>
+							<p class="font-semibold text-yellow-400">Not Found</p>
+							<p class="text-sm text-gray-400">No registration found for that name</p>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- View Rules Button -->
+		<div id="view-rules-section" class="mb-6">
+			<a href="/rules" class="block w-full text-center btn-secondary text-gray-300 font-medium py-3 px-6 rounded-lg border border-gray-600">
+				<span class="flex items-center justify-center gap-2">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+					</svg>
+					View Tournament Rules & Prizes
+				</span>
+			</a>
+		</div>
+
+		<!-- State-Specific Messages -->
+
+		<!-- Registration Closed Message (Too Early) -->
+		<div id="registration-closed-early" class="hidden mb-6 state-card state-card-warning rounded-lg p-6 text-center">
+			<div class="w-16 h-16 mx-auto mb-3 rounded-full bg-yellow-500/20 flex items-center justify-center">
+				<svg class="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+				</svg>
+			</div>
+			<h2 class="text-xl font-bold text-yellow-400 mb-2">Registration Opens Soon!</h2>
+			<p class="text-gray-300 mb-4">Registration will open <strong id="registration-opens-in">--</strong></p>
+			<div id="opens-countdown" class="text-2xl font-bold text-yellow-400 mb-2">--:--:--</div>
+			<p class="text-sm text-gray-400">Check back closer to the tournament date to sign up!</p>
+		</div>
+
+		<!-- Tournament Full Message -->
+		<div id="tournament-full-message" class="hidden mb-6 state-card state-card-error rounded-lg p-6 text-center">
+			<div class="w-16 h-16 mx-auto mb-3 rounded-full bg-red-500/20 flex items-center justify-center">
+				<svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+				</svg>
+			</div>
+			<h2 class="text-xl font-bold text-red-400 mb-2">Tournament Full!</h2>
+			<p class="text-gray-300 mb-2">This tournament has reached its maximum capacity.</p>
+			<div class="text-2xl font-bold text-red-400" id="capacity-display">--/--</div>
+
+			<!-- Waitlist Section -->
+			<div id="waitlist-section" class="mt-4 pt-4 border-t border-gray-600">
+				<p class="text-sm text-gray-400 mb-3">Want to be notified if a spot opens?</p>
+				<div id="waitlist-form" class="space-y-3">
+					<input
+						type="text"
+						id="waitlist-name"
+						placeholder="Enter your name..."
+						autocomplete="off"
+						autocorrect="off"
+						autocapitalize="off"
+						spellcheck="false"
+						class="form-input w-full px-3 py-2 rounded-lg text-sm"
+					>
+					<button id="join-waitlist-btn" class="w-full btn-primary text-white font-medium py-2 px-4 rounded-lg text-sm">
+						Join Waitlist
+					</button>
+				</div>
+				<div id="waitlist-joined" class="hidden">
+					<div class="flex items-center justify-center gap-2 text-green-400 mb-2">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+						</svg>
+						<span class="font-semibold">You're on the waitlist!</span>
+					</div>
+					<p class="text-sm text-gray-400">Position: #<span id="waitlist-position">-</span></p>
+					<p class="text-xs text-gray-500 mt-2">You'll be automatically added if a spot opens.</p>
+				</div>
+			</div>
+		</div>
+
+		<!-- Check-in Phase Message -->
+		<div id="checkin-message" class="hidden mb-6 state-card state-card-success rounded-lg p-6 text-center">
+			<div class="w-16 h-16 mx-auto mb-3 rounded-full bg-green-500/20 flex items-center justify-center">
+				<svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+				</svg>
+			</div>
+			<h2 class="text-xl font-bold text-green-400 mb-2">Check-In Open!</h2>
+			<p class="text-gray-300 mb-4">Registration is closed. If you already registered, please check in with a tournament organizer.</p>
+			<div class="text-sm text-gray-400">Tournament starting soon...</div>
+		</div>
+
+		<!-- Underway Phase Message -->
+		<div id="underway-message" class="hidden mb-6 state-card state-card-info rounded-lg p-6 text-center">
+			<div class="w-16 h-16 mx-auto mb-3 rounded-full bg-blue-500/20 flex items-center justify-center">
+				<svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+				</svg>
+			</div>
+			<h2 class="text-xl font-bold text-blue-400 mb-2">Tournament In Progress</h2>
+			<p class="text-gray-300 mb-4">Registration is closed. The tournament has started!</p>
+			<a href="#" id="view-bracket-link" target="_blank" rel="noopener noreferrer" class="inline-block btn-primary text-white font-semibold py-3 px-6 rounded-lg">
+				View Live Bracket
+			</a>
+		</div>
+
+		<!-- Complete Phase Message -->
+		<div id="complete-message" class="hidden mb-6 text-center">
+			<div class="state-card rounded-lg p-6 mb-6" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(234, 179, 8, 0.1) 100%); border-color: #f59e0b;">
+				<div class="w-16 h-16 mx-auto mb-3 rounded-full bg-yellow-500/20 flex items-center justify-center">
+					<svg class="w-8 h-8 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clip-rule="evenodd"/>
+					</svg>
+				</div>
+				<h2 class="text-2xl font-bold text-yellow-400 mb-2">Tournament Complete!</h2>
+				<p class="text-gray-300">Thank you to all participants!</p>
+			</div>
+
+			<!-- Podium Display -->
+			<div id="podium-display" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+				<!-- Podium will be populated dynamically -->
+			</div>
+
+			<a href="#" id="view-results-link" target="_blank" rel="noopener noreferrer" class="inline-block btn-secondary text-gray-300 font-semibold py-3 px-6 rounded-lg border border-gray-600">
+				View Full Results
+			</a>
+		</div>
+
+		<!-- Signup Form -->
+		<form id="signup-form" class="space-y-6">
+			<div>
+				<label for="participant-name" class="block text-sm font-medium text-gray-300 mb-2">
+					Your Name
+				</label>
+				<input
+					type="text"
+					id="participant-name"
+					name="participantName"
+					placeholder="Enter your name or tag"
+					required
+					maxlength="50"
+					autocomplete="off"
+					autocorrect="off"
+					autocapitalize="off"
+					spellcheck="false"
+					class="form-input w-full px-4 py-3 rounded-lg text-base"
+				>
+				<p class="mt-2 text-xs text-gray-500">This will be your display name in the tournament</p>
+			</div>
+
+			<div>
+				<label for="instagram" class="block text-sm font-medium text-gray-300 mb-2">
+					Instagram Handle <span class="text-gray-500 font-normal">(Optional)</span>
+				</label>
+				<div class="relative">
+					<span class="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500 text-base">@</span>
+					<input
+						type="text"
+						id="instagram"
+						name="instagram"
+						placeholder="yourhandle"
+						maxlength="30"
+						pattern="[a-zA-Z0-9._]+"
+						autocomplete="off"
+						autocorrect="off"
+						autocapitalize="off"
+						spellcheck="false"
+						class="form-input w-full pl-10 pr-4 py-3 rounded-lg text-base"
+					>
+				</div>
+				<p class="mt-2 text-xs text-gray-500">We'll tag you on Neil's Bahr Instagram if you place on the podium!</p>
+			</div>
+
+			<div id="error-message" class="hidden state-card state-card-error rounded-lg p-4">
+				<div class="flex items-start gap-3">
+					<svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+					</svg>
+					<p class="text-sm text-red-400" id="error-text"></p>
+				</div>
+			</div>
+
+			<button
+				type="submit"
+				id="submit-btn"
+				class="btn-primary w-full text-white font-semibold py-4 px-6 rounded-lg shadow-lg text-lg"
+			>
+				Join Tournament
+			</button>
+		</form>
+
+		<!-- Footer -->
+		<div class="mt-8 text-center text-gray-500 text-xs">
+			<p>Powered by Challonge</p>
+		</div>
+	</div>
+
+	<script>
+		let tournamentData = null;
+		let countdownInterval = null;
+		let autoRefreshInterval = null;
+
+		// Theme Management
+		function initTheme() {
+			const savedTheme = localStorage.getItem('theme');
+			const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+			setTheme(theme);
+		}
+
+		function setTheme(theme) {
+			if (theme === 'light') {
+				document.documentElement.classList.add('light');
+				document.getElementById('sun-icon').classList.add('hidden');
+				document.getElementById('moon-icon').classList.remove('hidden');
+			} else {
+				document.documentElement.classList.remove('light');
+				document.getElementById('sun-icon').classList.remove('hidden');
+				document.getElementById('moon-icon').classList.add('hidden');
+			}
+			localStorage.setItem('theme', theme);
+		}
+
+		function toggleTheme() {
+			const currentTheme = localStorage.getItem('theme') || 'dark';
+			setTheme(currentTheme === 'dark' ? 'light' : 'dark');
+		}
+
+		document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+		initTheme();
+
+		// Participant Lookup
+		document.getElementById('lookup-toggle').addEventListener('click', function() {
+			const form = document.getElementById('lookup-form');
+			const result = document.getElementById('lookup-result');
+			form.classList.toggle('hidden');
+			result.classList.add('hidden');
+		});
+
+		document.getElementById('lookup-btn').addEventListener('click', async function() {
+			const name = document.getElementById('lookup-name').value.trim();
+			if (!name) return;
+
+			const btn = this;
+			btn.disabled = true;
+			btn.textContent = '...';
+
+			try {
+				const response = await fetch(`/api/participants/lookup?name=${encodeURIComponent(name)}`);
+				const data = await response.json();
+
+				const resultDiv = document.getElementById('lookup-result');
+				const foundDiv = document.getElementById('lookup-found');
+				const notFoundDiv = document.getElementById('lookup-not-found');
+
+				resultDiv.classList.remove('hidden');
+
+				if (data.found) {
+					foundDiv.classList.remove('hidden');
+					notFoundDiv.classList.add('hidden');
+					document.getElementById('lookup-found-name').textContent = data.participant.name;
+				} else {
+					foundDiv.classList.add('hidden');
+					notFoundDiv.classList.remove('hidden');
+				}
+			} catch (error) {
+				console.error('Lookup error:', error);
+			} finally {
+				btn.disabled = false;
+				btn.textContent = 'Search';
+			}
+		});
+
+		// Waitlist functionality
+		document.getElementById('join-waitlist-btn')?.addEventListener('click', function() {
+			const name = document.getElementById('waitlist-name').value.trim();
+			if (!name) {
+				document.getElementById('waitlist-name').focus();
+				return;
+			}
+
+			// Store in localStorage
+			const waitlist = JSON.parse(localStorage.getItem('tournament-waitlist') || '[]');
+			const tournamentId = tournamentData?.id || 'unknown';
+
+			if (!waitlist.find(w => w.tournamentId === tournamentId && w.name.toLowerCase() === name.toLowerCase())) {
+				waitlist.push({ tournamentId, name, timestamp: Date.now() });
+				localStorage.setItem('tournament-waitlist', JSON.stringify(waitlist));
+			}
+
+			// Calculate position
+			const position = waitlist.filter(w => w.tournamentId === tournamentId).length;
+
+			// Show joined message
+			document.getElementById('waitlist-form').classList.add('hidden');
+			document.getElementById('waitlist-joined').classList.remove('hidden');
+			document.getElementById('waitlist-position').textContent = position;
+		});
+
+		// Check if already on waitlist
+		function checkWaitlistStatus() {
+			const waitlist = JSON.parse(localStorage.getItem('tournament-waitlist') || '[]');
+			const tournamentId = tournamentData?.id || 'unknown';
+			const entries = waitlist.filter(w => w.tournamentId === tournamentId);
+
+			if (entries.length > 0) {
+				document.getElementById('waitlist-form').classList.add('hidden');
+				document.getElementById('waitlist-joined').classList.remove('hidden');
+				document.getElementById('waitlist-position').textContent = entries.length;
+			}
+		}
+
+		// Fetch tournament information on page load
+		async function loadTournament() {
+			try {
+				const response = await fetch('/api/tournament');
+				const data = await response.json();
+
+				if (data.success && data.tournament) {
+					tournamentData = data.tournament;
+					displayTournament(data.tournament);
+					checkWaitlistStatus();
+				} else {
+					showError();
+				}
+			} catch (error) {
+				console.error('Error loading tournament:', error);
+				showError();
+			}
+		}
+
+		function displayTournament(tournament) {
+			document.getElementById('loading-tournament').classList.add('hidden');
+			document.getElementById('tournament-info').classList.remove('hidden');
+			document.getElementById('tournament-name').textContent = tournament.name;
+			document.getElementById('game-name').textContent = tournament.gameName || 'Tournament';
+			document.getElementById('participant-count').textContent = tournament.participantsCount || 0;
+
+			// Set bracket link if available
+			const bracketUrl = tournament.fullChallongeUrl || `https://challonge.com/${tournament.url || tournament.id}`;
+			document.getElementById('view-bracket-link').href = 'https://bracket.despairhardware.com';
+			document.getElementById('view-results-link').href = bracketUrl;
+
+			// Handle registration status
+			handleRegistrationStatus(tournament);
+
+		}
+
+		function handleRegistrationStatus(tournament) {
+			// Check if tournament is full
+			if (tournament.isFull) {
+				// Show tournament full message
+				document.getElementById('capacity-display').textContent =
+					`${tournament.participantsCount}/${tournament.signupCap}`;
+				showRegistrationMessage('full');
+				return;
+			}
+
+			// Check if registration is closed (too early)
+			if (!tournament.registrationOpen && tournament.registrationReason === 'too_early') {
+				// Show registration opens countdown
+				const opensAt = new Date(tournament.registrationOpensAt);
+				document.getElementById('registration-opens-in').textContent =
+					opensAt.toLocaleString('en-US', {
+						month: 'short',
+						day: 'numeric',
+						hour: 'numeric',
+						minute: '2-digit',
+						timeZoneName: 'short'
+					});
+
+				// Start countdown to opening time
+				startRegistrationOpenCountdown(opensAt.getTime());
+				showRegistrationMessage('too_early');
+				return;
+			}
+
+			// Check if registration is closed (tournament started)
+			if (!tournament.registrationOpen && tournament.registrationReason === 'tournament_started') {
+				// Handle via state-based UI
+				updateUIForState(tournament.state);
+				return;
+			}
+
+			// Registration is open - handle normally via state
+			updateUIForState(tournament.state);
+		}
+
+		function showRegistrationMessage(type) {
+			// Hide all messages first
+			document.getElementById('registration-closed-early').classList.add('hidden');
+			document.getElementById('tournament-full-message').classList.add('hidden');
+			document.getElementById('checkin-message').classList.add('hidden');
+			document.getElementById('underway-message').classList.add('hidden');
+			document.getElementById('complete-message').classList.add('hidden');
+			document.getElementById('signup-form').classList.add('hidden');
+			document.getElementById('view-rules-section').classList.remove('hidden');
+
+			// Show appropriate message
+			if (type === 'too_early') {
+				document.getElementById('registration-closed-early').classList.remove('hidden');
+			} else if (type === 'full') {
+				document.getElementById('tournament-full-message').classList.remove('hidden');
+			}
+		}
+
+		function startRegistrationOpenCountdown(targetTime) {
+			const countdownDisplay = document.getElementById('opens-countdown');
+
+			// Clear any existing interval
+			if (window.registrationCountdownInterval) {
+				clearInterval(window.registrationCountdownInterval);
+			}
+
+			window.registrationCountdownInterval = setInterval(() => {
+				const now = new Date().getTime();
+				const distance = targetTime - now;
+
+				if (distance < 0) {
+					clearInterval(window.registrationCountdownInterval);
+					countdownDisplay.textContent = 'Registration is now open!';
+					// Reload tournament data to refresh UI
+					setTimeout(() => loadTournament(), 2000);
+					return;
+				}
+
+				// Calculate time units
+				const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+				const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+				const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+				const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+				if (days > 0) {
+					countdownDisplay.textContent =
+						`${days}d ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+				} else {
+					countdownDisplay.textContent =
+						`${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+				}
+			}, 1000);
+		}
+
+		function updateUIForState(state) {
+			// Hide all state-specific sections first
+			document.getElementById('checkin-message').classList.add('hidden');
+			document.getElementById('underway-message').classList.add('hidden');
+			document.getElementById('complete-message').classList.add('hidden');
+
+			const signupForm = document.getElementById('signup-form');
+			const viewRulesSection = document.getElementById('view-rules-section');
+
+			switch (state) {
+				case 'pending':
+					// Show signup form (default state)
+					signupForm.classList.remove('hidden');
+					viewRulesSection.classList.remove('hidden');
+					break;
+
+				case 'checking_in':
+				case 'checked_in':
+					// Hide signup form, show check-in message
+					signupForm.classList.add('hidden');
+					viewRulesSection.classList.remove('hidden');
+					document.getElementById('checkin-message').classList.remove('hidden');
+					break;
+
+				case 'underway':
+				case 'awaiting_review':
+					// Hide signup form, show tournament in progress
+					signupForm.classList.add('hidden');
+					viewRulesSection.classList.add('hidden');
+					document.getElementById('underway-message').classList.remove('hidden');
+					break;
+
+				case 'complete':
+					// Hide signup form, show completion message
+					signupForm.classList.add('hidden');
+					viewRulesSection.classList.add('hidden');
+					document.getElementById('complete-message').classList.remove('hidden');
+
+					// Try to fetch and display podium
+					fetchPodium();
+					break;
+
+				default:
+					// Default to showing signup form
+					signupForm.classList.remove('hidden');
+					viewRulesSection.classList.remove('hidden');
+			}
+		}
+
+		async function fetchPodium() {
+			// This would need a new API endpoint to fetch top 3 finishers
+			// For now, we'll just show the results link
+			// Future enhancement: GET /api/podium
+			console.log('Podium display - future enhancement');
+		}
+
+		function startAutoRefresh() {
+			// Auto-refresh tournament data every 30 seconds to detect state changes
+			if (autoRefreshInterval) {
+				clearInterval(autoRefreshInterval);
+			}
+
+			autoRefreshInterval = setInterval(async () => {
+				console.log('Auto-refreshing tournament data...');
+				await loadTournament();
+			}, 30000); // 30 seconds
+		}
+
+		function showError() {
+			document.getElementById('loading-tournament').classList.add('hidden');
+			document.getElementById('error-tournament').classList.remove('hidden');
+			document.getElementById('signup-form').classList.add('opacity-50', 'pointer-events-none');
+		}
+
+		function showErrorMessage(message) {
+			const errorDiv = document.getElementById('error-message');
+			const errorText = document.getElementById('error-text');
+			errorText.textContent = message;
+			errorDiv.classList.remove('hidden');
+
+			// Auto-hide after 5 seconds
+			setTimeout(() => {
+				errorDiv.classList.add('hidden');
+			}, 5000);
+		}
+
+		function hideErrorMessage() {
+			document.getElementById('error-message').classList.add('hidden');
+		}
+
+		// Handle form submission
+		document.getElementById('signup-form').addEventListener('submit', async (e) => {
+			e.preventDefault();
+			hideErrorMessage();
+
+			const submitBtn = document.getElementById('submit-btn');
+			const participantName = document.getElementById('participant-name').value.trim();
+			const instagram = document.getElementById('instagram').value.trim();
+
+			if (!participantName) {
+				showErrorMessage('Please enter your name');
+				return;
+			}
+
+			// Disable button and show loading
+			submitBtn.disabled = true;
+			submitBtn.innerHTML = '<span class="loading mx-auto"></span>';
+
+			try {
+				const response = await fetch('/api/signup', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						participantName,
+						instagram: instagram || undefined
+					})
+				});
+
+				const data = await response.json();
+
+				if (data.success) {
+					// Redirect to confirmation page with participant name
+					window.location.href = `/confirmation?name=${encodeURIComponent(participantName)}&tournament=${encodeURIComponent(tournamentData.name)}`;
+				} else {
+					showErrorMessage(data.message || data.error || 'Signup failed. Please try again.');
+					submitBtn.disabled = false;
+					submitBtn.innerHTML = 'Join Tournament';
+				}
+			} catch (error) {
+				console.error('Signup error:', error);
+				showErrorMessage('Network error. Please check your connection and try again.');
+				submitBtn.disabled = false;
+				submitBtn.innerHTML = 'Join Tournament';
+			}
+		});
+
+		// Load tournament on page load
+		loadTournament();
+
+		// Start auto-refresh to detect state changes
+		startAutoRefresh();
+
+		// Register service worker for PWA
+		if ('serviceWorker' in navigator) {
+			window.addEventListener('load', () => {
+				navigator.serviceWorker.register('/service-worker.js')
+					.then((registration) => {
+						console.log('ServiceWorker registered:', registration);
+
+						// Check for updates periodically
+						setInterval(() => {
+							registration.update();
+						}, 60000); // Check every minute
+					})
+					.catch((error) => {
+						console.log('ServiceWorker registration failed:', error);
+					});
+			});
+		}
+
+		// Install prompt for PWA
+		let deferredPrompt;
+		window.addEventListener('beforeinstallprompt', (e) => {
+			// Prevent the mini-infobar from appearing on mobile
+			e.preventDefault();
+			// Stash the event so it can be triggered later
+			deferredPrompt = e;
+			console.log('PWA install prompt ready');
+
+			// Optional: Show custom install button
+			// You can add a button here to trigger the install prompt
+		});
+
+		// Track PWA installation
+		window.addEventListener('appinstalled', () => {
+			console.log('PWA was installed');
+			deferredPrompt = null;
+		});
+	</script>
+</body>
+</html>

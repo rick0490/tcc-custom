@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Flyers - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Upload and manage tournament flyers">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Current Display Status -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-4">Current Display Status</h2>
+			<!-- Flyer Display -->
+			<div class="bg-gray-750 rounded-lg p-4 border border-gray-600 max-w-md">
+				<div class="flex items-center justify-between mb-3">
+					<div class="flex items-center gap-3">
+						<div id="flyerStatusIndicator" class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-medium text-white">Flyer Display</div>
+							<div class="text-xs text-gray-400">Port 2054</div>
+						</div>
+					</div>
+				</div>
+				<div class="text-sm">
+					<span class="text-gray-400">Current flyer:</span>
+					<span id="flyerDisplayCurrent" class="text-white font-medium ml-2">--</span>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Upload Section -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-4">Upload New Flyer</h2>
+
+			<form id="uploadForm" enctype="multipart/form-data">
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Select File <span class="text-red-500">*</span>
+						</label>
+						<input type="file" id="flyerFile" name="flyer" accept="image/png,image/jpeg,video/mp4" required
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+						<p class="text-xs text-gray-400 mt-1">PNG, JPG, or MP4 format. Images max 50MB, 16:9 recommended (1920x1080)</p>
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Custom Filename (optional)
+						</label>
+						<input type="text" id="customName" name="customName" placeholder="e.g., ssbu_weekly"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						<p class="text-xs text-gray-400 mt-1">Leave empty to use original filename</p>
+					</div>
+				</div>
+
+				<button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition font-medium">
+					Upload Flyer
+				</button>
+			</form>
+		</div>
+	</section>
+
+	<!-- Flyer Gallery -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<div class="flex items-center gap-3">
+						<h2 class="text-xl font-bold text-white">Flyer Gallery</h2>
+						<span id="flyersLastUpdated" class="hidden sm:inline-flex items-center gap-1"></span>
+					</div>
+					<p id="flyerCount" class="text-sm text-gray-400 mt-1">0 flyers</p>
+				</div>
+				<button id="refreshFlyersBtn" onclick="loadFlyers()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+					<svg id="refreshFlyersIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					<span id="refreshFlyersText">Refresh</span>
+				</button>
+			</div>
+
+			<div id="flyerGallery" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+				<div class="text-center py-8 text-gray-400 col-span-full">
+					<div class="spinner mx-auto mb-3"></div>
+					Loading flyers...
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Delete Confirmation Modal -->
+	<div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+			<h3 class="text-xl font-bold text-white mb-4">Delete Flyer</h3>
+			<p class="text-gray-300 mb-6">Are you sure you want to delete <strong id="deleteFileName" class="text-white">filename.png</strong>?</p>
+			<div class="flex gap-4">
+				<button onclick="confirmDelete()" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-md transition font-medium">
+					Delete
+				</button>
+				<button onclick="closeDeleteModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-md transition font-medium">
+					Cancel
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Preview Modal -->
+	<div id="previewModal" class="hidden fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50" onclick="closePreviewModal()">
+		<div class="max-w-6xl max-h-[90vh] p-4">
+			<img id="previewImage" src="" alt="Flyer Preview" class="max-w-full max-h-[85vh] object-contain rounded-lg">
+			<video id="previewVideo" src="" class="hidden max-w-full max-h-[85vh] object-contain rounded-lg" controls autoplay loop onclick="event.stopPropagation()"></video>
+			<div id="previewName" class="text-center text-white mt-4 text-lg font-medium"></div>
+		</div>
+	</div>
+
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/flyers.js?v=9"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Flyers');
+		});
+	</script>
+</body>
+</html>

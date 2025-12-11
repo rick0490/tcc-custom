@@ -1,0 +1,45 @@
+{
+  "displays": [
+    {
+      "id": "2ccf676f5c14",
+      "hostname": "pi-display-1",
+      "ip": "192.168.1.45",
+      "mac": "2c:cf:67:6f:5c:14",
+      "currentView": "match",
+      "assignedView": "match",
+      "status": "offline",
+      "lastHeartbeat": "2025-12-10T06:29:57.026Z",
+      "registeredAt": "2025-11-26T00:20:27.866Z",
+      "uptimeSeconds": 20093,
+      "systemInfo": {
+        "cpuTemp": 41,
+        "memoryUsage": 40,
+        "wifiQuality": 75,
+        "wifiSignal": 57,
+        "ssid": "Neils Bahr - Guest",
+        "voltage": 0.72
+      },
+      "externalIp": "12.75.41.120",
+      "debugMode": false,
+      "debugLogs": [],
+      "displayScaleFactor": 1
+    }
+  ],
+  "viewMappings": {
+    "match": {
+      "serverUrl": "live.despairhardware.com",
+      "port": 443,
+      "useTls": true
+    },
+    "bracket": {
+      "serverUrl": "bracket.despairhardware.com",
+      "port": 443,
+      "useTls": true
+    },
+    "flyer": {
+      "serverUrl": "flyer.despairhardware.com",
+      "port": 443,
+      "useTls": true
+    }
+  }
+}

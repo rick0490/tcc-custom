@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Settings - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="System settings and user management">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+	<style>
+		.settings-tab {
+			padding: 0.5rem 1rem;
+			border-radius: 0.375rem;
+			transition: all 0.2s;
+			color: var(--text-muted);
+			background: transparent;
+		}
+		.settings-tab:hover {
+			background: var(--bg-tertiary);
+			color: var(--text-primary);
+		}
+		.settings-tab.active {
+			background: var(--accent-blue);
+			color: #FFFFFF;
+		}
+		.setting-group {
+			margin-bottom: 1.5rem;
+			padding-bottom: 1.5rem;
+			border-bottom: 1px solid var(--border-color);
+		}
+		.setting-group:last-child {
+			border-bottom: none;
+		}
+	</style>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- User Management Section -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-6">
+				<h2 class="text-xl font-bold text-white">User Management</h2>
+				<button onclick="showAddUserModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition">
+					Add New User
+				</button>
+			</div>
+
+			<!-- Users Table -->
+			<div id="usersTable" class="overflow-x-auto">
+				<table class="w-full">
+					<thead>
+						<tr class="border-b border-gray-700">
+							<th class="text-left py-3 px-4 text-gray-300">Username</th>
+							<th class="text-left py-3 px-4 text-gray-300">Role</th>
+							<th class="text-left py-3 px-4 text-gray-300">Created</th>
+							<th class="text-right py-3 px-4 text-gray-300">Actions</th>
+						</tr>
+					</thead>
+					<tbody id="usersTableBody">
+						<!-- Users will be loaded here -->
+						<tr>
+							<td colspan="4" class="text-center py-8 text-gray-400">Loading users...</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+
+	<!-- Change Password Section -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-6">Change Password</h2>
+
+			<form id="changePasswordForm" class="max-w-md space-y-4" autocomplete="on">
+				<!-- Hidden username field for accessibility -->
+				<input type="text" id="changePasswordUsername" autocomplete="username" class="hidden" aria-hidden="true">
+
+				<div>
+					<label for="currentPassword" class="block text-sm font-medium text-gray-300 mb-2">
+						Current Password
+					</label>
+					<input
+						type="password"
+						id="currentPassword"
+						required
+						autocomplete="current-password"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					>
+				</div>
+
+				<div>
+					<label for="newPassword" class="block text-sm font-medium text-gray-300 mb-2">
+						New Password
+					</label>
+					<input
+						type="password"
+						id="newPassword"
+						required
+						minlength="8"
+						autocomplete="new-password"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					>
+				</div>
+
+				<div>
+					<label for="confirmPassword" class="block text-sm font-medium text-gray-300 mb-2">
+						Confirm New Password
+					</label>
+					<input
+						type="password"
+						id="confirmPassword"
+						required
+						minlength="8"
+						autocomplete="new-password"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					>
+				</div>
+
+				<button
+					type="submit"
+					class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-md transition"
+				>
+					Change Password
+				</button>
+			</form>
+		</div>
+	</section>
+
+	<!-- Admin-Only System Settings -->
+	<section id="adminSettings" class="hidden">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
+			<h2 class="text-xl font-bold text-white mb-6">
+				System Settings (Admin Only)
+			</h2>
+
+			<!-- Settings Tabs -->
+			<div class="border-b border-gray-700 mb-6">
+				<nav class="flex flex-wrap gap-2">
+					<button onclick="switchSettingsTab('challonge')" data-tab="challonge" class="settings-tab active">
+						Challonge API
+					</button>
+					<button onclick="switchSettingsTab('defaults')" data-tab="defaults" class="settings-tab">
+						System Defaults
+					</button>
+					<button onclick="switchSettingsTab('security')" data-tab="security" class="settings-tab">
+						Security
+					</button>
+					<button onclick="switchSettingsTab('notifications')" data-tab="notifications" class="settings-tab">
+						Notifications
+					</button>
+					<button onclick="switchSettingsTab('display')" data-tab="display" class="settings-tab">
+						Display Settings
+					</button>
+					<button onclick="switchSettingsTab('retention')" data-tab="retention" class="settings-tab">
+						Data Retention
+					</button>
+					<button onclick="switchSettingsTab('activityLog')" data-tab="activityLog" class="settings-tab">
+						Activity Log
+					</button>
+					<button onclick="switchSettingsTab('monitoring')" data-tab="monitoring" class="settings-tab">
+						System Monitoring
+					</button>
+					<button onclick="switchSettingsTab('cache')" data-tab="cache" class="settings-tab">
+						Cache
+					</button>
+				</nav>
+			</div>
+
+			<!-- Tab Content -->
+			<div id="settingsTabContent">
+				<!-- Content will be loaded here -->
+			</div>
+		</div>
+	</section>
+
+	<!-- Add/Edit User Modal -->
+	<div id="userModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-8 max-w-md w-full mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white" id="modalTitle">Add New User</h3>
+				<button onclick="closeUserModal()" class="text-gray-400 hover:text-white text-2xl">
+					&times;
+				</button>
+			</div>
+
+			<form id="userForm" class="space-y-4">
+				<input type="hidden" id="userId">
+
+				<div>
+					<label for="username" class="block text-sm font-medium text-gray-300 mb-2">
+						Username
+					</label>
+					<input
+						type="text"
+						id="username"
+						required
+						autocomplete="username"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					>
+				</div>
+
+				<div id="passwordField">
+					<label for="password" class="block text-sm font-medium text-gray-300 mb-2">
+						Password
+					</label>
+					<input
+						type="password"
+						id="password"
+						minlength="8"
+						autocomplete="new-password"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					>
+					<p class="text-xs text-gray-400 mt-1">Leave blank to keep current password (when editing)</p>
+				</div>
+
+				<div>
+					<label for="role" class="block text-sm font-medium text-gray-300 mb-2">
+						Role
+					</label>
+					<select
+						id="role"
+						required
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					>
+						<option value="admin">Admin</option>
+						<option value="user">User</option>
+					</select>
+				</div>
+
+				<div class="flex gap-4 pt-4">
+					<button
+						type="submit"
+						class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md transition"
+					>
+						Save
+					</button>
+					<button
+						type="button"
+						onclick="closeUserModal()"
+						class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md transition"
+					>
+						Cancel
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/settings.js?v=13"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Settings');
+		});
+	</script>
+</body>
+</html>

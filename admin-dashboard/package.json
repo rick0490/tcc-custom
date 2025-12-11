@@ -1,0 +1,51 @@
+{
+	"name": "tournament-admin-dashboard",
+	"version": "1.0.0",
+	"description": "Admin dashboard for controlling MagicMirror tournament displays",
+	"main": "server.js",
+	"scripts": {
+		"start": "node server.js",
+		"dev": "NODE_ENV=development node server.js",
+		"test": "NODE_ENV=test jest",
+		"test:watch": "NODE_ENV=test jest --watch",
+		"test:coverage": "NODE_ENV=test jest --coverage",
+		"test:e2e": "playwright test",
+		"test:e2e:headed": "playwright test --headed",
+		"test:e2e:debug": "playwright test --debug",
+		"test:e2e:report": "playwright show-report",
+		"test:all": "npm test && npm run test:e2e"
+	},
+	"keywords": [
+		"tournament",
+		"admin",
+		"dashboard"
+	],
+	"author": "",
+	"license": "MIT",
+	"dependencies": {
+		"@anthropic-ai/sdk": "^0.39.0",
+		"axios": "^1.7.2",
+		"bcrypt": "^6.0.0",
+		"better-sqlite3": "^12.5.0",
+		"dotenv": "^16.4.5",
+		"express": "^5.1.0",
+		"express-basic-auth": "^1.2.1",
+		"express-rate-limit": "^7.4.0",
+		"express-session": "^1.18.2",
+		"helmet": "^8.1.0",
+		"joi": "^18.0.2",
+		"multer": "^1.4.5-lts.1",
+		"pdfkit": "^0.15.0",
+		"qrcode": "^1.5.4",
+		"session-file-store": "^1.5.0",
+		"socket.io": "^4.8.1",
+		"socket.io-client": "^4.8.1",
+		"web-push": "^3.6.7"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.57.0",
+		"jest": "^30.2.0",
+		"sharp": "^0.34.5",
+		"supertest": "^7.1.4"
+	}
+}

@@ -1,0 +1,1303 @@
+================================================================================
+           STREAM DECK MODULE INTEGRATION REPORT
+           Tournament Dashboard System
+           Generated: 2025-11-29
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+1. Executive Summary
+2. Module Specifications Comparison
+3. HID Protocol Reference
+4. Use Cases by Module
+5. Recommended Layouts
+6. Codebase Changes Required
+7. New Service Architecture
+8. API Additions
+9. Bill of Materials
+10. 3D Printable Base Designs
+11. Implementation Phases
+12. Appendix: Command Reference
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+This report details the integration of Elgato Stream Deck modules (6, 15, and
+32 key variants) with the Tournament Dashboard system. These USB HID devices
+provide physical button control with dynamic LCD displays, enabling tournament
+operators to manage matches, displays, and announcements without touching the
+admin dashboard interface.
+
+Primary Benefits:
+- Instant tactile control for time-sensitive match operations
+- Visual feedback showing current match state on button displays
+- Wireless operation when paired with Raspberry Pi Zero 2 W host
+- Reduced errors from streamlined button-based workflows
+- Professional tournament operation appearance
+
+================================================================================
+2. MODULE SPECIFICATIONS COMPARISON
+================================================================================
+
++------------------+------------------+------------------+------------------+
+| Specification    | Module 6         | Module 15        | Module 32        |
++------------------+------------------+------------------+------------------+
+| Model Number     | 20GAI9901        | 20GBA9901        | 20GAT9902        |
+| Vendor ID        | 0x0FD9           | 0x0FD9           | 0x0FD9           |
+| Product ID       | 0x00B8           | 0x00B9           | 0x00BA           |
+| Key Layout       | 3 cols x 2 rows  | 5 cols x 3 rows  | 8 cols x 4 rows  |
+| Total Keys       | 6                | 15               | 32               |
+| LCD Resolution   | 320 x 240 px     | 480 x 272 px     | 1024 x 600 px    |
+| LCD DPI          | Low              | Low              | High             |
+| Key Image Size   | 80 x 80 px       | 72 x 72 px       | 96 x 96 px       |
+| Image Format     | BMP              | JPEG             | JPEG             |
+| Image Rotation   | 90 deg clockwise | 180 deg          | 180 deg          |
+| Connection       | USB-C            | USB-C            | USB-C            |
+| USB Standard     | USB 2.0 HID      | USB 2.0 HID      | USB 2.0 HID      |
+| Input Report     | 65 bytes         | 512 bytes        | 512 bytes        |
+| Output Report    | 1024 bytes       | 1024 bytes       | 1024 bytes       |
+| Feature Report   | 32 bytes         | 32 bytes         | 32 bytes         |
++------------------+------------------+------------------+------------------+
+
+Physical Dimensions (Estimated):
+- Module 6:  ~95mm x 65mm x 20mm (keys only, no enclosure)
+- Module 15: ~150mm x 95mm x 20mm (keys only, no enclosure)
+- Module 32: ~240mm x 130mm x 20mm (keys only, no enclosure)
+
+================================================================================
+3. HID PROTOCOL REFERENCE
+================================================================================
+
+3.1 Report Types
+----------------
+
+INPUT REPORTS (Device -> Host)
+  - Report ID: 0x01
+  - Purpose: Key press/release events
+  - Polling: 50ms recommended interval
+  - Payload: Key state array (0x00=released, 0x01=pressed)
+
+  Module 6:  Bytes 1-6 represent keys 0-5
+  Module 15: Bytes 4+ represent keys 0-14
+  Module 32: Bytes 4+ represent keys 0-31
+
+OUTPUT REPORTS (Host -> Device)
+  - Report ID: 0x02
+  - Max Size: 1024 bytes
+  - Purpose: Image uploads, LCD updates
+
+  Commands:
+  +--------+---------------------------+----------------+
+  | Code   | Function                  | Modules        |
+  +--------+---------------------------+----------------+
+  | 0x01   | Upload key image (chunked)| Module 6 only  |
+  | 0x07   | Upload key image (chunked)| Module 15/32   |
+  | 0x08   | Upload full LCD image     | Module 15/32   |
+  | 0x09   | Upload boot logo          | Module 15/32   |
+  | 0x0D   | Set background by index   | Module 15/32   |
+  +--------+---------------------------+----------------+
+
+FEATURE REPORTS (Bidirectional)
+  - Report ID: 0x03 (setters), various (getters)
+  - Max Size: 32 bytes
+  - Purpose: Configuration, queries
+
+  Setter Commands (Report ID 0x03 for 15/32, varies for 6):
+  +--------+---------------------------+------------------+
+  | Code   | Function                  | Parameters       |
+  +--------+---------------------------+------------------+
+  | 0x02   | Show boot logo            | None             |
+  | 0x05   | Fill LCD with RGB color   | R, G, B bytes    |
+  | 0x06   | Fill key with RGB color   | Key index, RGB   |
+  | 0x08   | Set backlight brightness  | 0x00-0x64 (0-100)|
+  | 0x0D   | Set sleep timeout         | INT32 seconds    |
+  | 0x13   | Show stored background    | Background index |
+  +--------+---------------------------+------------------+
+
+  Getter Commands:
+  +------------+---------------------------+------------------+
+  | Report ID  | Function                  | Response         |
+  +------------+---------------------------+------------------+
+  | 0x03       | Serial number (Module 6)  | ASCII string     |
+  | 0x06       | Serial number (15/32)     | 14-char ASCII    |
+  | 0x04       | Firmware version (LD)     | Version string   |
+  | 0x05       | Firmware version (AP2)    | Version string   |
+  | 0x07       | Firmware version (AP1)    | Version string   |
+  | 0x08       | Unit info                 | Matrix, LCD size |
+  | 0x0A       | Sleep timeout             | INT32 seconds    |
+  +------------+---------------------------+------------------+
+
+3.2 Image Upload Protocol
+-------------------------
+
+Module 6 (BMP, 90-degree rotation):
+  1. Create 80x80 BMP image
+  2. Rotate 90 degrees clockwise
+  3. Split into chunks (max 1008 bytes per chunk)
+  4. Send via Output Report 0x02, Command 0x01
+  5. Header: chunk_index, reserved, show_flag, key_index
+  6. Set show_flag=0x01 on final chunk
+
+Module 15/32 (JPEG, 180-degree rotation):
+  1. Create 72x72 (15) or 96x96 (32) JPEG image
+  2. Rotate 180 degrees
+  3. Split into chunks (max ~1008 bytes per chunk)
+  4. Send via Output Report 0x02, Command 0x07
+  5. Header: key_index, done_flag, chunk_size, chunk_index
+  6. Set done_flag=0x01 on final chunk
+
+================================================================================
+4. USE CASES BY MODULE
+================================================================================
+
+4.1 MODULE 6 (6 Keys) - "Quick Actions Controller"
+--------------------------------------------------
+
+Best suited for: Single-station match control, minimal footprint
+
+USE CASE A: Basic Match Control
+  Key 0: Start/Stop Match (toggle, color indicates state)
+  Key 1: Player 1 Score +1
+  Key 2: Player 2 Score +1
+  Key 3: Declare Winner (opens selection)
+  Key 4: DQ/Forfeit
+  Key 5: Next Match
+
+USE CASE B: Display Switcher
+  Key 0: Switch to Match View
+  Key 1: Switch to Bracket View
+  Key 2: Switch to Flyer View
+  Key 3: Reboot All Displays
+  Key 4: Send Ticker "Next Match!"
+  Key 5: Send Ticker "Winners Report!"
+
+USE CASE C: Tournament Lifecycle
+  Key 0: Start Tournament
+  Key 1: Reset Tournament
+  Key 2: Finalize Tournament
+  Key 3: Refresh Status
+  Key 4: Toggle Auto-Assign
+  Key 5: Emergency Stop (hold 3s)
+
+Recommended for:
+  - Budget-conscious setups
+  - Secondary control stations
+  - Dedicated single-purpose controllers
+
+4.2 MODULE 15 (15 Keys) - "Tournament Operator Station"
+-------------------------------------------------------
+
+Best suited for: Complete tournament control, dual TV stations
+
+USE CASE A: Dual-Station Match Control
+  Row 1 (Tournament):
+    Key 0:  Start Tournament
+    Key 1:  Reset Tournament
+    Key 2:  Finalize Tournament
+    Key 3:  Ticker "Next Match!"
+    Key 4:  Ticker "Winners Report!"
+
+  Row 2 (TV Station 1):
+    Key 5:  TV1 Start/Stop
+    Key 6:  TV1 Player 1 +1 [shows name/score]
+    Key 7:  TV1 Player 2 +1 [shows name/score]
+    Key 8:  TV1 Declare Winner
+    Key 9:  TV1 DQ/Forfeit
+
+  Row 3 (TV Station 2):
+    Key 10: TV2 Start/Stop
+    Key 11: TV2 Player 1 +1 [shows name/score]
+    Key 12: TV2 Player 2 +1 [shows name/score]
+    Key 13: TV2 Declare Winner
+    Key 14: TV2 DQ/Forfeit
+
+USE CASE B: Display + Match Hybrid
+  Row 1 (Displays):
+    Key 0:  Match View
+    Key 1:  Bracket View
+    Key 2:  Flyer View
+    Key 3:  Reboot Displays
+    Key 4:  System Status
+
+  Row 2 (Current Match):
+    Key 5:  Start/Stop Match
+    Key 6:  P1 +1 [dynamic name]
+    Key 7:  P2 +1 [dynamic name]
+    Key 8:  Winner Selection
+    Key 9:  Undo Last Action
+
+  Row 3 (Quick Actions):
+    Key 10: Ticker Preset 1
+    Key 11: Ticker Preset 2
+    Key 12: Ticker Preset 3
+    Key 13: Ticker Custom
+    Key 14: Next Match
+
+USE CASE C: Participant Check-In Station
+  Row 1 (Navigation):
+    Key 0:  Previous Page
+    Key 1:  Page 1
+    Key 2:  Page 2
+    Key 3:  Page 3
+    Key 4:  Next Page
+
+  Row 2 (Participants - dynamic):
+    Keys 5-9: Participant names, tap to check in
+
+  Row 3 (Participants - dynamic):
+    Keys 10-14: Participant names, tap to check in
+
+Recommended for:
+  - Primary tournament operator station
+  - Venues with 2 TV setups
+  - Medium-sized tournaments (16-64 participants)
+
+4.3 MODULE 32 (32 Keys) - "Command Center"
+------------------------------------------
+
+Best suited for: Large venues, multiple stations, comprehensive control
+
+USE CASE A: Four-Station Tournament Control
+  Row 1 (Tournament + Displays):
+    Keys 0-3:   Start, Reset, Finalize, Status
+    Keys 4-7:   Match View, Bracket View, Flyer View, Reboot
+
+  Row 2 (TV Station 1):
+    Keys 8-15:  Start, P1+, P2+, Winner, DQ, P1-, P2-, Reset
+
+  Row 3 (TV Station 2):
+    Keys 16-23: Start, P1+, P2+, Winner, DQ, P1-, P2-, Reset
+
+  Row 4 (Ticker + Extras):
+    Keys 24-27: Ticker Presets 1-4
+    Keys 28-31: Custom Ticker, Next Match, Undo, Emergency
+
+USE CASE B: Multi-Game Tournament Hub
+  Row 1 (Game Selection):
+    Keys 0-7:   SSBU, Melee, MK8, SF6, Tekken, GG, DBZ, Custom
+
+  Row 2 (Selected Game Controls):
+    Keys 8-15:  Dynamic based on selected game
+
+  Row 3 (Match Operations):
+    Keys 16-23: Standard match controls
+
+  Row 4 (System):
+    Keys 24-31: Display, ticker, system controls
+
+USE CASE C: Full Production Control
+  Row 1: Tournament lifecycle + game selection
+  Row 2: TV1 full controls (8 buttons)
+  Row 3: TV2 full controls (8 buttons)
+  Row 4: Streaming integration, OBS scenes, audio
+
+USE CASE D: Dedicated Check-In Terminal
+  Rows 1-3: 24 participant slots (dynamic names)
+  Row 4: Navigation (prev/next page), search, manual add
+
+Recommended for:
+  - Large tournament venues (4+ setups)
+  - Professional/sponsored events
+  - Multi-game tournament series
+  - Production teams with streaming
+
+================================================================================
+5. RECOMMENDED LAYOUTS
+================================================================================
+
+5.1 Module 6 Layout Diagram
+---------------------------
+
++-------------+-------------+-------------+
+|             |             |             |
+|    START    |   P1 +1     |   P2 +1     |
+|   [state]   |   [name]    |   [name]    |
+|   Key 0     |   Key 1     |   Key 2     |
++-------------+-------------+-------------+
+|             |             |             |
+|   WINNER    |     DQ      |    NEXT     |
+|             |   [hold]    |   MATCH     |
+|   Key 3     |   Key 4     |   Key 5     |
++-------------+-------------+-------------+
+
+Color Coding:
+  - Green: Action available/success
+  - Yellow: Caution/pending
+  - Red: Stop/danger/DQ
+  - Blue: Navigation/info
+  - Gray: Disabled/unavailable
+
+5.2 Module 15 Layout Diagram
+----------------------------
+
++----------+----------+----------+----------+----------+
+|  START   |  RESET   | FINALIZE | TICKER   | TICKER   |
+| TOURNEY  | TOURNEY  | TOURNEY  | "NEXT!"  |"WINNERS" |
+|  Key 0   |  Key 1   |  Key 2   |  Key 3   |  Key 4   |
++----------+----------+----------+----------+----------+
+|   TV1    |   TV1    |   TV1    |   TV1    |   TV1    |
+|  START   |  P1 +1   |  P2 +1   | WINNER   |    DQ    |
+|  Key 5   |  Key 6   |  Key 7   |  Key 8   |  Key 9   |
++----------+----------+----------+----------+----------+
+|   TV2    |   TV2    |   TV2    |   TV2    |   TV2    |
+|  START   |  P1 +1   |  P2 +1   | WINNER   |    DQ    |
+| Key 10   | Key 11   | Key 12   | Key 13   | Key 14   |
++----------+----------+----------+----------+----------+
+
+Dynamic Elements:
+  - Keys 6,7,11,12: Show player names and current scores
+  - Keys 5,10: Toggle between "START" (green) and "STOP" (red)
+  - Keys 0-2: Gray when not applicable to tournament state
+
+5.3 Module 32 Layout Diagram
+----------------------------
+
++-------+-------+-------+-------+-------+-------+-------+-------+
+| START | RESET |FINALE |STATUS |MATCH  |BRACKET| FLYER |REBOOT |
+|TOURNEY|TOURNEY|TOURNEY|       | VIEW  | VIEW  | VIEW  | ALL   |
+| Key 0 | Key 1 | Key 2 | Key 3 | Key 4 | Key 5 | Key 6 | Key 7 |
++-------+-------+-------+-------+-------+-------+-------+-------+
+| TV1   | TV1   | TV1   | TV1   | TV1   | TV1   | TV1   | TV1   |
+| START | P1+1  | P2+1  |WINNER |  DQ   | P1-1  | P2-1  | RESET |
+| Key 8 | Key 9 |Key 10 |Key 11 |Key 12 |Key 13 |Key 14 |Key 15 |
++-------+-------+-------+-------+-------+-------+-------+-------+
+| TV2   | TV2   | TV2   | TV2   | TV2   | TV2   | TV2   | TV2   |
+| START | P1+1  | P2+1  |WINNER |  DQ   | P1-1  | P2-1  | RESET |
+|Key 16 |Key 17 |Key 18 |Key 19 |Key 20 |Key 21 |Key 22 |Key 23 |
++-------+-------+-------+-------+-------+-------+-------+-------+
+|TICKER |TICKER |TICKER |TICKER |CUSTOM | NEXT  | UNDO  | EMERG |
+|  #1   |  #2   |  #3   |  #4   |TICKER | MATCH | LAST  | STOP  |
+|Key 24 |Key 25 |Key 26 |Key 27 |Key 28 |Key 29 |Key 30 |Key 31 |
++-------+-------+-------+-------+-------+-------+-------+-------+
+
+================================================================================
+6. CODEBASE CHANGES REQUIRED
+================================================================================
+
+6.1 New Files to Create
+-----------------------
+
+/root/tournament-dashboard/
++-- streamdeck-controller/           # NEW: Stream Deck bridge service
+|   +-- package.json
+|   +-- index.js                     # Main entry point
+|   +-- src/
+|   |   +-- hid-driver.js            # Low-level HID communication
+|   |   +-- device-manager.js        # Device detection and connection
+|   |   +-- key-renderer.js          # Image generation (Sharp)
+|   |   +-- lcd-renderer.js          # Full LCD background (15/32 only)
+|   |   +-- state-sync.js            # Sync with admin dashboard
+|   |   +-- action-executor.js       # Execute button actions
+|   |   +-- profiles/
+|   |   |   +-- module-6-match.js    # 6-key match control profile
+|   |   |   +-- module-6-display.js  # 6-key display control profile
+|   |   |   +-- module-15-dual.js    # 15-key dual station profile
+|   |   |   +-- module-15-hybrid.js  # 15-key display+match profile
+|   |   |   +-- module-32-command.js # 32-key full control profile
+|   |   |   +-- profile-base.js      # Base profile class
+|   |   +-- utils/
+|   |       +-- image-cache.js       # LRU cache for rendered images
+|   |       +-- chunked-upload.js    # Chunked image upload helper
+|   |       +-- logger.js            # Winston logging
+|   +-- assets/
+|   |   +-- icons/                   # SVG icon templates
+|   |   +-- fonts/                   # Embedded fonts for rendering
+|   +-- config/
+|       +-- default.json             # Default configuration
+|       +-- profiles.json            # Profile definitions
+
+6.2 Admin Dashboard Modifications
+---------------------------------
+
+File: admin-dashboard/server.js
+
+ADD: Stream Deck API endpoints (~150 lines)
+  - GET  /api/streamdeck/state        # Current match/tournament state
+  - POST /api/streamdeck/action       # Execute button action
+  - GET  /api/streamdeck/profiles     # List available profiles
+  - PUT  /api/streamdeck/profile      # Set active profile
+  - GET  /api/streamdeck/devices      # List connected devices
+
+ADD: Stream Deck state builder function (~100 lines)
+  - buildStreamDeckState()            # Compile state for button displays
+
+File: admin-dashboard/public/displays.html
+
+ADD: Stream Deck section in displays page (~50 lines)
+  - Show connected Stream Deck devices
+  - Profile selection dropdown
+  - Connection status indicator
+
+File: admin-dashboard/public/js/displays.js
+
+ADD: Stream Deck management functions (~100 lines)
+  - fetchStreamDeckDevices()
+  - setStreamDeckProfile()
+  - renderStreamDeckStatus()
+
+File: admin-dashboard/public/settings.html
+
+ADD: Stream Deck configuration section (~80 lines)
+  - Profile editor
+  - Button mapping interface
+  - Ticker message presets
+
+6.3 Systemd Service File
+------------------------
+
+File: /etc/systemd/system/streamdeck-controller.service
+
+[Unit]
+Description=Stream Deck Tournament Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/tournament-dashboard/streamdeck-controller
+ExecStart=/usr/bin/node --max-old-space-size=256 index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=ADMIN_API=http://localhost:3000
+
+[Install]
+WantedBy=multi-user.target
+
+6.4 CLAUDE.md Updates
+---------------------
+
+ADD to main CLAUDE.md:
+  - Stream Deck service documentation
+  - New API endpoints reference
+  - Profile configuration guide
+  - Troubleshooting section
+
+================================================================================
+7. NEW SERVICE ARCHITECTURE
+================================================================================
+
+7.1 Service Flow Diagram
+------------------------
+
++-------------------+     USB HID      +-------------------+
+|   Stream Deck     |<---------------->|  streamdeck-      |
+|   Module 6/15/32  |   50ms polling   |  controller       |
++-------------------+                  |  service          |
+                                       +-------------------+
+                                              |
+                                              | HTTP REST
+                                              | (localhost or WiFi)
+                                              v
+                                       +-------------------+
+                                       |  Admin Dashboard  |
+                                       |  (port 3000)      |
+                                       +-------------------+
+                                              |
+                                              | HTTP REST
+                                              v
+                                       +-------------------+
+                                       |  MagicMirror      |
+                                       |  Modules          |
+                                       +-------------------+
+
+7.2 Raspberry Pi Zero 2 W Deployment
+------------------------------------
+
+For wireless tournament control pod:
+
++--------------------------------------------------+
+|  Raspberry Pi Zero 2 W                           |
+|  +--------------------------------------------+  |
+|  |  streamdeck-controller.service             |  |
+|  |  - node-hid (HID communication)            |  |
+|  |  - sharp (image rendering)                 |  |
+|  |  - axios (API client)                      |  |
+|  +--------------------------------------------+  |
+|         |                                        |
+|         | USB OTG                                |
++---------|-----------------------------------------+
+          |
+          v
++-------------------+
+|  Stream Deck      |
+|  Module           |
++-------------------+
+
+Network communication:
+  Pi Zero 2 W --[WiFi]--> Admin Dashboard (192.168.x.x:3000)
+
+7.3 Direct USB Deployment
+-------------------------
+
+For wired connection to main server:
+
++--------------------------------------------------+
+|  Main Server (Proxmox LXC)                       |
+|  +--------------------------------------------+  |
+|  |  streamdeck-controller.service             |  |
+|  |  - node-hid (HID communication)            |  |
+|  |  - sharp (image rendering)                 |  |
+|  +--------------------------------------------+  |
+|         |                                        |
+|         | USB passthrough                        |
++---------|-----------------------------------------+
+          |
+          v
++-------------------+
+|  Stream Deck      |
+|  Module           |
++-------------------+
+
+Proxmox USB passthrough required for LXC container.
+
+================================================================================
+8. API ADDITIONS
+================================================================================
+
+8.1 GET /api/streamdeck/state
+-----------------------------
+
+Returns current state formatted for Stream Deck display.
+
+Response:
+{
+  "tournament": {
+    "id": "abc123",
+    "name": "Weekly #42",
+    "state": "underway",
+    "matchesRemaining": 7,
+    "currentRound": "Winners Semis"
+  },
+  "tv1Match": {
+    "id": "match_456",
+    "p1Name": "Player1",
+    "p2Name": "Player2",
+    "p1Score": 2,
+    "p2Score": 1,
+    "underway": true,
+    "round": "Winners Round 3"
+  },
+  "tv2Match": {
+    "id": "match_789",
+    "p1Name": "Player3",
+    "p2Name": "Player4",
+    "p1Score": 0,
+    "p2Score": 0,
+    "underway": false,
+    "round": "Winners Round 3"
+  },
+  "displays": {
+    "match": "online",
+    "bracket": "online",
+    "flyer": "offline"
+  },
+  "tickerPresets": [
+    "Next match is ready!",
+    "Winners please report to the front desk!",
+    "Tournament starting in 5 minutes!",
+    "Grand Finals starting soon!"
+  ]
+}
+
+8.2 POST /api/streamdeck/action
+-------------------------------
+
+Executes a button action.
+
+Request:
+{
+  "action": "match/score",
+  "params": {
+    "station": "TV1",
+    "player": 1,
+    "delta": 1
+  }
+}
+
+Supported Actions:
+  - tournament/start
+  - tournament/reset
+  - tournament/finalize
+  - match/underway      { station: "TV1"|"TV2" }
+  - match/stop          { station: "TV1"|"TV2" }
+  - match/score         { station, player: 1|2, delta: 1|-1 }
+  - match/winner        { station, player: 1|2 }
+  - match/dq            { station, player: 1|2 }
+  - match/reset         { station }
+  - match/next          { station }
+  - ticker/send         { message: string, duration?: number }
+  - ticker/preset       { index: 0-3 }
+  - display/view        { view: "match"|"bracket"|"flyer" }
+  - display/reboot      { displayId?: string } (all if omitted)
+  - system/status       (returns status, no action)
+
+Response:
+{
+  "success": true,
+  "message": "Score updated: Player1 3 - 1 Player2",
+  "newState": { ... }  // Updated state for immediate display refresh
+}
+
+8.3 GET /api/streamdeck/profiles
+--------------------------------
+
+Lists available button profiles.
+
+Response:
+{
+  "profiles": [
+    {
+      "id": "module-6-match",
+      "name": "6-Key Match Control",
+      "module": 6,
+      "description": "Basic match control for single station"
+    },
+    {
+      "id": "module-15-dual",
+      "name": "15-Key Dual Station",
+      "module": 15,
+      "description": "Full control for two TV stations"
+    }
+  ],
+  "active": "module-15-dual"
+}
+
+8.4 PUT /api/streamdeck/profile
+-------------------------------
+
+Sets the active profile.
+
+Request:
+{
+  "profileId": "module-15-dual"
+}
+
+8.5 GET /api/streamdeck/devices
+-------------------------------
+
+Lists connected Stream Deck devices.
+
+Response:
+{
+  "devices": [
+    {
+      "path": "/dev/hidraw3",
+      "vendorId": "0x0fd9",
+      "productId": "0x00b9",
+      "module": 15,
+      "serial": "AL12345678",
+      "connected": true,
+      "brightness": 80
+    }
+  ]
+}
+
+================================================================================
+9. BILL OF MATERIALS
+================================================================================
+
+9.1 Stream Deck Modules (Choose One or More)
+--------------------------------------------
+
++----------------------+------------------+------------------+
+| Item                 | Est. Price (USD) | Source           |
++----------------------+------------------+------------------+
+| Stream Deck Module 6 | $89.99           | Elgato/Amazon    |
+| Stream Deck Module 15| $149.99          | Elgato/Amazon    |
+| Stream Deck Module 32| $249.99          | Elgato/Amazon    |
++----------------------+------------------+------------------+
+
+Note: These are OEM modules without enclosures, designed for
+custom integration. Regular Stream Deck products have enclosures
+but are more expensive.
+
+9.2 Direct USB Connection (Main Server)
+---------------------------------------
+
++----------------------+------------------+------------------+
+| Item                 | Est. Price (USD) | Notes            |
++----------------------+------------------+------------------+
+| USB-C cable (1m)     | $8-12            | Data-capable     |
+| USB-C to USB-A adapt | $5-8             | If no USB-C port |
++----------------------+------------------+------------------+
+| TOTAL                | $13-20           |                  |
++----------------------+------------------+------------------+
+
+9.3 Raspberry Pi Zero 2 W Host (Wireless)
+-----------------------------------------
+
++---------------------------+------------------+------------------+
+| Item                      | Est. Price (USD) | Notes            |
++---------------------------+------------------+------------------+
+| Raspberry Pi Zero 2 W     | $15              | Adafruit/PiShop  |
+| MicroSD Card (16GB+)      | $8               | Class 10/A1      |
+| USB-C to Micro USB OTG    | $8               | Single cable     |
+| Micro USB Power Supply    | $10              | 5V 2.5A          |
+| Pi Zero Case (optional)   | $5               | Various styles   |
++---------------------------+------------------+------------------+
+| TOTAL                     | $46              |                  |
++---------------------------+------------------+------------------+
+
+9.4 3D Printing Materials
+-------------------------
+
++---------------------------+------------------+------------------+
+| Item                      | Est. Price (USD) | Notes            |
++---------------------------+------------------+------------------+
+| PLA Filament (1kg)        | $20-25           | Black or custom  |
+| PETG Filament (1kg)       | $25-30           | More durable     |
+| TPU Filament (optional)   | $30-35           | For feet/bumpers |
+| M3 Screws (assorted)      | $8               | Amazon kit       |
+| M3 Heat-set Inserts       | $10              | Brass, 50-pack   |
+| Rubber Feet (4-pack)      | $3               | Self-adhesive    |
++---------------------------+------------------+------------------+
+| TOTAL (per base)          | ~$15-20          | Materials only   |
++---------------------------+------------------+------------------+
+
+9.5 Complete Setup Costs
+------------------------
+
+Budget Setup (Module 6 + Direct USB):
+  Stream Deck Module 6    $89.99
+  USB-C Cable             $10.00
+  3D Printed Base         $15.00
+  ---------------------------------
+  TOTAL                   $114.99
+
+Recommended Setup (Module 15 + Pi Zero 2 W):
+  Stream Deck Module 15   $149.99
+  Pi Zero 2 W Bundle      $46.00
+  3D Printed Base         $18.00
+  ---------------------------------
+  TOTAL                   $213.99
+
+Professional Setup (Module 32 + Pi Zero 2 W):
+  Stream Deck Module 32   $249.99
+  Pi Zero 2 W Bundle      $46.00
+  3D Printed Base         $25.00
+  ---------------------------------
+  TOTAL                   $320.99
+
+================================================================================
+10. 3D PRINTABLE BASE DESIGNS
+================================================================================
+
+10.1 Design Philosophy
+----------------------
+
+Goals:
+  - Secure module mounting with minimal visible hardware
+  - Comfortable viewing angle (15-25 degrees)
+  - Cable management (USB-C exit point)
+  - Optional Pi Zero 2 W compartment
+  - Anti-slip rubber feet
+  - Easy assembly (snap-fit + heat-set inserts)
+
+Materials:
+  - Body: PLA or PETG (recommend PETG for durability)
+  - Feet: TPU or stick-on rubber pads
+  - Hardware: M3 screws, M3 heat-set inserts
+
+10.2 Module 6 Base Design
+-------------------------
+
+Overall Dimensions: 115mm x 85mm x 35mm (at highest point)
+
+ASCII Top View:
++---------------------------+
+|  +---------------------+  |
+|  |                     |  |
+|  |    Module 6         |  |
+|  |    Cutout           |  |
+|  |    (95mm x 65mm)    |  |
+|  |                     |  |
+|  +---------------------+  |
+|      [USB-C slot]         |
++---------------------------+
+
+ASCII Side View (Cross-section):
+                    ___________
+                   /           \
+                  /   Module    \
+    _____________/    recess    \_____________
+   |                                          |
+   |     Base body (15-20 deg angle)          |
+   |__________________________________________|
+       ^                              ^
+     Foot                           Foot
+
+Features:
+  - 20-degree tilt angle
+  - Recessed module pocket (2mm lip for retention)
+  - Rear USB-C cable exit slot (10mm x 5mm)
+  - 4x M3 heat-set insert mounting points
+  - 4x rubber foot positions (10mm diameter)
+  - Optional: snap-in cover plate
+
+STL Components:
+  - module6_base_body.stl
+  - module6_cover_plate.stl (optional)
+
+Print Settings:
+  - Layer Height: 0.2mm
+  - Infill: 20%
+  - Supports: None needed
+  - Estimated Time: 3-4 hours
+  - Estimated Filament: 45g
+
+10.3 Module 15 Base Design
+--------------------------
+
+Overall Dimensions: 175mm x 115mm x 45mm (at highest point)
+
+ASCII Top View:
++-----------------------------------+
+|  +-----------------------------+  |
+|  |                             |  |
+|  |      Module 15              |  |
+|  |      Cutout                 |  |
+|  |      (150mm x 95mm)         |  |
+|  |                             |  |
+|  +-----------------------------+  |
+|         [USB-C slot]              |
+|                                   |
+|  [Pi Zero compartment - optional] |
++-----------------------------------+
+
+ASCII Side View (Cross-section):
+                        _______________
+                       /               \
+                      /    Module       \
+    _________________/     recess       \__________
+   |                                              |
+   |  +--------+                                  |
+   |  |Pi Zero |   Base body (15-20 deg angle)   |
+   |  +--------+                                  |
+   |______________________________________________|
+       ^                                      ^
+     Foot                                   Foot
+
+Features:
+  - 18-degree tilt angle
+  - Recessed module pocket (3mm lip)
+  - Rear USB-C cable exit slot (12mm x 6mm)
+  - 4x M3 heat-set insert mounting points (module)
+  - 4x rubber foot positions (12mm diameter)
+  - Pi Zero 2 W compartment (68mm x 32mm x 12mm)
+  - Pi compartment ventilation slots
+  - Micro USB access port for Pi power
+  - Optional: magnetic cover plate
+
+STL Components:
+  - module15_base_body.stl
+  - module15_pi_compartment.stl (optional insert)
+  - module15_cover_plate.stl (optional)
+  - module15_pi_cover.stl (optional)
+
+Print Settings:
+  - Layer Height: 0.2mm
+  - Infill: 20%
+  - Supports: Minimal (Pi compartment overhang)
+  - Estimated Time: 6-8 hours
+  - Estimated Filament: 95g
+
+10.4 Module 32 Base Design
+--------------------------
+
+Overall Dimensions: 265mm x 150mm x 55mm (at highest point)
+
+ASCII Top View:
++-----------------------------------------------+
+|  +-----------------------------------------+  |
+|  |                                         |  |
+|  |           Module 32                     |  |
+|  |           Cutout                        |  |
+|  |           (240mm x 130mm)               |  |
+|  |                                         |  |
+|  +-----------------------------------------+  |
+|              [USB-C slot]                     |
+|                                               |
+|  [Pi Zero]        [Cable tray]        [Vent]  |
++-----------------------------------------------+
+
+ASCII Side View (Cross-section):
+                              _____________________
+                             /                     \
+                            /       Module          \
+    _______________________/        recess          \____________
+   |                                                            |
+   |  +--------+                                                |
+   |  |Pi Zero |       Base body (15-18 deg angle)              |
+   |  +--------+    [integrated cable management]               |
+   |____________________________________________________________|
+       ^                                                    ^
+     Foot                                                 Foot
+
+Features:
+  - 15-degree tilt angle (lower for stability)
+  - Recessed module pocket (3mm lip)
+  - Rear USB-C cable exit with strain relief channel
+  - 6x M3 heat-set insert mounting points
+  - 6x rubber foot positions (15mm diameter)
+  - Pi Zero 2 W compartment with ventilation
+  - Integrated cable management tray
+  - Optional: handle cutouts for portability
+
+STL Components:
+  - module32_base_body.stl
+  - module32_pi_compartment.stl
+  - module32_cover_plate.stl
+  - module32_cable_clip.stl (x2)
+  - module32_handle.stl (optional, x2)
+
+Print Settings:
+  - Layer Height: 0.2mm
+  - Infill: 15-20%
+  - Supports: Yes (for handle cutouts)
+  - Estimated Time: 12-16 hours
+  - Estimated Filament: 180g
+
+Note: Module 32 base may need to be printed in 2 parts on smaller
+print beds (< 250mm) and joined with screws or adhesive.
+
+10.5 Universal Design Elements
+------------------------------
+
+All bases include:
+
+1. Heat-Set Insert Pockets
+   - Diameter: 4.0mm (for M3 inserts)
+   - Depth: 5mm
+   - Taper: 0.5mm chamfer entry
+
+2. Rubber Foot Recesses
+   - Diameter: Varies by model
+   - Depth: 2mm
+   - Compatible with standard self-adhesive feet
+
+3. USB-C Cable Slot
+   - Width: 10-12mm
+   - Height: 5-6mm
+   - Rounded corners (2mm radius)
+   - Optional: strain relief clip
+
+4. Ventilation (Pi compartment models)
+   - Slot pattern: 2mm x 10mm slots
+   - 4-6 slots on bottom
+   - 2-4 slots on sides
+
+5. Module Retention
+   - Lip height: 2-3mm
+   - Lip inset: 1mm from module edge
+   - Optional: snap tabs at corners
+
+10.6 OpenSCAD Source Template
+-----------------------------
+
+// Base parameters (customize per module)
+module_width = 150;      // Module 15 width
+module_depth = 95;       // Module 15 depth
+module_height = 10;      // Module thickness
+tilt_angle = 18;         // Viewing angle
+wall_thickness = 3;
+lip_height = 3;
+base_padding = 12;       // Extra space around module
+
+// Derived dimensions
+base_width = module_width + (base_padding * 2);
+base_depth = module_depth + (base_padding * 2);
+base_height_front = 10;
+base_height_rear = base_depth * tan(tilt_angle) + base_height_front;
+
+// Main body
+module base_body() {
+    difference() {
+        // Outer shell
+        hull() {
+            translate([0, 0, 0])
+                cube([base_width, wall_thickness, base_height_front]);
+            translate([0, base_depth - wall_thickness, 0])
+                cube([base_width, wall_thickness, base_height_rear]);
+        }
+
+        // Module pocket
+        translate([base_padding, base_padding, base_height_rear - module_height])
+            cube([module_width, module_depth, module_height + 10]);
+
+        // USB-C slot
+        translate([base_width/2 - 6, base_depth - 5, 5])
+            cube([12, 10, 6]);
+    }
+
+    // Retention lips
+    // ... (add lip geometry)
+}
+
+// Heat-set insert mounts
+module insert_mount() {
+    difference() {
+        cylinder(h=8, d=8, $fn=32);
+        translate([0, 0, -1])
+            cylinder(h=6, d=4, $fn=32);
+    }
+}
+
+// Assembly
+base_body();
+// Add insert mounts at corners
+// Add foot recesses
+// Add Pi compartment if needed
+
+================================================================================
+11. IMPLEMENTATION PHASES
+================================================================================
+
+PHASE 1: Core Infrastructure (Week 1-2)
+---------------------------------------
+Tasks:
+  [ ] Create streamdeck-controller directory structure
+  [ ] Implement hid-driver.js with basic connection
+  [ ] Implement key-renderer.js with Sharp
+  [ ] Add basic state polling from admin dashboard
+  [ ] Create systemd service file
+  [ ] Test with Module 6 (simplest protocol)
+
+Deliverables:
+  - Working button detection
+  - Basic key image rendering
+  - Service auto-start on boot
+
+PHASE 2: Profile System (Week 2-3)
+----------------------------------
+Tasks:
+  [ ] Design profile JSON schema
+  [ ] Implement profile-base.js class
+  [ ] Create module-6-match.js profile
+  [ ] Create module-15-dual.js profile
+  [ ] Add profile switching via config
+
+Deliverables:
+  - Loadable profile configurations
+  - Multiple pre-built profiles
+  - Profile hot-reload support
+
+PHASE 3: Admin Dashboard Integration (Week 3-4)
+-----------------------------------------------
+Tasks:
+  [ ] Add /api/streamdeck/* endpoints
+  [ ] Build state aggregation function
+  [ ] Add action executor with all match operations
+  [ ] Update displays.html with Stream Deck section
+  [ ] Add profile selection UI
+
+Deliverables:
+  - Full API integration
+  - UI for device management
+  - Action feedback system
+
+PHASE 4: Pi Zero 2 W Support (Week 4-5)
+---------------------------------------
+Tasks:
+  [ ] Create setup script for Pi Zero 2 W
+  [ ] Optimize memory usage (256MB heap)
+  [ ] Implement image caching with LRU
+  [ ] Add WiFi-based API communication
+  [ ] Test latency and reliability
+
+Deliverables:
+  - Standalone wireless control pod
+  - Sub-200ms action latency
+  - Automatic reconnection handling
+
+PHASE 5: 3D Printed Bases (Week 5-6)
+------------------------------------
+Tasks:
+  [ ] Finalize Module 6 base design
+  [ ] Finalize Module 15 base design
+  [ ] Finalize Module 32 base design
+  [ ] Print and test prototypes
+  [ ] Iterate on fit and cable management
+
+Deliverables:
+  - Printable STL files
+  - Assembly instructions
+  - Tested prototypes
+
+PHASE 6: Documentation & Polish (Week 6-7)
+------------------------------------------
+Tasks:
+  [ ] Update CLAUDE.md with full documentation
+  [ ] Create user guide for tournament operators
+  [ ] Add troubleshooting section
+  [ ] Performance optimization pass
+  [ ] Create demo video
+
+Deliverables:
+  - Complete documentation
+  - User-ready system
+  - Training materials
+
+================================================================================
+12. APPENDIX: COMMAND REFERENCE
+================================================================================
+
+A. Module 6 Command Reference
+-----------------------------
+
+INPUT REPORT 0x01 (65 bytes)
+  Offset 0x00: Report ID (0x01)
+  Offset 0x01: Key 0 state (0x00/0x01)
+  Offset 0x02: Key 1 state
+  Offset 0x03: Key 2 state
+  Offset 0x04: Key 3 state
+  Offset 0x05: Key 4 state
+  Offset 0x06: Key 5 state
+  Offset 0x07-0x40: Reserved (zero)
+
+OUTPUT REPORT 0x02 - UPLOAD KEY IMAGE (1024 bytes)
+  Offset 0x00: Report ID (0x02)
+  Offset 0x01: Command (0x01)
+  Offset 0x02: Chunk Index (0-based)
+  Offset 0x03: Reserved (0x00)
+  Offset 0x04: Show Image Flag (0x00=no, 0x01=yes, last chunk)
+  Offset 0x05: Key Index (0-5)
+  Offset 0x06-0x0F: Reserved (zero)
+  Offset 0x10-0x3FF: Image data chunk (BMP, rotated 90 CW)
+
+FEATURE REPORT 0x05 - SET BRIGHTNESS (32 bytes)
+  Offset 0x00: Report ID (0x05)
+  Offset 0x01: Command (0x55)
+  Offset 0x02: Fixed (0xAA)
+  Offset 0x03: Fixed (0xD1)
+  Offset 0x04: Fixed (0x01)
+  Offset 0x05: Brightness (0x00-0xFF)
+  Offset 0x06-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x0B - SHOW LOGO (32 bytes)
+  Offset 0x00: Report ID (0x0B)
+  Offset 0x01: Command (0x63)
+  Offset 0x02: Show Flag (0x00 = show boot logo)
+  Offset 0x03-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x0B - SET SLEEP TIMEOUT (32 bytes)
+  Offset 0x00: Report ID (0x0B)
+  Offset 0x01: Command (0xA2)
+  Offset 0x02-0x05: Timeout seconds (INT32 LE, 0=disabled)
+  Offset 0x06-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x03 - GET SERIAL (32 bytes)
+  Send:
+    Offset 0x00: Report ID (0x03)
+  Receive:
+    Offset 0x00: Report ID (0x03)
+    Offset 0x05+: Serial string (ASCII)
+
+FEATURE REPORT 0xA0/0xA1/0xA2 - GET FIRMWARE (32 bytes)
+  Send:
+    Offset 0x00: Report ID (0xA0=LD, 0xA1=AP2, 0xA2=AP1)
+  Receive:
+    Offset 0x00: Report ID
+    Offset 0x05-0x10: Version string (12-char ASCII)
+
+B. Module 15/32 Command Reference
+---------------------------------
+
+INPUT REPORT 0x01 (512 bytes)
+  Offset 0x00: Report ID (0x01)
+  Offset 0x01: Command (0x00 = key event)
+  Offset 0x02-0x03: Payload length (UINT16 LE)
+  Offset 0x04: Key 0 state
+  Offset 0x05: Key 1 state
+  ...
+  Offset 0x04+N: Key N state (N=14 for Module 15, N=31 for Module 32)
+
+OUTPUT REPORT 0x02 - UPLOAD KEY IMAGE (1024 bytes)
+  Offset 0x00: Report ID (0x02)
+  Offset 0x01: Command (0x07)
+  Offset 0x02: Key Index
+  Offset 0x03: Transfer Done (0x00=more chunks, 0x01=final)
+  Offset 0x04-0x05: Chunk Size (UINT16 LE)
+  Offset 0x06-0x07: Chunk Index (UINT16 LE)
+  Offset 0x08-0x3FF: Image data (JPEG, rotated 180)
+
+OUTPUT REPORT 0x02 - UPLOAD LCD IMAGE (1024 bytes)
+  Offset 0x00: Report ID (0x02)
+  Offset 0x01: Command (0x08)
+  Offset 0x02: X offset (UINT16 LE)
+  Offset 0x04: Y offset (UINT16 LE)
+  Offset 0x06: Width (UINT16 LE)
+  Offset 0x08: Height (UINT16 LE)
+  Offset 0x0A: Transfer Done (0x01=final)
+  Offset 0x0B-0x0C: Chunk Index (UINT16 LE)
+  Offset 0x0D-0x0E: Chunk Size (UINT16 LE)
+  Offset 0x10-0x3FF: Image data (JPEG, rotated 180)
+
+FEATURE REPORT 0x03 - SET BRIGHTNESS (32 bytes)
+  Offset 0x00: Report ID (0x03)
+  Offset 0x01: Command (0x08)
+  Offset 0x02: Brightness (0x00-0x64, percentage)
+  Offset 0x03-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x03 - FILL LCD COLOR (32 bytes)
+  Offset 0x00: Report ID (0x03)
+  Offset 0x01: Command (0x05)
+  Offset 0x02: Red (0x00-0xFF)
+  Offset 0x03: Green (0x00-0xFF)
+  Offset 0x04: Blue (0x00-0xFF)
+  Offset 0x05-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x03 - FILL KEY COLOR (32 bytes)
+  Offset 0x00: Report ID (0x03)
+  Offset 0x01: Command (0x06)
+  Offset 0x02: Key Index
+  Offset 0x03: Red (0x00-0xFF)
+  Offset 0x04: Green (0x00-0xFF)
+  Offset 0x05: Blue (0x00-0xFF)
+  Offset 0x06-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x03 - SHOW LOGO (32 bytes)
+  Offset 0x00: Report ID (0x03)
+  Offset 0x01: Command (0x02)
+  Offset 0x02-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x03 - SET SLEEP TIMEOUT (32 bytes)
+  Offset 0x00: Report ID (0x03)
+  Offset 0x01: Command (0x0D)
+  Offset 0x02-0x05: Timeout seconds (INT32 LE, 0=disabled)
+  Offset 0x06-0x1F: Reserved (zero)
+
+FEATURE REPORT 0x06 - GET SERIAL (32 bytes)
+  Send:
+    Offset 0x00: Report ID (0x06)
+  Receive:
+    Offset 0x00: Report ID (0x06)
+    Offset 0x02-0x0F: Serial string (14-char ASCII)
+
+FEATURE REPORT 0x08 - GET UNIT INFO (32 bytes)
+  Send:
+    Offset 0x00: Report ID (0x08)
+  Receive:
+    Offset 0x00: Report ID (0x08)
+    Offset 0x02: Keypad rows
+    Offset 0x03: Keypad columns
+    Offset 0x04-0x05: LCD width (UINT16 LE)
+    Offset 0x06-0x07: LCD height (UINT16 LE)
+    Offset 0x08: Key image width
+    Offset 0x09: Key image height
+    Offset 0x0A: Color depth (bits)
+    Offset 0x0B: Background count
+    Offset 0x0C: Boot logo count
+
+================================================================================
+END OF REPORT
+================================================================================
+
+Document Version: 1.0
+Last Updated: 2025-11-29
+Author: Claude Code AI Assistant
+
+For questions or updates, refer to the project repository or contact
+the tournament dashboard administrator.

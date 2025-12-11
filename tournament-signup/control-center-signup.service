@@ -1,0 +1,21 @@
+[Unit]
+Description=Tournament Control Center - Signup App
+Documentation=https://github.com/rick0490/tournament-control-center
+After=network.target magic-mirror-match.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/tournament-control-center/tournament-signup
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

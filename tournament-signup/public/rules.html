@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tournament Rules & Prizes</title>
+
+	<!-- PWA Meta Tags -->
+	<meta name="description" content="Tournament rules and prize information for Neil's Bahr gaming tournaments">
+	<meta name="theme-color" content="#111827">
+	<link rel="manifest" href="/manifest.json">
+
+	<script src="https://cdn.tailwindcss.com"></script>
+	<style>
+		/* CSS Custom Properties from Style Guide */
+		:root {
+			--color-black-deep: #111827;
+			--gray-800: #1f2937;
+			--gray-700: #374151;
+			--gray-600: #4b5563;
+			--gray-500: #6b7280;
+			--gray-400: #9ca3af;
+			--gray-300: #d1d5db;
+			--gray-200: #e5e7eb;
+			--gray-100: #f3f4f6;
+			--color-white-soft: #f3f4f6;
+			--color-action: #3b82f6;
+			--color-success: #10b981;
+			--color-warning: #f59e0b;
+			--color-error: #ef4444;
+			--color-accent: #E63946;
+			--color-gold: #FFD700;
+			--color-silver: #C0C0C0;
+			--color-bronze: #CD7F32;
+			--radius-sm: 4px;
+			--radius-md: 8px;
+			--radius-lg: 12px;
+			--space-xs: 4px;
+			--space-sm: 8px;
+			--space-md: 16px;
+			--space-lg: 24px;
+			--space-xl: 32px;
+			--duration-fast: 150ms;
+			--duration-normal: 300ms;
+			--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+		}
+
+		body {
+			background: var(--color-black-deep);
+			min-height: 100vh;
+			color: var(--color-white-soft);
+		}
+
+		/* Light mode overrides */
+		.light body,
+		html.light body {
+			background: var(--gray-100);
+			color: var(--gray-800);
+		}
+
+		.rules-card {
+			background: var(--gray-800);
+			border: 1px solid var(--gray-700);
+		}
+
+		.light .rules-card {
+			background: #ffffff;
+			border-color: var(--gray-200);
+		}
+
+		.prize-badge {
+			transition: transform var(--duration-fast) var(--ease-standard);
+		}
+
+		.prize-badge:hover {
+			transform: scale(1.05);
+		}
+
+		.btn-primary {
+			background: var(--color-action);
+			transition: transform var(--duration-fast) var(--ease-standard),
+			            box-shadow var(--duration-fast) var(--ease-standard),
+			            background var(--duration-fast) var(--ease-standard);
+		}
+
+		.btn-primary:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4);
+			background: #2563eb;
+		}
+
+		.btn-primary:active {
+			transform: translateY(0);
+		}
+
+		.btn-secondary {
+			background: var(--gray-700);
+			transition: background var(--duration-fast) var(--ease-standard);
+		}
+
+		.btn-secondary:hover {
+			background: var(--gray-600);
+		}
+
+		.light .btn-secondary {
+			background: var(--gray-200);
+			color: var(--gray-800);
+		}
+
+		.light .btn-secondary:hover {
+			background: var(--gray-300);
+		}
+
+		.rule-item {
+			display: flex;
+			align-items: start;
+			margin-bottom: 1rem;
+		}
+
+		.rule-number {
+			background: var(--color-action);
+			color: white;
+			width: 32px;
+			height: 32px;
+			border-radius: 50%;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font-weight: bold;
+			flex-shrink: 0;
+			margin-right: 12px;
+		}
+
+		.loading {
+			display: inline-block;
+			width: 20px;
+			height: 20px;
+			border: 3px solid var(--gray-600);
+			border-radius: 50%;
+			border-top-color: var(--color-action);
+			animation: spin 0.8s ease-in-out infinite;
+		}
+
+		@keyframes spin {
+			to { transform: rotate(360deg); }
+		}
+
+		/* Focus visible for accessibility */
+		:focus-visible {
+			outline: 2px solid var(--color-action);
+			outline-offset: 2px;
+		}
+
+		button:focus-visible,
+		a:focus-visible {
+			outline: 2px solid var(--color-action);
+			outline-offset: 2px;
+		}
+
+		/* Theme transition */
+		body, .rules-card, .btn-secondary {
+			transition: background var(--duration-normal) var(--ease-standard),
+			            border-color var(--duration-normal) var(--ease-standard),
+			            color var(--duration-normal) var(--ease-standard);
+		}
+
+		/* Info cards */
+		.info-card {
+			background: var(--gray-700);
+			border: 1px solid var(--gray-600);
+		}
+
+		.light .info-card {
+			background: var(--gray-100);
+			border-color: var(--gray-200);
+		}
+	</style>
+</head>
+<body class="flex items-center justify-center p-4">
+	<div class="rules-card rounded-xl shadow-2xl p-6 max-w-2xl w-full my-8">
+		<!-- Theme Toggle -->
+		<div class="flex justify-end mb-4">
+			<button id="theme-toggle" class="p-2 rounded-lg btn-secondary" aria-label="Toggle theme">
+				<!-- Sun icon (shown in dark mode) -->
+				<svg id="sun-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+				</svg>
+				<!-- Moon icon (shown in light mode) -->
+				<svg id="moon-icon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+				</svg>
+			</button>
+		</div>
+
+		<!-- Header -->
+		<div class="text-center mb-6">
+			<h1 class="text-2xl font-bold mb-2">Tournament Rules</h1>
+			<p class="text-gray-400">Please read carefully before competing</p>
+		</div>
+
+		<!-- Tournament Info -->
+		<div id="tournament-header" class="mb-6">
+			<div id="loading-tournament" class="text-center text-gray-400">
+				<div class="loading mx-auto mb-2"></div>
+				<p class="text-sm">Loading tournament info...</p>
+			</div>
+			<div id="tournament-info" class="hidden text-center info-card rounded-lg p-4">
+				<h2 id="tournament-name" class="text-xl font-bold"></h2>
+				<p id="game-name" class="text-sm text-gray-400 uppercase tracking-wide mt-1"></p>
+			</div>
+		</div>
+
+		<!-- Rules Section (Dynamic) -->
+		<div id="rules-section" class="mb-6">
+			<h2 class="text-xl font-bold mb-4 flex items-center">
+				<svg class="w-5 h-5 mr-2 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+					<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+				</svg>
+				General Rules
+			</h2>
+			<div id="rules-container" class="space-y-3">
+				<!-- Rules will be dynamically inserted here -->
+				<div class="text-center text-gray-400">
+					<div class="loading mx-auto mb-2"></div>
+					<p class="text-sm">Loading rules...</p>
+				</div>
+			</div>
+		</div>
+
+		<!-- Prizes Section (Dynamic) -->
+		<div id="prizes-section" class="mb-6">
+			<h2 class="text-xl font-bold mb-4 flex items-center">
+				<svg class="w-5 h-5 mr-2 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+					<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+				</svg>
+				Prize Breakdown
+			</h2>
+			<div id="prizes-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+				<!-- Prizes will be dynamically inserted here -->
+				<div class="col-span-3 text-center text-gray-400">
+					<div class="loading mx-auto mb-2"></div>
+					<p class="text-sm">Loading prizes...</p>
+				</div>
+			</div>
+
+			<div id="prize-tip" class="mt-6 info-card rounded-lg p-4" style="border-color: var(--color-action); background: rgba(59, 130, 246, 0.1);">
+				<p class="text-sm text-blue-300 flex items-start">
+					<svg class="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+					</svg>
+					<span><strong>Pro Tip:</strong> Add your Instagram handle during signup so we can tag you on Neil's Bahr Instagram page if you place on the podium!</span>
+				</p>
+			</div>
+		</div>
+
+		<!-- Additional Info Section (Dynamic) -->
+		<div id="additional-info-section" class="mb-6 info-card rounded-lg p-6">
+			<h3 class="text-lg font-bold mb-3">Additional Information</h3>
+			<ul id="additional-info-container" class="space-y-2 text-gray-300">
+				<!-- Additional info will be dynamically inserted here -->
+				<li class="text-center text-gray-400">
+					<div class="loading inline-block mr-2"></div>
+					<span class="text-sm">Loading info...</span>
+				</li>
+			</ul>
+		</div>
+
+		<!-- Back to Signup Button -->
+		<div class="text-center">
+			<a href="/" class="btn-primary inline-block text-white font-semibold py-3 px-8 rounded-lg shadow-lg text-lg">
+				<span class="flex items-center gap-2">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+					</svg>
+					Back to Signup
+				</span>
+			</a>
+		</div>
+
+		<!-- Footer -->
+		<div class="mt-8 text-center text-gray-500 text-xs">
+			<p>Neil's Bahr Tournament Series</p>
+		</div>
+	</div>
+
+	<script>
+		let gameConfigData = null;
+		let tournamentData = null;
+
+		// Theme Management
+		function initTheme() {
+			const savedTheme = localStorage.getItem('theme');
+			const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+			setTheme(theme);
+		}
+
+		function setTheme(theme) {
+			if (theme === 'light') {
+				document.documentElement.classList.add('light');
+				document.getElementById('sun-icon').classList.add('hidden');
+				document.getElementById('moon-icon').classList.remove('hidden');
+			} else {
+				document.documentElement.classList.remove('light');
+				document.getElementById('sun-icon').classList.remove('hidden');
+				document.getElementById('moon-icon').classList.add('hidden');
+			}
+			localStorage.setItem('theme', theme);
+		}
+
+		function toggleTheme() {
+			const currentTheme = localStorage.getItem('theme') || 'dark';
+			setTheme(currentTheme === 'dark' ? 'light' : 'dark');
+		}
+
+		document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+		initTheme();
+
+		// Fetch tournament information
+		async function loadTournament() {
+			try {
+				const response = await fetch('/api/tournament');
+				const data = await response.json();
+
+				if (data.success && data.tournament) {
+					tournamentData = data.tournament;
+					displayTournament(data.tournament);
+				} else {
+					document.getElementById('loading-tournament').textContent = 'Tournament info unavailable';
+				}
+			} catch (error) {
+				console.error('Error loading tournament:', error);
+				document.getElementById('loading-tournament').textContent = 'Tournament info unavailable';
+			}
+		}
+
+		function displayTournament(tournament) {
+			document.getElementById('loading-tournament').classList.add('hidden');
+			document.getElementById('tournament-info').classList.remove('hidden');
+			document.getElementById('tournament-name').textContent = tournament.name;
+			document.getElementById('game-name').textContent = tournament.gameName || 'Tournament';
+		}
+
+		// Fetch game-specific configuration
+		async function loadGameConfig() {
+			try {
+				const response = await fetch('/api/game-config');
+				const data = await response.json();
+
+				if (data.success && data.config) {
+					gameConfigData = data.config;
+					console.log('Loaded game config:', data.gameKey);
+					renderRules(data.config.rules);
+					renderPrizes(data.config.prizes);
+					renderAdditionalInfo(data.config.additionalInfo);
+				} else {
+					console.error('Failed to load game config');
+					showDefaultContent();
+				}
+			} catch (error) {
+				console.error('Error loading game config:', error);
+				showDefaultContent();
+			}
+		}
+
+		// Render rules dynamically
+		function renderRules(rules) {
+			const container = document.getElementById('rules-container');
+			container.innerHTML = '';
+
+			if (!rules || rules.length === 0) {
+				container.innerHTML = '<p class="text-gray-400 text-center">No rules available</p>';
+				return;
+			}
+
+			rules.forEach((rule, index) => {
+				const ruleDiv = document.createElement('div');
+				ruleDiv.className = 'rule-item';
+				ruleDiv.innerHTML = `
+					<div class="rule-number">${index + 1}</div>
+					<div class="flex-1 text-gray-300">
+						<strong class="text-white">${rule.title}:</strong> ${rule.description}
+					</div>
+				`;
+				container.appendChild(ruleDiv);
+			});
+		}
+
+		// Render prizes dynamically
+		function renderPrizes(prizes) {
+			const container = document.getElementById('prizes-container');
+			container.innerHTML = '';
+
+			if (!prizes || prizes.length === 0) {
+				container.innerHTML = '<p class="text-gray-400 text-center col-span-3">No prize information available</p>';
+				return;
+			}
+
+			prizes.forEach(prize => {
+				const prizeDiv = document.createElement('div');
+				prizeDiv.className = 'prize-badge rounded-xl p-6 text-center shadow-lg';
+
+				// Use style guide medal colors
+				let bgColor, textColor, iconColor;
+				switch(prize.place) {
+					case 1:
+						bgColor = 'rgba(255, 215, 0, 0.15)';
+						textColor = '#FFD700';
+						iconColor = '#FFD700';
+						break;
+					case 2:
+						bgColor = 'rgba(192, 192, 192, 0.15)';
+						textColor = '#C0C0C0';
+						iconColor = '#C0C0C0';
+						break;
+					case 3:
+						bgColor = 'rgba(205, 127, 50, 0.15)';
+						textColor = '#CD7F32';
+						iconColor = '#CD7F32';
+						break;
+					default:
+						bgColor = 'rgba(59, 130, 246, 0.15)';
+						textColor = '#3b82f6';
+						iconColor = '#3b82f6';
+				}
+
+				prizeDiv.style.background = bgColor;
+				prizeDiv.style.border = `1px solid ${textColor}`;
+
+				// Medal icon SVG
+				const medalIcon = `
+					<svg class="w-12 h-12 mx-auto mb-2" fill="${iconColor}" viewBox="0 0 24 24">
+						<path d="M12 2C9.79 2 8 3.79 8 6s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm-4.5 4.5l-1.5 9 6-3 6 3-1.5-9"/>
+					</svg>
+				`;
+
+				const extrasHTML = prize.extras && prize.extras.length > 0
+					? `<div class="text-sm text-gray-400 mt-2">${prize.extras.map(e => `+ ${e}`).join('<br>')}</div>`
+					: '';
+
+				prizeDiv.innerHTML = `
+					${medalIcon}
+					<div class="text-lg font-bold mb-1" style="color: ${textColor}">${prize.position}</div>
+					<div class="text-2xl font-extrabold" style="color: ${textColor}">$${prize.amount}</div>
+					${extrasHTML}
+				`;
+				container.appendChild(prizeDiv);
+			});
+		}
+
+		// Render additional info dynamically
+		function renderAdditionalInfo(info) {
+			const container = document.getElementById('additional-info-container');
+			container.innerHTML = '';
+
+			if (!info || info.length === 0) {
+				container.innerHTML = '<li class="text-gray-400 text-center">No additional information available</li>';
+				return;
+			}
+
+			info.forEach(item => {
+				const li = document.createElement('li');
+				li.className = 'flex items-start';
+				li.innerHTML = `
+					<svg class="w-5 h-5 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+					</svg>
+					<span>${item}</span>
+				`;
+				container.appendChild(li);
+			});
+		}
+
+		// Show default content if loading fails
+		function showDefaultContent() {
+			renderRules([
+				{ title: 'Check-In Required', description: 'All participants must check in before the tournament starts.' },
+				{ title: 'Match Format', description: 'Format will be announced before tournament begins.' },
+				{ title: 'Conduct', description: 'Unsportsmanlike conduct will result in disqualification.' }
+			]);
+
+			renderPrizes([
+				{ place: 1, position: '1st Place', amount: 100, extras: ['Instagram Feature'] },
+				{ place: 2, position: '2nd Place', amount: 50, extras: ['Instagram Feature'] },
+				{ place: 3, position: '3rd Place', amount: 25, extras: ['Instagram Feature'] }
+			]);
+
+			renderAdditionalInfo([
+				'Questions? Ask a tournament organizer at the venue'
+			]);
+		}
+
+		// Load everything on page load
+		Promise.all([loadTournament(), loadGameConfig()]).then(() => {
+			console.log('Tournament rules page loaded successfully');
+		});
+	</script>
+</body>
+</html>

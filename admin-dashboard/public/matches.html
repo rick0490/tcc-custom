@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Matches - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Match scoring and winner declaration">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Tournament Selection -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h2 class="text-xl font-bold text-white">Active Tournament</h2>
+					<p class="text-sm text-gray-400 mt-1">Select a tournament to manage matches</p>
+				</div>
+				<button id="refreshMatchesBtn" onclick="refreshMatches()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+					<svg id="refreshMatchesIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					<span id="refreshMatchesText">Refresh</span>
+				</button>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+				<div class="md:col-span-2">
+					<select id="tournamentSelect" onchange="loadTournamentMatches()" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						<option value="">Select a tournament...</option>
+					</select>
+				</div>
+				<div class="flex items-center gap-2">
+					<div id="tournamentStatus" class="text-sm text-gray-400">
+						No tournament selected
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Station Management -->
+	<section id="stationSection" class="mb-6 hidden">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h2 class="text-xl font-bold text-white">TV Stations</h2>
+					<p class="text-sm text-gray-400 mt-1">Manage TV stations for match assignments</p>
+				</div>
+				<button id="refreshStationsBtn" onclick="refreshStations()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+					<svg id="refreshStationsIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					<span id="refreshStationsText">Refresh</span>
+				</button>
+			</div>
+
+			<!-- Station Settings -->
+			<div class="bg-gray-750 rounded-lg p-4 border border-gray-600 mb-4">
+				<div class="flex items-center justify-between">
+					<div>
+						<div class="text-white font-medium">Auto-assign stations to matches</div>
+						<div class="text-sm text-gray-400">Automatically assign available stations to matches as they become ready</div>
+						<div class="text-xs text-yellow-500 mt-1" id="autoAssignNote"></div>
+					</div>
+					<label class="relative inline-flex items-center cursor-pointer">
+						<input type="checkbox" id="autoAssignToggle" class="sr-only peer" onchange="toggleAutoAssign()">
+						<div class="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+					</label>
+				</div>
+			</div>
+
+			<!-- Station List -->
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+				<div id="stationList" class="space-y-2">
+					<!-- Stations will be rendered here -->
+				</div>
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="text-white font-medium mb-3">Add Station</h3>
+					<div class="flex gap-2">
+						<input type="text" id="newStationName" placeholder="e.g., TV 1"
+							class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500">
+						<button onclick="createStation()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium">
+							Add
+						</button>
+					</div>
+					<div class="mt-3 text-xs text-gray-400">
+						<p>Suggested names: TV 1, TV 2</p>
+						<p>These must match the station names expected by the display modules.</p>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Match Statistics -->
+	<section id="statsSection" class="mb-6 hidden">
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<div class="text-3xl font-bold text-white" id="statTotal">0</div>
+				<div class="text-sm text-gray-400">Total Matches</div>
+			</div>
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<div class="text-3xl font-bold text-yellow-400" id="statOpen">0</div>
+				<div class="text-sm text-gray-400">Open</div>
+			</div>
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<div class="text-3xl font-bold text-blue-400" id="statUnderway">0</div>
+				<div class="text-sm text-gray-400">In Progress</div>
+			</div>
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<div class="text-3xl font-bold text-green-400" id="statComplete">0</div>
+				<div class="text-sm text-gray-400">Complete</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Match List -->
+	<section id="matchSection" class="mb-6 hidden">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+				<div class="flex items-center gap-3">
+					<h2 class="text-xl font-bold text-white">Matches</h2>
+					<span id="matchProgressBadge" class="hidden text-xs px-2 py-1 rounded bg-gray-700 text-gray-300"></span>
+					<span id="matchesCacheIndicator" class="hidden"></span>
+					<span id="matchesLastUpdated" class="hidden sm:inline-flex items-center gap-1"></span>
+				</div>
+				<div class="match-filters flex gap-2 overflow-x-auto pb-2 sm:pb-0 -mx-2 px-2 sm:mx-0 sm:px-0">
+					<button onclick="filterMatches('all')" class="filter-btn px-3 py-2 sm:py-1 text-sm rounded-md bg-blue-600 text-white flex-shrink-0 touch-target" data-filter="all">All</button>
+					<button onclick="filterMatches('open')" class="filter-btn px-3 py-2 sm:py-1 text-sm rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 flex-shrink-0 touch-target" data-filter="open">Open</button>
+					<button onclick="filterMatches('underway')" class="filter-btn px-3 py-2 sm:py-1 text-sm rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 flex-shrink-0 touch-target" data-filter="underway">In Progress</button>
+					<button onclick="filterMatches('complete')" class="filter-btn px-3 py-2 sm:py-1 text-sm rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 flex-shrink-0 touch-target" data-filter="complete">Complete</button>
+					<span class="border-l border-gray-600 mx-1 hidden sm:block"></span>
+					<button onclick="openBatchScoreModal()" class="px-3 py-2 sm:py-1 text-sm rounded-md bg-green-600 hover:bg-green-700 text-white flex-shrink-0 flex items-center gap-1 touch-target" title="Enter multiple scores at once (Ctrl+Shift+S)">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+						</svg>
+						<span class="hidden sm:inline">Quick Score</span>
+					</button>
+				</div>
+			</div>
+
+			<div id="matchList" class="space-y-3">
+				<div class="text-center py-8 text-gray-400">
+					Select a tournament to view matches
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Score Entry Modal -->
+	<div id="scoreModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 border border-gray-700">
+			<h3 class="text-xl font-bold text-white mb-4">Report Match Result</h3>
+
+			<div id="scoreModalContent" class="mb-4">
+				<!-- Dynamic content -->
+			</div>
+
+			<!-- Quick Winner Section -->
+			<div class="bg-gray-750 rounded-lg p-4 border border-gray-600 mb-4">
+				<div class="text-sm text-gray-400 mb-3 text-center">Quick Winner (no score required)</div>
+				<div class="grid grid-cols-2 gap-4">
+					<button onclick="quickWinner(1)" class="px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-md font-medium transition">
+						<span id="quickPlayer1Name" class="block truncate">Player 1</span>
+						<span class="text-xs text-purple-200">Wins</span>
+					</button>
+					<button onclick="quickWinner(2)" class="px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-md font-medium transition">
+						<span id="quickPlayer2Name" class="block truncate">Player 2</span>
+						<span class="text-xs text-purple-200">Wins</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- DQ/Forfeit Section -->
+			<div class="bg-gray-750 rounded-lg p-4 border border-gray-600 mb-6">
+				<div class="text-sm text-gray-400 mb-3 text-center">DQ / Forfeit (opponent no-show)</div>
+				<div class="grid grid-cols-2 gap-4">
+					<button onclick="forfeitMatch(1)" class="px-4 py-3 bg-red-700 hover:bg-red-800 text-white rounded-md font-medium transition">
+						<span id="forfeitPlayer1Name" class="block truncate">Player 1</span>
+						<span class="text-xs text-red-200">Advances (opponent DQ)</span>
+					</button>
+					<button onclick="forfeitMatch(2)" class="px-4 py-3 bg-red-700 hover:bg-red-800 text-white rounded-md font-medium transition">
+						<span id="forfeitPlayer2Name" class="block truncate">Player 2</span>
+						<span class="text-xs text-red-200">Advances (opponent DQ)</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Score Entry Section -->
+			<div class="border-t border-gray-600 pt-4">
+				<div class="text-sm text-gray-400 mb-3 text-center">Or enter scores</div>
+				<div class="grid grid-cols-2 gap-6 mb-4">
+					<!-- Player 1 -->
+					<div class="text-center">
+						<div id="scorePlayer1Name" class="font-medium text-white mb-3 truncate">Player 1</div>
+						<div class="flex items-center justify-center gap-3">
+							<button onclick="adjustScore(1, -1)" class="w-10 h-10 bg-gray-700 hover:bg-gray-600 rounded-lg text-xl font-bold">-</button>
+							<input type="number" id="scorePlayer1" value="0" min="0" max="99"
+								class="w-16 h-12 text-center text-2xl font-bold bg-gray-700 border border-gray-600 rounded-lg text-white">
+							<button onclick="adjustScore(1, 1)" class="w-10 h-10 bg-gray-700 hover:bg-gray-600 rounded-lg text-xl font-bold">+</button>
+						</div>
+					</div>
+
+					<!-- Player 2 -->
+					<div class="text-center">
+						<div id="scorePlayer2Name" class="font-medium text-white mb-3 truncate">Player 2</div>
+						<div class="flex items-center justify-center gap-3">
+							<button onclick="adjustScore(2, -1)" class="w-10 h-10 bg-gray-700 hover:bg-gray-600 rounded-lg text-xl font-bold">-</button>
+							<input type="number" id="scorePlayer2" value="0" min="0" max="99"
+								class="w-16 h-12 text-center text-2xl font-bold bg-gray-700 border border-gray-600 rounded-lg text-white">
+							<button onclick="adjustScore(2, 1)" class="w-10 h-10 bg-gray-700 hover:bg-gray-600 rounded-lg text-xl font-bold">+</button>
+						</div>
+					</div>
+				</div>
+
+				<!-- Single Declare Winner Button -->
+				<button onclick="declareWinnerByScore()" class="w-full mb-4 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-md font-medium transition">
+					Declare Winner
+				</button>
+
+				<div class="flex gap-4 mb-3">
+					<button onclick="submitScore()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition font-medium">
+						Save Score Only
+					</button>
+					<button onclick="closeScoreModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-md transition font-medium">
+						Cancel
+					</button>
+				</div>
+				<div class="flex justify-center">
+					<button onclick="clearScores()" class="text-sm text-gray-400 hover:text-red-400 transition">
+						Clear Scores
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Mark Underway Confirmation Modal -->
+	<div id="underwayModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+			<h3 class="text-xl font-bold text-white mb-4">Start Match</h3>
+			<p class="text-gray-300 mb-4">Mark this match as in progress?</p>
+			<div id="underwayMatchInfo" class="bg-gray-750 rounded-lg p-4 mb-6 border border-gray-600">
+				<!-- Dynamic content -->
+			</div>
+			<div class="flex gap-4">
+				<button onclick="confirmMarkUnderway()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition font-medium">
+					Start Match
+				</button>
+				<button onclick="closeUnderwayModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-md transition font-medium">
+					Cancel
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Batch Score Entry Modal -->
+	<div id="batchScoreModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg w-full max-w-4xl mx-4 border border-gray-700 max-h-[90vh] flex flex-col">
+			<!-- Header -->
+			<div class="flex items-center justify-between p-4 border-b border-gray-700">
+				<div>
+					<h3 class="text-xl font-bold text-white">Quick Score Entry</h3>
+					<p class="text-sm text-gray-400 mt-1">Enter scores for multiple matches at once</p>
+				</div>
+				<button onclick="closeBatchScoreModal()" class="text-gray-400 hover:text-white">
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+					</svg>
+				</button>
+			</div>
+
+			<!-- Score Table -->
+			<div class="flex-1 overflow-y-auto p-4">
+				<table class="w-full">
+					<thead class="text-left text-sm text-gray-400 border-b border-gray-700">
+						<tr>
+							<th class="py-2 px-2 w-16">Match</th>
+							<th class="py-2 px-2">Player 1</th>
+							<th class="py-2 px-2 w-20 text-center">Score</th>
+							<th class="py-2 px-2 w-8 text-center">-</th>
+							<th class="py-2 px-2 w-20 text-center">Score</th>
+							<th class="py-2 px-2">Player 2</th>
+							<th class="py-2 px-2 w-24 text-center">Winner</th>
+						</tr>
+					</thead>
+					<tbody id="batchScoreTableBody" class="text-white">
+						<!-- Dynamic content -->
+					</tbody>
+				</table>
+				<div id="batchScoreEmpty" class="hidden text-center py-8 text-gray-400">
+					No open or in-progress matches to score
+				</div>
+			</div>
+
+			<!-- Footer -->
+			<div class="flex items-center justify-between p-4 border-t border-gray-700 bg-gray-750">
+				<div class="text-sm text-gray-400">
+					<span id="batchScoreCount">0 of 0</span> matches ready to submit
+					<span class="hidden sm:inline ml-2">| Tab between inputs, Ctrl+Enter to submit</span>
+				</div>
+				<div class="flex gap-3">
+					<button onclick="closeBatchScoreModal()" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-md transition">
+						Cancel
+					</button>
+					<button id="batchSubmitBtn" onclick="submitBatchScores()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+						Submit All
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/matches.js?v=18"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Matches');
+		});
+	</script>
+</body>
+</html>

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Sponsors - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Upload and manage sponsor logos">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=17">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Config Panel -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700">
+			<div class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-750 rounded-t-lg transition-colors" onclick="toggleSection('settings')">
+				<div class="flex items-center gap-3">
+					<svg id="settingsChevron" class="w-5 h-5 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+					</svg>
+					<h2 class="text-xl font-bold text-white">Sponsor Display Settings</h2>
+				</div>
+				<div class="flex items-center gap-4" onclick="event.stopPropagation()">
+					<label class="flex items-center gap-2 cursor-pointer">
+						<span class="text-sm text-gray-300">Enable Sponsors</span>
+						<div class="relative">
+							<input type="checkbox" id="masterToggle" class="sr-only peer">
+							<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+						</div>
+					</label>
+				</div>
+			</div>
+
+			<div id="settingsContent" class="p-6 pt-2 border-t border-gray-700">
+			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+				<!-- Rotation Settings -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="text-sm font-medium text-gray-300 mb-3">Rotation</h3>
+					<label class="flex items-center gap-2 mb-3 cursor-pointer">
+						<input type="checkbox" id="rotationToggle" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+						<span class="text-sm text-gray-300">Auto-rotate sponsors</span>
+					</label>
+					<div class="flex items-center gap-2 mb-2">
+						<label class="text-sm text-gray-400">Interval:</label>
+						<input type="number" id="rotationInterval" min="10" max="300" value="30"
+							class="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+						<span class="text-sm text-gray-400">sec</span>
+					</div>
+					<div class="flex items-center gap-2 mb-2">
+						<label class="text-sm text-gray-400">Transition:</label>
+						<input type="number" id="rotationTransition" min="0" max="5000" step="100" value="500"
+							class="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+						<span class="text-sm text-gray-400">ms</span>
+					</div>
+					<p class="text-xs text-gray-500">Requires 2+ sponsors in same position</p>
+				</div>
+
+				<!-- Rotation Order -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="text-sm font-medium text-gray-300 mb-3">Rotation Order</h3>
+					<select id="rotationOrder" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+						<option value="sequential">Sequential</option>
+						<option value="random">Random</option>
+					</select>
+				</div>
+
+				<!-- Timer View Settings -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="text-sm font-medium text-gray-300 mb-3">Timer View</h3>
+					<label class="flex items-center gap-2 mb-3 cursor-pointer">
+						<input type="checkbox" id="timerViewToggle" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+						<span class="text-sm text-gray-300">Enable timer mode</span>
+					</label>
+					<div class="space-y-2">
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-400 w-10">Show:</label>
+							<input type="number" id="timerShowDuration" min="3" max="300" value="10"
+								class="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							<span class="text-sm text-gray-400">sec</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<label class="text-sm text-gray-400 w-10">Hide:</label>
+							<input type="number" id="timerHideDuration" min="3" max="300" value="5"
+								class="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							<span class="text-sm text-gray-400">sec</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- Display Targets -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="text-sm font-medium text-gray-300 mb-3">Show On</h3>
+					<label class="flex items-center gap-2 mb-2 cursor-pointer">
+						<input type="checkbox" id="displayMatch" checked class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+						<span class="text-sm text-gray-300">Match Display</span>
+					</label>
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input type="checkbox" id="displayBracket" checked class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+						<span class="text-sm text-gray-300">Bracket Display</span>
+					</label>
+				</div>
+
+				<!-- Quick Actions -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="text-sm font-medium text-gray-300 mb-3">Quick Actions</h3>
+					<div class="flex flex-col gap-2">
+						<button onclick="showAllSponsors()" class="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition">
+							Show All Active
+						</button>
+						<button onclick="hideAllSponsors()" class="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition">
+							Hide All
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="flex justify-end mt-4">
+				<button onclick="saveConfig()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition font-medium">
+					Save Settings
+				</button>
+			</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Upload Section -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700">
+			<div class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-750 rounded-t-lg transition-colors" onclick="toggleSection('upload')">
+				<div class="flex items-center gap-3">
+					<svg id="uploadChevron" class="w-5 h-5 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+					</svg>
+					<h2 class="text-xl font-bold text-white">Upload Sponsor Logo</h2>
+				</div>
+			</div>
+
+			<div id="uploadContent" class="p-6 pt-2 border-t border-gray-700">
+			<form id="uploadForm" enctype="multipart/form-data">
+				<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+					<!-- File Input -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Logo File <span class="text-red-500">*</span>
+						</label>
+						<input type="file" id="logoFile" name="logo" accept="image/png,image/jpeg,image/gif,image/svg+xml,image/webp" required
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+						<p class="text-xs text-gray-400 mt-1">PNG, JPG, GIF, SVG, or WebP. Max 10MB</p>
+					</div>
+
+					<!-- Sponsor Name -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Sponsor Name <span class="text-red-500">*</span>
+						</label>
+						<input type="text" id="sponsorName" name="name" required placeholder="Company Name"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+					</div>
+
+					<!-- Position Type -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Position Type <span class="text-red-500">*</span>
+						</label>
+						<select id="positionType" name="type" required
+							onchange="updatePositionDropdown(this.value)"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<option value="corner">Corner Logo</option>
+							<option value="banner">Horizontal Banner</option>
+						</select>
+					</div>
+
+					<!-- Position -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Position <span class="text-red-500">*</span>
+						</label>
+						<select id="positionSelect" name="position" required
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<option value="top-left">Top Left</option>
+							<option value="top-right" selected>Top Right</option>
+							<option value="bottom-left">Bottom Left</option>
+							<option value="bottom-right">Bottom Right</option>
+						</select>
+					</div>
+				</div>
+
+				<div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+
+					<!-- Size -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Size: <span id="sizeValue">1.0</span>x
+						</label>
+						<input type="range" id="sizeSlider" name="size" min="0.5" max="5.0" step="0.1" value="1.0"
+							oninput="document.getElementById('sizeValue').textContent = parseFloat(this.value).toFixed(1)"
+							class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+					</div>
+
+					<!-- Opacity -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Opacity: <span id="opacityValue">100</span>%
+						</label>
+						<input type="range" id="opacitySlider" name="opacity" min="10" max="100" value="100"
+							oninput="document.getElementById('opacityValue').textContent = this.value"
+							class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+					</div>
+
+					<!-- Rounded Corners -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Rounded: <span id="borderRadiusValue">0</span>px
+						</label>
+						<input type="range" id="borderRadiusSlider" name="borderRadius" min="0" max="50" value="0"
+							oninput="document.getElementById('borderRadiusValue').textContent = this.value"
+							class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+					</div>
+
+					<!-- Custom Filename -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Custom Filename
+						</label>
+						<input type="text" id="customName" name="customName" placeholder="(optional)"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+					</div>
+				</div>
+
+				<button type="button" onclick="handleSponsorUpload(event)" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md transition font-medium">
+					Upload Sponsor
+				</button>
+			</form>
+			</div>
+		</div>
+	</section>
+
+	<!-- Sponsor Gallery -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700">
+			<div class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-750 rounded-t-lg transition-colors" onclick="toggleSection('gallery')">
+				<div class="flex items-center gap-3">
+					<svg id="galleryChevron" class="w-5 h-5 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+					</svg>
+					<h2 class="text-xl font-bold text-white">Sponsor Gallery</h2>
+					<span id="sponsorCount" class="text-sm text-gray-400">(0 sponsors)</span>
+					<span id="sponsorsLastUpdated" class="hidden sm:inline-flex items-center gap-1"></span>
+				</div>
+				<button id="refreshSponsorsBtn" onclick="event.stopPropagation(); loadSponsors()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+					<svg id="refreshSponsorsIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					<span id="refreshSponsorsText">Refresh</span>
+				</button>
+			</div>
+
+			<div id="galleryContent" class="p-6 pt-2 border-t border-gray-700">
+				<!-- Position Filter Tabs -->
+				<div class="flex flex-wrap gap-2 mb-4" onclick="event.stopPropagation()">
+					<button onclick="filterByPosition('all')" data-position="all" class="position-tab active px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium transition">
+						All
+					</button>
+					<button onclick="filterByPosition('top-left')" data-position="top-left" class="position-tab px-4 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md text-sm font-medium transition">
+						Top Left
+					</button>
+					<button onclick="filterByPosition('top-right')" data-position="top-right" class="position-tab px-4 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md text-sm font-medium transition">
+						Top Right
+					</button>
+					<button onclick="filterByPosition('bottom-left')" data-position="bottom-left" class="position-tab px-4 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md text-sm font-medium transition">
+						Bottom Left
+					</button>
+					<button onclick="filterByPosition('bottom-right')" data-position="bottom-right" class="position-tab px-4 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md text-sm font-medium transition">
+						Bottom Right
+					</button>
+					<button onclick="filterByPosition('top-banner')" data-position="top-banner" class="position-tab px-4 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md text-sm font-medium transition">
+						Top Banner
+					</button>
+					<button onclick="filterByPosition('bottom-banner')" data-position="bottom-banner" class="position-tab px-4 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md text-sm font-medium transition">
+						Bottom Banner
+					</button>
+				</div>
+				<div id="sponsorGallery" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+					<!-- Sponsor cards will be rendered here -->
+					<div class="text-center py-8 text-gray-400 col-span-full">Loading sponsors...</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Logo Size Hints -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+			<div class="flex items-start gap-3">
+				<svg class="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+				</svg>
+				<div class="text-sm text-gray-400">
+					<p class="font-medium text-gray-300 mb-2">Recommended Logo Dimensions</p>
+					<ul class="space-y-1">
+						<li><span class="text-gray-300">Corner logos:</span> 400 x 200 pixels (2:1 aspect ratio) for best results at 1.0x scale</li>
+						<li><span class="text-gray-300">Banner logos:</span> 300 x 60 pixels (5:1 aspect ratio) for horizontal banners</li>
+					</ul>
+					<p class="mt-2 text-gray-500">Logos are positioned 50px from screen edges. Use PNG with transparency for best appearance.</p>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Edit Modal -->
+	<div id="editModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="text-xl font-bold text-white">Edit Sponsor</h3>
+				<button onclick="closeEditModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+
+			<form id="editForm">
+				<input type="hidden" id="editSponsorId">
+
+				<div class="space-y-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">Sponsor Name</label>
+						<input type="text" id="editName" required
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">Position</label>
+						<select id="editPosition"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<option value="top-left">Top Left</option>
+							<option value="top-right">Top Right</option>
+							<option value="bottom-left">Bottom Left</option>
+							<option value="bottom-right">Bottom Right</option>
+							<option value="top-banner">Top Banner</option>
+							<option value="bottom-banner">Bottom Banner</option>
+						</select>
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">Size: <span id="editSizeValue">1.0</span>x</label>
+						<input type="range" id="editSize" min="0.5" max="5.0" step="0.1" value="1.0"
+							oninput="document.getElementById('editSizeValue').textContent = parseFloat(this.value).toFixed(1)"
+							class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">Opacity: <span id="editOpacityValue">100</span>%</label>
+						<input type="range" id="editOpacity" min="10" max="100" value="100"
+							oninput="document.getElementById('editOpacityValue').textContent = this.value"
+							class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">Rounded: <span id="editBorderRadiusValue">0</span>px</label>
+						<input type="range" id="editBorderRadius" min="0" max="50" value="0"
+							oninput="document.getElementById('editBorderRadiusValue').textContent = this.value"
+							class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+					</div>
+
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input type="checkbox" id="editActive" checked class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+						<span class="text-sm text-gray-300">Active (included in rotation)</span>
+					</label>
+				</div>
+
+				<div class="flex gap-4 pt-6">
+					<button type="button" onclick="saveEdit()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition font-medium">
+						Save Changes
+					</button>
+					<button type="button" onclick="closeEditModal()" class="bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-md transition font-medium">
+						Cancel
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Delete Confirmation Modal -->
+	<div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+			<h3 class="text-xl font-bold text-white mb-4">Delete Sponsor</h3>
+			<p class="text-gray-300 mb-2">Are you sure you want to delete this sponsor?</p>
+			<p class="text-white font-medium mb-6" id="deleteFileName">--</p>
+			<div class="flex gap-4">
+				<button onclick="confirmDelete()" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-md transition font-medium">
+					Delete
+				</button>
+				<button onclick="closeDeleteModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-md transition font-medium">
+					Cancel
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Preview Modal -->
+	<div id="previewModal" class="hidden fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 cursor-pointer" onclick="closePreviewModal()">
+		<div class="max-w-4xl max-h-[90vh] p-4">
+			<img id="previewImage" src="" alt="Preview" class="max-w-full max-h-[80vh] object-contain rounded-lg">
+			<p id="previewName" class="text-center text-white mt-4 text-lg font-medium"></p>
+		</div>
+	</div>
+
+	<!-- Scripts -->
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=3"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/sponsors.js?v=28"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Sponsors');
+		});
+	</script>
+</body>
+</html>

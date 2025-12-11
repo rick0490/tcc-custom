@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Command Center - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Tournament Command Center - Single view for all operations">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Command Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=106">
+	<!-- Socket.IO for real-time updates -->
+	<script src="/socket.io/socket.io.js"></script>
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Command Center Header -->
+	<header id="ccHeader" class="cc-header bg-gray-800 border-b border-gray-700 px-4 py-3 hidden">
+		<div class="flex items-center justify-between flex-wrap gap-2">
+			<div class="flex items-center gap-4">
+				<h1 class="text-xl font-bold text-white">Command Center</h1>
+				<div id="tournamentIndicator" class="flex items-center gap-2">
+					<span class="status-indicator offline"></span>
+					<span class="text-gray-400 text-sm">No tournament active</span>
+				</div>
+			</div>
+			<div class="flex items-center gap-4">
+				<!-- Connection Status -->
+				<div id="connectionStatus" class="flex items-center gap-2 text-sm">
+					<span class="status-indicator offline"></span>
+					<span class="text-gray-400">Connecting...</span>
+				</div>
+				<!-- Last Updated -->
+				<div id="lastUpdated" class="text-xs text-gray-500 hidden md:block"></div>
+				<!-- Keyboard Shortcuts Toggle -->
+				<button id="keyboardHelpBtn" onclick="toggleKeyboardHelp()"
+					class="text-gray-400 hover:text-white p-2 hidden md:block" title="Keyboard Shortcuts (?)">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+							d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+						</path>
+					</svg>
+				</button>
+			</div>
+		</div>
+	</header>
+
+	<!-- No Tournament State -->
+	<div id="noTournamentState" class="hidden items-center justify-center min-h-[60vh]">
+		<div class="text-center p-8">
+			<svg class="w-16 h-16 mx-auto text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+					d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+				</path>
+			</svg>
+			<h2 class="text-xl font-bold text-gray-400 mb-2">No Active Tournament</h2>
+			<p class="text-gray-500 mb-4">Select a tournament to begin managing matches</p>
+			<a href="/tournament.html" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+				</svg>
+				Setup Tournament
+			</a>
+		</div>
+	</div>
+
+	<!-- 4-Quadrant Grid -->
+	<main id="commandGrid" class="cc-grid hidden p-4">
+		<!-- Quadrant 1: Current Matches (Top Left) -->
+		<section class="cc-quadrant cc-current-matches">
+			<div class="cc-quadrant-header">
+				<h2 class="cc-quadrant-title">
+					<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+					</svg>
+					Current Matches
+				</h2>
+				<span class="cc-quadrant-badge" id="currentMatchCount">0</span>
+			</div>
+			<div class="cc-quadrant-content" id="currentMatchesContainer">
+				<div class="cc-empty-state">
+					<p class="text-gray-500">No matches in progress</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- Quadrant 2: Match Queue (Top Right) -->
+		<section class="cc-quadrant cc-match-queue">
+			<div class="cc-quadrant-header">
+				<h2 class="cc-quadrant-title">
+					<svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+					</svg>
+					Match Queue
+				</h2>
+				<span class="cc-quadrant-badge bg-yellow-600" id="queueMatchCount">0</span>
+			</div>
+			<div class="cc-quadrant-content" id="matchQueueContainer">
+				<div class="cc-empty-state">
+					<p class="text-gray-500">No matches waiting</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- Quadrant 3: System Status (Bottom Left) -->
+		<section class="cc-quadrant cc-system-status">
+			<div class="cc-quadrant-header">
+				<h2 class="cc-quadrant-title">
+					<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+					</svg>
+					System Status
+				</h2>
+			</div>
+			<div class="cc-quadrant-content" id="systemStatusContainer">
+				<!-- System status rendered here -->
+			</div>
+		</section>
+
+		<!-- Quadrant 4: Quick Actions (Bottom Right) -->
+		<section class="cc-quadrant cc-quick-actions">
+			<div class="cc-quadrant-header">
+				<h2 class="cc-quadrant-title">
+					<svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+					</svg>
+					Quick Actions
+				</h2>
+			</div>
+			<div class="cc-quadrant-content" id="quickActionsContainer">
+				<!-- Quick actions rendered here -->
+			</div>
+		</section>
+	</main>
+
+	<!-- Match History Panel (Collapsible) -->
+	<div id="matchHistoryPanel" class="match-history-panel">
+		<button onclick="toggleMatchHistoryPanel()" class="match-history-toggle">
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+			</svg>
+			<span>Recent Results</span>
+			<span id="matchHistoryCount" class="match-history-badge">0</span>
+			<svg id="matchHistoryChevron" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+			</svg>
+		</button>
+		<div id="matchHistoryContent" class="match-history-content hidden">
+			<!-- Match history items rendered here -->
+		</div>
+	</div>
+
+	<!-- NEXT UP Floating Indicator -->
+	<div id="nextUpIndicator" class="fixed bottom-4 right-4 z-40 hidden">
+		<div class="next-up-card bg-gray-800 border-2 border-green-500 rounded-lg shadow-xl p-4 max-w-xs animate-pulse-slow">
+			<div class="flex items-center gap-2 mb-2">
+				<span class="flex h-3 w-3 relative">
+					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+					<span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+				</span>
+				<span class="text-green-400 font-bold text-sm uppercase tracking-wide">Next Up</span>
+			</div>
+			<div id="nextUpPlayers" class="text-white font-medium mb-3">
+				<span id="nextUpPlayer1">Player 1</span>
+				<span class="text-gray-500 mx-1">vs</span>
+				<span id="nextUpPlayer2">Player 2</span>
+			</div>
+			<button onclick="startNextMatch()" class="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+				</svg>
+				Start Match
+			</button>
+			<button onclick="hideNextUpIndicator()" class="absolute top-2 right-2 text-gray-500 hover:text-white p-1" title="Dismiss">
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+				</svg>
+			</button>
+		</div>
+	</div>
+
+	<!-- Score Entry Modal -->
+	<div id="scoreModal" class="fixed inset-0 z-50 hidden">
+		<div class="absolute inset-0 bg-black bg-opacity-50" onclick="closeScoreModal()"></div>
+		<div class="absolute inset-4 md:inset-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2
+					md:w-full md:max-w-lg bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col max-h-[calc(100vh-2rem)]">
+			<!-- Modal Header -->
+			<div class="p-4 border-b border-gray-700 flex-shrink-0">
+				<div class="flex items-center justify-between">
+					<h3 class="text-lg font-bold text-white" id="scoreModalTitle">Score Entry</h3>
+					<button onclick="closeScoreModal()" class="text-gray-400 hover:text-white">
+						<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+						</svg>
+					</button>
+				</div>
+				<div class="text-sm text-gray-400 mt-1" id="scoreModalSubtitle">Round 1</div>
+			</div>
+			<!-- Modal Content -->
+			<div class="p-4 overflow-y-auto flex-1" id="scoreModalContent">
+				<!-- Score entry form rendered here -->
+			</div>
+		</div>
+	</div>
+
+	<!-- Keyboard Shortcuts Modal -->
+	<div id="keyboardHelpModal" class="fixed inset-0 z-50 hidden">
+		<div class="absolute inset-0 bg-black bg-opacity-50" onclick="toggleKeyboardHelp()"></div>
+		<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h3 class="text-lg font-bold text-white mb-4">Keyboard Shortcuts</h3>
+			<div class="space-y-3 text-sm">
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Select match 1-5</span>
+					<div class="flex gap-1">
+						<kbd class="kbd">1</kbd><span class="text-gray-600">-</span><kbd class="kbd">5</kbd>
+					</div>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Player 1 wins (quick)</span>
+					<kbd class="kbd">W</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Player 2 wins (quick)</span>
+					<kbd class="kbd">L</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Start selected match</span>
+					<kbd class="kbd">S</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Open score modal</span>
+					<kbd class="kbd">Enter</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Close modal / Deselect</span>
+					<kbd class="kbd">Esc</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Refresh data</span>
+					<kbd class="kbd">R</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Send ticker message</span>
+					<kbd class="kbd">T</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Start DQ timer</span>
+					<kbd class="kbd">D</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Emergency stop / resume</span>
+					<kbd class="kbd">P</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Undo last match</span>
+					<kbd class="kbd">Z</kbd>
+				</div>
+				<div class="flex justify-between items-center">
+					<span class="text-gray-400">Toggle this help</span>
+					<kbd class="kbd">?</kbd>
+				</div>
+			</div>
+			<button onclick="toggleKeyboardHelp()" class="mt-4 w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition">
+				Close
+			</button>
+		</div>
+	</div>
+
+	<!-- Ticker Message Modal -->
+	<div id="tickerModal" class="fixed inset-0 z-50 hidden">
+		<div class="absolute inset-0 bg-black bg-opacity-50" onclick="closeTickerModal()"></div>
+		<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h3 class="text-lg font-bold text-white mb-4">Send Ticker Message</h3>
+			<p class="text-xs text-gray-500 mb-2">Press 1-4 for quick presets</p>
+			<div class="space-y-4">
+				<div class="grid grid-cols-2 gap-2">
+					<button onclick="sendQuickTicker('5 Minute Break')" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition flex items-center justify-center gap-2">
+						<span class="kbd-hint">1</span> 5 Min Break
+					</button>
+					<button onclick="sendQuickTicker('Report to your station!')" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition flex items-center justify-center gap-2">
+						<span class="kbd-hint">2</span> Report In
+					</button>
+					<button onclick="sendQuickTicker('Tournament starting soon!')" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition flex items-center justify-center gap-2">
+						<span class="kbd-hint">3</span> Starting Soon
+					</button>
+					<button onclick="sendQuickTicker('Grand Finals!')" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition flex items-center justify-center gap-2">
+						<span class="kbd-hint">4</span> Grand Finals
+					</button>
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Custom Message</label>
+					<input type="text" id="tickerMessageInput" maxlength="200"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+						placeholder="Enter custom message...">
+				</div>
+				<div class="flex gap-3">
+					<button onclick="closeTickerModal()" class="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition">
+						Cancel
+					</button>
+					<button onclick="sendCustomTicker()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">
+						Send
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- DQ Timer Modal (Enhanced) -->
+	<div id="dqTimerModal" class="fixed inset-0 z-50 hidden">
+		<div class="absolute inset-0 bg-black bg-opacity-50" onclick="closeDQTimerModal()"></div>
+		<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h3 class="text-lg font-bold text-white mb-4">Start DQ Timer</h3>
+
+			<!-- Quick Start (Basic) -->
+			<div class="mb-4">
+				<p class="text-sm text-gray-400 mb-2">Quick Start (3 min):</p>
+				<div class="grid grid-cols-2 gap-3">
+					<button onclick="startDQTimer('TV 1')" class="px-4 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition flex items-center justify-center gap-2">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+						</svg>
+						TV 1
+					</button>
+					<button onclick="startDQTimer('TV 2')" class="px-4 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition flex items-center justify-center gap-2">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+						</svg>
+						TV 2
+					</button>
+				</div>
+			</div>
+
+			<!-- Enhanced Options (with match/player selection) -->
+			<div class="border-t border-gray-700 pt-4 mb-4">
+				<p class="text-sm text-gray-400 mb-2">Enhanced (with player tracking):</p>
+				<div class="space-y-3">
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">Match</label>
+						<select id="dqMatchSelect" onchange="populateDQPlayerDropdown()" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm">
+							<option value="">Select match...</option>
+						</select>
+					</div>
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">Player to DQ</label>
+						<select id="dqPlayerSelect" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm">
+							<option value="">Select player...</option>
+						</select>
+					</div>
+					<div>
+						<label class="block text-xs text-gray-500 mb-1">TV</label>
+						<select id="dqTvSelect" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm">
+							<option value="TV 1">TV 1</option>
+							<option value="TV 2">TV 2</option>
+						</select>
+					</div>
+					<button onclick="startEnhancedDQTimer()" class="w-full px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition">
+						Start Enhanced Timer
+					</button>
+				</div>
+			</div>
+
+			<!-- Active Timers -->
+			<div id="activeTimersSection" class="border-t border-gray-700 pt-4 mb-4 hidden">
+				<p class="text-sm text-gray-400 mb-2">Active Timers:</p>
+				<div id="activeTimersList" class="space-y-2 max-h-32 overflow-y-auto">
+					<!-- Active timers rendered here -->
+				</div>
+			</div>
+
+			<button onclick="closeDQTimerModal()" class="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition">
+				Close
+			</button>
+		</div>
+	</div>
+
+	<!-- Scripts (order matters) -->
+	<script src="js/utils.js?v=14"></script>
+	<script src="js/nav.js?v=14"></script>
+	<script src="js/command-center.js?v=107"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Command Center');
+		});
+	</script>
+</body>
+</html>

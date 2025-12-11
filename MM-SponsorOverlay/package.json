@@ -1,0 +1,21 @@
+{
+	"name": "mmm-sponsoroverlay",
+	"version": "1.0.0",
+	"description": "MagicMirror module for independent sponsor logo overlays",
+	"main": "node_helper.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"keywords": [
+		"MagicMirror",
+		"sponsor",
+		"overlay"
+	],
+	"author": "Tournament Control Center",
+	"license": "MIT",
+	"dependencies": {
+		"body-parser": "^2.2.1",
+		"express": "^5.2.1",
+		"socket.io-client": "^4.7.2"
+	}
+}

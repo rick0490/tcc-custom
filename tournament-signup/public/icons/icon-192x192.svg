@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="192" height="192" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="192" height="192" fill="url(#grad1)" rx="28.799999999999997"/>
+
+  <!-- Controller icon (simplified gamepad) -->
+  <g transform="translate(96, 96)">
+    <!-- Main body -->
+    <rect x="-57.599999999999994" y="-28.799999999999997" width="115.19999999999999" height="57.599999999999994"
+          fill="white" rx="9.600000000000001" opacity="0.95"/>
+
+    <!-- D-pad (left) -->
+    <rect x="-42.24" y="-15.36" width="15.36" height="7.68"
+          fill="#667eea" rx="1.92"/>
+    <rect x="-38.400000000000006" y="-19.200000000000003" width="7.68" height="15.36"
+          fill="#667eea" rx="1.92"/>
+
+    <!-- Buttons (right) -->
+    <circle cx="28.799999999999997" cy="-11.52" r="5.76" fill="#764ba2"/>
+    <circle cx="38.400000000000006" cy="-1.92" r="5.76" fill="#764ba2"/>
+  </g>
+
+  <!-- Text -->
+  <text x="96" y="157.44"
+        font-family="Arial, sans-serif"
+        font-size="23.04"
+        font-weight="bold"
+        fill="white"
+        text-anchor="middle">NB</text>
+</svg>

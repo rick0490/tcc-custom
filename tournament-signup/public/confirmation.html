@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Signup Confirmed</title>
+
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#111827">
+	<link rel="manifest" href="/manifest.json">
+
+	<script src="https://cdn.tailwindcss.com"></script>
+	<style>
+		/* CSS Custom Properties from Style Guide */
+		:root {
+			--color-black-deep: #111827;
+			--gray-800: #1f2937;
+			--gray-700: #374151;
+			--gray-600: #4b5563;
+			--gray-500: #6b7280;
+			--gray-400: #9ca3af;
+			--gray-300: #d1d5db;
+			--gray-200: #e5e7eb;
+			--gray-100: #f3f4f6;
+			--color-white-soft: #f3f4f6;
+			--color-action: #3b82f6;
+			--color-success: #10b981;
+			--color-warning: #f59e0b;
+			--color-error: #ef4444;
+			--color-accent: #E63946;
+			--radius-sm: 4px;
+			--radius-md: 8px;
+			--radius-lg: 12px;
+			--space-xs: 4px;
+			--space-sm: 8px;
+			--space-md: 16px;
+			--space-lg: 24px;
+			--space-xl: 32px;
+			--duration-fast: 150ms;
+			--duration-normal: 300ms;
+			--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+		}
+
+		body {
+			background: var(--color-black-deep);
+			min-height: 100vh;
+			color: var(--color-white-soft);
+		}
+
+		/* Light mode overrides */
+		.light body,
+		html.light body {
+			background: var(--gray-100);
+			color: var(--gray-800);
+		}
+
+		.confirmation-card {
+			background: var(--gray-800);
+			border: 1px solid var(--gray-700);
+		}
+
+		.light .confirmation-card {
+			background: #ffffff;
+			border-color: var(--gray-200);
+		}
+
+		.checkmark {
+			animation: checkmark 0.5s var(--ease-standard);
+		}
+
+		@keyframes checkmark {
+			0% {
+				transform: scale(0);
+				opacity: 0;
+			}
+			50% {
+				transform: scale(1.2);
+			}
+			100% {
+				transform: scale(1);
+				opacity: 1;
+			}
+		}
+
+		.fade-in {
+			animation: fadeIn 0.6s var(--ease-standard);
+		}
+
+		@keyframes fadeIn {
+			from {
+				opacity: 0;
+				transform: translateY(20px);
+			}
+			to {
+				opacity: 1;
+				transform: translateY(0);
+			}
+		}
+
+		.btn-primary {
+			background: var(--color-action);
+			transition: transform var(--duration-fast) var(--ease-standard),
+			            box-shadow var(--duration-fast) var(--ease-standard),
+			            background var(--duration-fast) var(--ease-standard);
+		}
+
+		.btn-primary:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 10px 25px rgba(59, 130, 246, 0.4);
+			background: #2563eb;
+		}
+
+		.btn-secondary {
+			background: var(--gray-700);
+			transition: background var(--duration-fast) var(--ease-standard),
+			            transform var(--duration-fast) var(--ease-standard);
+		}
+
+		.btn-secondary:hover {
+			background: var(--gray-600);
+			transform: translateY(-2px);
+		}
+
+		.light .btn-secondary {
+			background: var(--gray-200);
+			color: var(--gray-800);
+		}
+
+		.light .btn-secondary:hover {
+			background: var(--gray-300);
+		}
+
+		/* Focus visible for accessibility */
+		:focus-visible {
+			outline: 2px solid var(--color-action);
+			outline-offset: 2px;
+		}
+
+		button:focus-visible,
+		a:focus-visible {
+			outline: 2px solid var(--color-action);
+			outline-offset: 2px;
+		}
+
+		/* Info cards */
+		.info-card {
+			background: var(--gray-700);
+			border: 1px solid var(--gray-600);
+		}
+
+		.light .info-card {
+			background: var(--gray-100);
+			border-color: var(--gray-200);
+		}
+
+		/* Theme transition */
+		body, .confirmation-card, .btn-secondary, .info-card {
+			transition: background var(--duration-normal) var(--ease-standard),
+			            border-color var(--duration-normal) var(--ease-standard),
+			            color var(--duration-normal) var(--ease-standard);
+		}
+	</style>
+</head>
+<body class="flex items-center justify-center p-4">
+	<div class="confirmation-card rounded-xl shadow-2xl p-6 max-w-md w-full text-center fade-in">
+		<!-- Theme Toggle -->
+		<div class="flex justify-end mb-4">
+			<button id="theme-toggle" class="p-2 rounded-lg btn-secondary" aria-label="Toggle theme">
+				<!-- Sun icon (shown in dark mode) -->
+				<svg id="sun-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+				</svg>
+				<!-- Moon icon (shown in light mode) -->
+				<svg id="moon-icon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+				</svg>
+			</button>
+		</div>
+
+		<!-- Success Icon -->
+		<div class="checkmark mb-6">
+			<div class="w-20 h-20 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
+				<svg class="w-10 h-10 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+				</svg>
+			</div>
+		</div>
+
+		<!-- Success Message -->
+		<h1 class="text-2xl font-bold mb-3">You're In!</h1>
+		<p class="text-lg text-gray-300 mb-6">
+			Thanks for signing up, <span id="participant-name" class="font-semibold text-blue-400"></span>!
+		</p>
+
+		<!-- Tournament Info -->
+		<div class="info-card rounded-lg p-4 mb-6">
+			<p class="text-sm text-gray-400 mb-2">You've been added to:</p>
+			<p id="tournament-name" class="text-xl font-bold"></p>
+		</div>
+
+		<!-- Instructions -->
+		<div class="info-card rounded-lg p-4 mb-6 text-left" style="border-color: var(--color-action); background: rgba(59, 130, 246, 0.1);">
+			<h3 class="font-semibold text-blue-300 mb-3 flex items-center">
+				<svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+					<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+				</svg>
+				What's Next?
+			</h3>
+			<ul class="text-sm text-gray-300 space-y-2">
+				<li class="flex items-start">
+					<svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+					</svg>
+					<span>Check the bracket display for tournament updates</span>
+				</li>
+				<li class="flex items-start">
+					<svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+					</svg>
+					<span>Listen for announcements about your match</span>
+				</li>
+				<li class="flex items-start">
+					<svg class="w-4 h-4 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+					</svg>
+					<span>Get ready to compete and have fun!</span>
+				</li>
+			</ul>
+		</div>
+
+		<!-- Action Button -->
+		<div>
+			<a href="/" class="btn-secondary block w-full text-gray-300 font-semibold py-3 px-6 rounded-lg border border-gray-600">
+				<span class="flex items-center justify-center gap-2">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+					</svg>
+					Back to Home
+				</span>
+			</a>
+		</div>
+
+		<!-- Footer -->
+		<div class="mt-8 text-gray-500 text-xs">
+			<p>Good luck in the tournament!</p>
+		</div>
+	</div>
+
+	<script>
+		// Theme Management
+		function initTheme() {
+			const savedTheme = localStorage.getItem('theme');
+			const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+			setTheme(theme);
+		}
+
+		function setTheme(theme) {
+			if (theme === 'light') {
+				document.documentElement.classList.add('light');
+				document.getElementById('sun-icon').classList.add('hidden');
+				document.getElementById('moon-icon').classList.remove('hidden');
+			} else {
+				document.documentElement.classList.remove('light');
+				document.getElementById('sun-icon').classList.remove('hidden');
+				document.getElementById('moon-icon').classList.add('hidden');
+			}
+			localStorage.setItem('theme', theme);
+		}
+
+		function toggleTheme() {
+			const currentTheme = localStorage.getItem('theme') || 'dark';
+			setTheme(currentTheme === 'dark' ? 'light' : 'dark');
+		}
+
+		document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+		initTheme();
+
+		// Get parameters from URL
+		const urlParams = new URLSearchParams(window.location.search);
+		const participantName = urlParams.get('name');
+		const tournamentName = urlParams.get('tournament');
+
+		// Display participant and tournament info
+		if (participantName) {
+			document.getElementById('participant-name').textContent = participantName;
+		}
+		if (tournamentName) {
+			document.getElementById('tournament-name').textContent = tournamentName;
+		}
+
+		// If no parameters, redirect back to signup
+		if (!participantName || !tournamentName) {
+			setTimeout(() => {
+				window.location.href = '/';
+			}, 2000);
+		}
+	</script>
+</body>
+</html>

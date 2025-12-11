@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Participants - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Manage tournament participants">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Toast Container -->
+	<div id="toastContainer" class="mb-6"></div>
+
+	<!-- Tournament Selection Bar -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center gap-4 flex-1">
+					<div class="flex-1 max-w-md">
+						<label class="block text-xs text-gray-400 uppercase tracking-wide mb-1">Select Tournament</label>
+						<select id="tournamentSelect" onchange="onTournamentChange()" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<option value="">Loading tournaments...</option>
+						</select>
+					</div>
+					<div id="tournamentInfo" class="hidden">
+						<div class="text-xs text-gray-400 uppercase tracking-wide">Game</div>
+						<div class="text-lg font-semibold text-white" id="tournamentGame">--</div>
+					</div>
+				</div>
+				<div class="text-right">
+					<div class="text-3xl font-bold text-white" id="participantCount">--</div>
+					<div class="text-xs text-gray-400">Participants</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Actions Bar -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+			<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+				<!-- Search -->
+				<div class="flex-1 max-w-md">
+					<input
+						type="text"
+						id="searchInput"
+						placeholder="Search participants..."
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+					>
+				</div>
+
+				<!-- Action Buttons -->
+				<div class="flex flex-wrap gap-3">
+					<button
+						id="refreshParticipantsBtn"
+						onclick="refreshParticipants()"
+						class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						<svg id="refreshParticipantsIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+						</svg>
+						<span id="refreshParticipantsText">Refresh</span>
+					</button>
+					<button
+						onclick="randomizeSeeds()"
+						class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2"
+						title="Randomly shuffle all participant seeds"
+					>
+						Randomize Seeds
+					</button>
+					<button
+						onclick="exportToCSV()"
+						class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2"
+					>
+						Export CSV
+					</button>
+					<button
+						onclick="openAddParticipantModal()"
+						class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2"
+					>
+						Add Participant
+					</button>
+					<button
+						onclick="openBulkAddModal()"
+						class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2"
+						title="Add multiple participants at once"
+					>
+						Bulk Add
+					</button>
+					<button
+						onclick="confirmClearAllParticipants()"
+						class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2"
+						title="Delete all participants (only before tournament starts)"
+					>
+						Clear All
+					</button>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Participants Table -->
+	<section class="mb-8">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+			<!-- Table Header -->
+			<div class="p-4 border-b border-gray-700">
+				<div class="flex items-center gap-3">
+					<h2 class="text-xl font-semibold text-white">Participant List</h2>
+					<span id="participantsCacheIndicator" class="hidden"></span>
+					<span id="participantsLastUpdated" class="hidden sm:inline-flex items-center gap-1"></span>
+				</div>
+			</div>
+
+			<!-- Loading State -->
+			<div id="loadingState" class="p-8 text-center">
+				<div class="text-gray-400">Loading participants...</div>
+			</div>
+
+			<!-- Empty State -->
+			<div id="emptyState" class="p-8 text-center hidden">
+				<div class="text-gray-400 mb-2">No participants found</div>
+				<div class="text-sm text-gray-500">Add participants using the button above</div>
+			</div>
+
+			<!-- Table -->
+			<div id="tableContainer" class="hidden overflow-x-auto">
+				<table class="w-full">
+					<thead class="bg-gray-750">
+						<tr>
+							<th class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+								<div class="flex items-center gap-2">
+									<span class="cursor-pointer hover:text-white" onclick="sortTable('seed')">Seed #</span>
+									<span class="text-xs text-gray-500 hidden sm:inline">(drag rows or click to edit)</span>
+								</div>
+							</th>
+							<th class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer hover:text-white" onclick="sortTable('name')">
+								Name
+							</th>
+							<th class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+								Status
+							</th>
+							<th class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider hide-on-mobile">
+								Contact
+							</th>
+							<th class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider hide-on-mobile">
+								Misc
+							</th>
+							<th class="px-4 sm:px-6 py-3 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">
+								Actions
+							</th>
+						</tr>
+					</thead>
+					<tbody id="participantsTableBody" class="bg-gray-800 divide-y divide-gray-700">
+						<!-- Rows will be inserted here -->
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+
+	<!-- Add Participant Modal -->
+	<div id="addParticipantModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-md border border-gray-700">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="text-xl font-bold text-white">Add Participant</h3>
+				<button onclick="closeAddParticipantModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+
+			<form id="addParticipantForm" onsubmit="addParticipant(event)">
+				<div class="space-y-4">
+					<!-- Name -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Participant Name <span class="text-red-500">*</span>
+						</label>
+						<input
+							type="text"
+							id="newParticipantName"
+							required
+							maxlength="50"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="Enter participant name"
+						>
+						<p class="text-xs text-gray-500 mt-1">Required if no email or Challonge username provided</p>
+					</div>
+
+					<!-- Email -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Email <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="email"
+							id="newParticipantEmail"
+							maxlength="100"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="participant@email.com"
+						>
+						<p class="text-xs text-gray-500 mt-1">Will search for Challonge account or send invite</p>
+					</div>
+
+					<!-- Challonge Username -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Challonge Username <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="text"
+							id="newParticipantChallongeUsername"
+							maxlength="50"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="challonge_username"
+						>
+						<p class="text-xs text-gray-500 mt-1">Link to existing Challonge account</p>
+					</div>
+
+					<!-- Instagram -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Instagram Handle <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="text"
+							id="newParticipantInstagram"
+							maxlength="30"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="@username"
+						>
+					</div>
+
+					<!-- Seed -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Seed <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="number"
+							id="newParticipantSeed"
+							min="1"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="Auto-assigned if blank"
+						>
+					</div>
+
+					<!-- Buttons -->
+					<div class="flex gap-3 pt-2">
+						<button
+							type="button"
+							onclick="closeAddParticipantModal()"
+							class="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition"
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition"
+						>
+							Add Participant
+						</button>
+					</div>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Edit Participant Modal -->
+	<div id="editParticipantModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-md border border-gray-700">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="text-xl font-bold text-white">Edit Participant</h3>
+				<button onclick="closeEditParticipantModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+
+			<form id="editParticipantForm" onsubmit="saveParticipantEdit(event)">
+				<input type="hidden" id="editParticipantId">
+
+				<div class="space-y-4">
+					<!-- Name -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Participant Name <span class="text-red-500">*</span>
+						</label>
+						<input
+							type="text"
+							id="editParticipantName"
+							required
+							maxlength="50"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+						>
+					</div>
+
+					<!-- Seed -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Seed <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="number"
+							id="editParticipantSeed"
+							min="1"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="Seed number"
+						>
+					</div>
+
+					<!-- Email -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Email <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="email"
+							id="editParticipantEmail"
+							maxlength="100"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="participant@email.com"
+						>
+					</div>
+
+					<!-- Challonge Username -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Challonge Username <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="text"
+							id="editParticipantChallongeUsername"
+							maxlength="50"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="challonge_username"
+						>
+					</div>
+
+					<!-- Instagram -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Instagram Handle <span class="text-gray-500">(optional)</span>
+						</label>
+						<input
+							type="text"
+							id="editParticipantInstagram"
+							maxlength="30"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="@username"
+						>
+					</div>
+
+					<!-- Misc -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Misc Notes <span class="text-gray-500">(optional, max 255 chars)</span>
+						</label>
+						<textarea
+							id="editParticipantMisc"
+							rows="2"
+							maxlength="255"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+							placeholder="Additional notes..."
+						></textarea>
+					</div>
+
+					<!-- Buttons -->
+					<div class="flex gap-3 pt-2">
+						<button
+							type="button"
+							onclick="closeEditParticipantModal()"
+							class="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition"
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition"
+						>
+							Save Changes
+						</button>
+					</div>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Bulk Add Participants Modal -->
+	<div id="bulkAddModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg shadow-2xl p-6 w-full max-w-2xl border border-gray-700">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="text-xl font-bold text-white">Bulk Add Participants</h3>
+				<button onclick="closeBulkAddModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+
+			<div class="space-y-4">
+				<!-- Format Selection -->
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-2">Input Format</label>
+					<select id="bulkAddFormat" onchange="updateBulkAddPlaceholder()" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+						<option value="names">Names Only (one per line)</option>
+						<option value="csv">CSV (name, email, seed, misc)</option>
+					</select>
+				</div>
+
+				<!-- Instructions -->
+				<div id="bulkAddInstructions" class="text-sm text-gray-400">
+					Enter one participant name per line. Empty lines will be ignored.
+				</div>
+
+				<!-- Textarea -->
+				<div>
+					<textarea
+						id="bulkAddTextarea"
+						rows="10"
+						class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+						placeholder="John Smith&#10;Jane Doe&#10;Player3&#10;..."
+						oninput="updateBulkAddCount()"
+					></textarea>
+				</div>
+
+				<!-- Count -->
+				<div class="flex items-center justify-between text-sm">
+					<span class="text-gray-400">Found: <span id="bulkAddCount" class="text-white font-semibold">0</span> participants</span>
+					<button
+						type="button"
+						onclick="clearBulkAddTextarea()"
+						class="text-gray-400 hover:text-white text-sm"
+					>
+						Clear
+					</button>
+				</div>
+
+				<!-- Buttons -->
+				<div class="flex gap-3 pt-2">
+					<button
+						type="button"
+						onclick="closeBulkAddModal()"
+						class="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onclick="submitBulkAdd()"
+						id="bulkAddSubmitBtn"
+						class="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed"
+						disabled
+					>
+						Add All
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- SortableJS for drag & drop -->
+	<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
+	<script src="js/utils.js?v=4"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/participants.js?v=13"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Participants');
+		});
+	</script>
+</body>
+</html>

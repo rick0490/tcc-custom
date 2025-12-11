@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Dashboard - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Tournament management dashboard for controlling displays, matches, and participants">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=17">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- System Status Bar - Always at top -->
+	<section id="systemStatusBar" class="mb-6">
+		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+			<!-- Match Display -->
+			<div id="statusMatch" class="status-card-compact">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">Match Display</div>
+							<div class="text-xs text-gray-400">Port 2052</div>
+						</div>
+					</div>
+					<div class="text-right">
+						<div class="text-xs text-gray-400">Tournament</div>
+						<div class="text-sm font-medium text-white status-tournament">--</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Bracket Display -->
+			<div id="statusBracket" class="status-card-compact">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">Bracket Display</div>
+							<div class="text-xs text-gray-400">Port 2053</div>
+						</div>
+					</div>
+					<div class="text-right">
+						<div class="text-xs text-gray-400">Bracket</div>
+						<div class="text-sm font-medium text-white status-bracket truncate max-w-24">--</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Flyer Display -->
+			<div id="statusFlyer" class="status-card-compact">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">Flyer Display</div>
+							<div class="text-xs text-gray-400">Port 2054</div>
+						</div>
+					</div>
+					<div class="text-right">
+						<div class="text-xs text-gray-400">Flyer</div>
+						<div class="text-sm font-medium text-white status-flyer truncate max-w-24">--</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- API Rate Limit Status -->
+			<div id="statusRateLimit" class="status-card-compact">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div id="rateLimitModeIndicator" class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">API Rate</div>
+							<div id="rateLimitMode" class="text-xs text-gray-400">Loading...</div>
+						</div>
+					</div>
+					<div class="text-right">
+						<div class="text-xs text-gray-400">Effective</div>
+						<div id="rateLimitEffective" class="text-sm font-medium text-white">-- req/min</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="flex items-center justify-between mt-2">
+			<span id="lastRefreshed" class="text-xs text-gray-500">Last updated: --</span>
+			<button id="refreshAllStatusBtn" onclick="refreshAllStatus()" class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+				<svg id="refreshAllStatusIcon" class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+				</svg>
+				<span id="refreshAllStatusText">Refresh Now</span>
+			</button>
+		</div>
+	</section>
+
+	<!-- Active Tournament Section -->
+	<section id="activeTournamentSection" class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-start justify-between mb-4">
+				<div>
+					<div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Active Tournament</div>
+					<div class="flex items-center gap-2">
+						<h2 id="activeTournamentName" class="text-2xl font-bold text-white">No Active Tournament</h2>
+						<button id="copyTournamentId" onclick="copyTournamentId()" class="hidden p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition" title="Copy tournament ID">
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+							</svg>
+						</button>
+					</div>
+					<p id="activeTournamentGame" class="text-gray-400">Configure a tournament from the Tournament page</p>
+				</div>
+				<div class="flex items-center gap-3">
+					<button id="quickStartBtn" onclick="quickStartTournament()" class="hidden bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition text-sm font-medium">
+						Start Tournament
+					</button>
+					<div id="tournamentStateBadge" class="hidden px-3 py-1 rounded-full text-xs font-semibold uppercase">
+						pending
+					</div>
+				</div>
+			</div>
+
+			<!-- Quick Stats -->
+			<div id="tournamentQuickStats" class="hidden">
+				<!-- Primary Stats Row -->
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+					<div class="quick-stat-card">
+						<div id="statParticipants" class="quick-stat-value text-white">--</div>
+						<div class="quick-stat-label">Participants</div>
+					</div>
+					<div class="quick-stat-card">
+						<div id="statCheckedIn" class="quick-stat-value text-blue-400">--</div>
+						<div class="quick-stat-label">Checked In</div>
+					</div>
+					<div class="quick-stat-card">
+						<div id="statMatches" class="quick-stat-value text-white">--</div>
+						<div class="quick-stat-label">Matches</div>
+					</div>
+					<div class="quick-stat-card">
+						<div id="statCompleted" class="quick-stat-value text-green-400">--</div>
+						<div class="quick-stat-label">Completed</div>
+					</div>
+				</div>
+
+				<!-- Secondary Stats Row (visible during underway) -->
+				<div id="underwayStatsRow" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+					<div class="quick-stat-card">
+						<div id="statCurrentRound" class="quick-stat-value text-purple-400">--</div>
+						<div class="quick-stat-label">Current Round</div>
+					</div>
+					<div class="quick-stat-card">
+						<div id="statInProgress" class="quick-stat-value text-yellow-400">--</div>
+						<div class="quick-stat-label">In Progress</div>
+					</div>
+					<div class="quick-stat-card">
+						<div id="statRemaining" class="quick-stat-value text-orange-400">--</div>
+						<div class="quick-stat-label">Remaining</div>
+					</div>
+					<div class="quick-stat-card">
+						<div id="statTimeEstimate" class="quick-stat-value text-cyan-400">--</div>
+						<div class="quick-stat-label">Est. Time Left</div>
+					</div>
+				</div>
+
+				<!-- Live Matches Panel -->
+				<div id="liveMatchPreviewSection" class="hidden mb-4">
+					<div class="flex items-center justify-between mb-2">
+						<div class="text-sm font-medium text-gray-300">Live Matches</div>
+						<div id="liveMatchCount" class="text-xs text-gray-500">0 active</div>
+					</div>
+					<div id="liveMatchesList" class="space-y-2">
+						<!-- Live match cards will be inserted here -->
+					</div>
+				</div>
+
+				<!-- Upcoming Matches Queue -->
+				<div id="upcomingMatchesSection" class="hidden mb-4">
+					<div class="flex items-center justify-between mb-2">
+						<div class="text-sm font-medium text-gray-300">Up Next</div>
+						<div id="upcomingMatchCount" class="text-xs text-gray-500">0 waiting</div>
+					</div>
+					<div id="upcomingMatchesList" class="space-y-2">
+						<!-- Upcoming match cards will be inserted here -->
+					</div>
+				</div>
+
+				<!-- Action Buttons -->
+				<div class="flex flex-wrap gap-3">
+					<a href="/matches.html" class="flex-1 min-w-[140px] bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition text-center font-medium text-sm">
+						Manage Matches
+					</a>
+					<a href="/participants.html" class="flex-1 min-w-[140px] bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition text-center font-medium text-sm">
+						View Participants
+					</a>
+					<a href="/tournament.html" class="flex-1 min-w-[140px] bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition text-center font-medium text-sm">
+						Tournament Settings
+					</a>
+				</div>
+			</div>
+
+			<!-- No Tournament CTA -->
+			<div id="noTournamentCTA" class="mt-4">
+				<a href="/tournament.html" class="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md transition font-medium">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+					</svg>
+					Configure Tournament
+				</a>
+			</div>
+		</div>
+	</section>
+
+	<!-- Ticker Message -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h2 class="text-xl font-bold text-white">Ticker Message</h2>
+					<p class="text-sm text-gray-400 mt-1">Send announcements to the match display</p>
+				</div>
+				<div id="tickerStatus" class="flex items-center gap-2">
+					<span class="text-sm text-gray-400">Ready</span>
+				</div>
+			</div>
+
+			<div class="space-y-4">
+				<!-- Quick Messages -->
+				<div>
+					<label class="text-sm text-gray-400 block mb-2">Quick Messages</label>
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+						<button type="button" onclick="setTickerPreset('5 minute break - Be back soon!')"
+							class="px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-white text-left transition-colors">
+							<div class="font-medium">5 Min Break</div>
+							<div class="text-xs text-gray-400 truncate">Be back soon!</div>
+						</button>
+						<button type="button" onclick="setTickerPreset('Players - Report to your stations!')"
+							class="px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-white text-left transition-colors">
+							<div class="font-medium">Report In</div>
+							<div class="text-xs text-gray-400 truncate">Call players to stations</div>
+						</button>
+						<button type="button" onclick="setTickerPreset('Tournament starting in 5 minutes!')"
+							class="px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-white text-left transition-colors">
+							<div class="font-medium">Starting Soon</div>
+							<div class="text-xs text-gray-400 truncate">5 minute warning</div>
+						</button>
+						<button type="button" onclick="setTickerPreset('Finals match coming up next!')"
+							class="px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-white text-left transition-colors">
+							<div class="font-medium">Finals</div>
+							<div class="text-xs text-gray-400 truncate">Coming up next</div>
+						</button>
+					</div>
+				</div>
+
+				<!-- Message Input -->
+				<div>
+					<label class="text-sm text-gray-400 block mb-2">Custom Message</label>
+					<textarea id="tickerMessage" rows="2" maxlength="200"
+						placeholder="Enter your announcement message..."
+						class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white text-lg placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"></textarea>
+					<div class="flex justify-between mt-1">
+						<span class="text-xs text-gray-500">Appears at the bottom of the match display</span>
+						<span id="tickerCharCount" class="text-xs text-gray-500">0/200</span>
+					</div>
+				</div>
+
+				<!-- Duration and Send -->
+				<div class="flex flex-col sm:flex-row gap-4">
+					<div class="flex-shrink-0">
+						<label class="text-sm text-gray-400 block mb-2">Duration (seconds)</label>
+						<input type="number" id="tickerDuration" min="3" max="30" value="5"
+							class="w-24 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-center focus:outline-none focus:border-blue-500">
+					</div>
+					<div class="flex-1 flex items-end">
+						<button type="button" onclick="sendTickerMessage()" class="w-full sm:w-auto px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white font-medium flex items-center justify-center gap-2">
+							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path>
+							</svg>
+							Send Message
+						</button>
+						<button type="button" onclick="openScheduleTickerModal()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-white font-medium flex items-center gap-2" title="Schedule a ticker message for later">
+							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+							</svg>
+							Schedule
+						</button>
+					</div>
+				</div>
+
+				<!-- Scheduled Ticker Messages -->
+				<div id="scheduledTickerSection" class="hidden mt-4 pt-4 border-t border-gray-700">
+					<div class="flex items-center justify-between mb-3">
+						<h4 class="text-sm font-medium text-gray-300">Scheduled Messages</h4>
+						<button type="button" onclick="refreshScheduledTickers()" class="text-xs text-blue-400 hover:text-blue-300">Refresh</button>
+					</div>
+					<div id="scheduledTickerList" class="space-y-2 max-h-40 overflow-y-auto">
+						<!-- Scheduled items will be rendered here -->
+					</div>
+				</div>
+
+				<!-- Timer Controls -->
+				<div class="mt-6 pt-6 border-t border-gray-700">
+					<h3 class="text-lg font-semibold text-white mb-3">Display Timers</h3>
+
+					<!-- DQ Timers Row -->
+					<div class="mb-4">
+						<label class="text-sm text-gray-400 block mb-2">DQ Timers (3 minutes) - Auto-hides when complete</label>
+						<div class="flex flex-wrap gap-2">
+							<button type="button" onclick="toggleDQTimer('TV 1')"
+								class="px-4 py-2 bg-red-600 hover:bg-red-500 border border-red-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+								</svg>
+								TV 1 - 3min DQ
+							</button>
+							<button type="button" onclick="toggleDQTimer('TV 2')"
+								class="px-4 py-2 bg-red-600 hover:bg-red-500 border border-red-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+								</svg>
+								TV 2 - 3min DQ
+							</button>
+						</div>
+					</div>
+
+					<!-- Tournament Timer Row -->
+					<div>
+						<label class="text-sm text-gray-400 block mb-2">Tournament Timer - Auto-hides when complete</label>
+						<div class="flex flex-wrap items-end gap-3">
+							<div class="flex items-center gap-2">
+								<input type="number" id="tournamentTimerMinutes" min="1" max="60" value="5" placeholder="Min"
+									class="w-20 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-center focus:outline-none focus:border-yellow-500">
+								<span class="text-gray-400 text-sm">minutes</span>
+							</div>
+							<button type="button" onclick="startTournamentTimer()"
+								class="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 border border-yellow-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+								</svg>
+								Start Timer
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<!-- QR Code Controls -->
+				<div class="mt-6 pt-6 border-t border-gray-700">
+					<h3 class="text-lg font-semibold text-white mb-3">QR Code Display</h3>
+					<p class="text-sm text-gray-400 mb-4">Show a QR code on the match display for participants to scan</p>
+
+					<!-- Quick QR Buttons -->
+					<div class="mb-4">
+						<label class="text-sm text-gray-400 block mb-2">Quick QR Codes</label>
+						<div class="flex flex-wrap gap-2">
+							<button type="button" onclick="showSignupQR()"
+								class="px-4 py-2 bg-purple-600 hover:bg-purple-500 border border-purple-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path>
+								</svg>
+								Signup Page
+							</button>
+							<button type="button" onclick="showBracketQR()"
+								class="px-4 py-2 bg-purple-600 hover:bg-purple-500 border border-purple-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path>
+								</svg>
+								Bracket Link
+							</button>
+							<button type="button" onclick="hideQRCode()"
+								class="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-gray-300 font-medium transition-colors">
+								Hide QR
+							</button>
+						</div>
+					</div>
+
+					<!-- Custom QR Code -->
+					<div>
+						<label class="text-sm text-gray-400 block mb-2">Custom URL</label>
+						<div class="flex flex-wrap items-end gap-3">
+							<input type="url" id="customQRUrl" placeholder="https://example.com"
+								class="flex-1 min-w-[200px] px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-purple-500">
+							<input type="text" id="customQRLabel" placeholder="Label (optional)" maxlength="30"
+								class="w-40 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-purple-500">
+							<button type="button" onclick="showCustomQR()"
+								class="px-4 py-2 bg-purple-600 hover:bg-purple-500 border border-purple-500 rounded-lg text-sm text-white font-medium transition-colors">
+								Show QR
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<!-- Audio Announcements -->
+				<div class="mt-6 pt-6 border-t border-gray-700">
+					<h3 class="text-lg font-semibold text-white mb-3">Audio Announcements</h3>
+					<p class="text-sm text-gray-400 mb-4">Play text-to-speech announcements on Pi displays</p>
+
+					<!-- Quick Audio Presets -->
+					<div class="mb-4">
+						<label class="text-sm text-gray-400 block mb-2">Quick Announcements</label>
+						<div class="flex flex-wrap gap-2">
+							<button type="button" onclick="playAudioPreset('Attention players: please report to your stations')"
+								class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+								</svg>
+								Report In
+							</button>
+							<button type="button" onclick="playAudioPreset('Tournament starting in 5 minutes')"
+								class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+								</svg>
+								5 Min Warning
+							</button>
+							<button type="button" onclick="playAudioPreset('Finals are about to begin')"
+								class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center gap-2">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+								</svg>
+								Finals
+							</button>
+						</div>
+					</div>
+
+					<!-- Custom Audio Message -->
+					<div>
+						<label class="text-sm text-gray-400 block mb-2">Custom Announcement</label>
+						<div class="flex flex-wrap items-end gap-3">
+							<textarea id="audioAnnouncementText" placeholder="Enter announcement text..."
+								class="flex-1 min-w-[200px] px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-emerald-500 resize-none"
+								rows="2" maxlength="500"></textarea>
+							<div class="flex flex-col gap-2">
+								<div class="flex items-center gap-2">
+									<label class="text-xs text-gray-400">Speed</label>
+									<select id="audioAnnouncementRate" class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-emerald-500">
+										<option value="0.8">Slow</option>
+										<option value="1.0" selected>Normal</option>
+										<option value="1.2">Fast</option>
+									</select>
+								</div>
+								<button type="button" onclick="playCustomAudioAnnouncement()"
+									class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 rounded-lg text-sm text-white font-medium transition-colors flex items-center justify-center gap-2">
+									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+									</svg>
+									Play
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Connected Pi Displays -->
+	<section id="piDisplaysSection" class="mb-6">
+		<div class="flex items-center justify-between mb-4">
+			<h3 class="text-lg font-semibold text-white">Connected Displays</h3>
+			<span id="piDisplaysCount" class="text-sm text-gray-400">0 displays</span>
+		</div>
+		<div id="piDisplaysGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+			<!-- Pi display cards will be inserted here -->
+			<div class="text-gray-500 text-sm col-span-full text-center py-4">Loading displays...</div>
+		</div>
+	</section>
+
+	<!-- Live Activity Feed -->
+	<section id="activityFeedSection" class="mb-6">
+		<div class="flex items-center justify-between mb-4">
+			<div class="flex items-center gap-3">
+				<h3 class="text-lg font-semibold text-white">Live Activity Feed</h3>
+				<span id="activityUnreadBadge" class="hidden bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+				<span id="activityConnectionStatus" class="flex items-center gap-1.5 text-xs">
+					<span class="w-2 h-2 rounded-full bg-gray-500" id="activityConnectionDot"></span>
+					<span id="activityConnectionText" class="text-gray-400">Connecting...</span>
+				</span>
+			</div>
+			<div class="flex items-center gap-2">
+				<button id="activitySoundToggle" onclick="toggleActivitySound()" class="p-1.5 rounded hover:bg-gray-700 transition" title="Toggle notification sounds">
+					<svg id="activitySoundOn" class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+					</svg>
+					<svg id="activitySoundOff" class="hidden w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"></path>
+					</svg>
+				</button>
+				<button id="activityCollapseToggle" onclick="toggleActivityFeed()" class="p-1.5 rounded hover:bg-gray-700 transition" title="Collapse/Expand">
+					<svg id="activityCollapseIcon" class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+					</svg>
+				</button>
+			</div>
+		</div>
+
+		<!-- Filter buttons -->
+		<div id="activityFilters" class="flex flex-wrap gap-2 mb-3">
+			<button class="activity-filter-btn active" data-filter="all" onclick="filterActivity('all')">All</button>
+			<button class="activity-filter-btn" data-filter="participant" onclick="filterActivity('participant')">Signups</button>
+			<button class="activity-filter-btn" data-filter="match" onclick="filterActivity('match')">Matches</button>
+			<button class="activity-filter-btn" data-filter="display" onclick="filterActivity('display')">Displays</button>
+			<button class="activity-filter-btn" data-filter="admin" onclick="filterActivity('admin')">Admin</button>
+		</div>
+
+		<!-- Search input -->
+		<div id="activitySearchContainer" class="mb-3">
+			<input type="text" id="activitySearch" placeholder="Search activity..."
+				class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+				oninput="searchActivity(this.value)">
+		</div>
+
+		<!-- Activity list container -->
+		<div id="activityListContainer" class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+			<div id="activityList" class="max-h-80 overflow-y-auto">
+				<!-- Activity items will be inserted here -->
+				<div class="text-gray-500 text-sm text-center py-8">Connecting to activity stream...</div>
+			</div>
+			<div id="activityLoadMore" class="hidden border-t border-gray-700 p-2 text-center">
+				<button onclick="loadMoreActivity()" class="text-sm text-blue-400 hover:text-blue-300 transition">Load more...</button>
+			</div>
+		</div>
+	</section>
+
+	<!-- Quick Actions Grid -->
+	<section class="mb-6">
+		<h3 class="text-lg font-semibold text-white mb-4">Quick Actions</h3>
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+			<a href="/tournament.html" class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-blue-500 hover:bg-gray-750 transition group">
+				<div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-blue-600/30">
+					<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+					</svg>
+				</div>
+				<div class="font-medium text-white">Tournament</div>
+				<div class="text-xs text-gray-400 mt-1">Setup and control</div>
+			</a>
+
+			<a href="/matches.html" class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-yellow-500 hover:bg-gray-750 transition group">
+				<div class="w-10 h-10 bg-yellow-600/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-yellow-600/30">
+					<svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+					</svg>
+				</div>
+				<div class="font-medium text-white">Matches</div>
+				<div class="text-xs text-gray-400 mt-1">Scores and winners</div>
+			</a>
+
+			<a href="/participants.html" class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-green-500 hover:bg-gray-750 transition group">
+				<div class="w-10 h-10 bg-green-600/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-green-600/30">
+					<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+					</svg>
+				</div>
+				<div class="font-medium text-white">Participants</div>
+				<div class="text-xs text-gray-400 mt-1">Manage players</div>
+			</a>
+
+			<a href="/displays.html" class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-purple-500 hover:bg-gray-750 transition group">
+				<div class="w-10 h-10 bg-purple-600/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-purple-600/30">
+					<svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+					</svg>
+				</div>
+				<div class="font-medium text-white">Displays</div>
+				<div class="text-xs text-gray-400 mt-1">TV management</div>
+			</a>
+
+			<a href="/flyers.html" class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-pink-500 hover:bg-gray-750 transition group">
+				<div class="w-10 h-10 bg-pink-600/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-pink-600/30">
+					<svg class="w-5 h-5 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+					</svg>
+				</div>
+				<div class="font-medium text-white">Flyers</div>
+				<div class="text-xs text-gray-400 mt-1">Upload images</div>
+			</a>
+
+			<a href="/settings.html" class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-gray-500 hover:bg-gray-750 transition group">
+				<div class="w-10 h-10 bg-gray-600/20 rounded-lg flex items-center justify-center mb-3 group-hover:bg-gray-600/30">
+					<svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+					</svg>
+				</div>
+				<div class="font-medium text-white">Settings</div>
+				<div class="text-xs text-gray-400 mt-1">Users and config</div>
+			</a>
+		</div>
+	</section>
+
+	<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+	<!-- Schedule Ticker Modal -->
+	<div id="scheduleTickerModal" class="fixed inset-0 bg-black/70 hidden items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="text-lg font-semibold text-white">Schedule Ticker Message</h3>
+				<button type="button" onclick="closeScheduleTickerModal()" class="text-gray-400 hover:text-white">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					</svg>
+				</button>
+			</div>
+
+			<div class="space-y-4">
+				<!-- Schedule Type -->
+				<div>
+					<label class="text-sm text-gray-400 block mb-2">Schedule Type</label>
+					<div class="flex gap-2">
+						<button type="button" onclick="setScheduleType('once')" id="schedTypeOnce" class="flex-1 px-3 py-2 bg-blue-600 border border-blue-500 rounded text-white text-sm font-medium">One-Time</button>
+						<button type="button" onclick="setScheduleType('recurring')" id="schedTypeRecurring" class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm font-medium">Recurring</button>
+					</div>
+				</div>
+
+				<!-- Message -->
+				<div>
+					<label class="text-sm text-gray-400 block mb-2">Message</label>
+					<input type="text" id="schedTickerMessage" maxlength="200" placeholder="Enter message..."
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500">
+				</div>
+
+				<!-- Duration -->
+				<div>
+					<label class="text-sm text-gray-400 block mb-2">Duration (seconds)</label>
+					<input type="number" id="schedTickerDuration" min="3" max="30" value="5"
+						class="w-24 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-center focus:outline-none focus:border-blue-500">
+				</div>
+
+				<!-- One-Time Options -->
+				<div id="schedOnceOptions">
+					<label class="text-sm text-gray-400 block mb-2">Scheduled Time</label>
+					<input type="datetime-local" id="schedDateTime"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500">
+				</div>
+
+				<!-- Recurring Options -->
+				<div id="schedRecurringOptions" class="hidden">
+					<div class="mb-3">
+						<label class="text-sm text-gray-400 block mb-2">Label (optional)</label>
+						<input type="text" id="schedLabel" placeholder="e.g., Halftime Break"
+							class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500">
+					</div>
+					<div class="mb-3">
+						<label class="text-sm text-gray-400 block mb-2">Time (HH:MM)</label>
+						<input type="time" id="schedTime"
+							class="w-32 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500">
+					</div>
+					<div>
+						<label class="text-sm text-gray-400 block mb-2">Days (leave empty for every day)</label>
+						<div class="flex flex-wrap gap-1">
+							<button type="button" onclick="toggleScheduleDay(0)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="0">Sun</button>
+							<button type="button" onclick="toggleScheduleDay(1)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="1">Mon</button>
+							<button type="button" onclick="toggleScheduleDay(2)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="2">Tue</button>
+							<button type="button" onclick="toggleScheduleDay(3)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="3">Wed</button>
+							<button type="button" onclick="toggleScheduleDay(4)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="4">Thu</button>
+							<button type="button" onclick="toggleScheduleDay(5)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="5">Fri</button>
+							<button type="button" onclick="toggleScheduleDay(6)" class="sched-day-btn px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white" data-day="6">Sat</button>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="flex gap-3 mt-6">
+				<button type="button" onclick="closeScheduleTickerModal()" class="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded text-white font-medium">Cancel</button>
+				<button type="button" onclick="saveScheduledTicker()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 border border-blue-500 rounded text-white font-medium">Schedule</button>
+			</div>
+		</div>
+	</div>
+
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/dashboard.js?v=48"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Dashboard');
+			initActivityFeed();
+		});
+	</script>
+</body>
+</html>

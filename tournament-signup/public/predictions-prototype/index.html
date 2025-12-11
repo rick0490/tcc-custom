@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bracket Predictions - Prototype</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+        }
+        .match-card {
+            transition: all 0.2s ease;
+        }
+        .match-card:hover {
+            transform: scale(1.02);
+        }
+        .player-btn {
+            transition: all 0.15s ease;
+        }
+        .player-btn:hover:not(.selected):not(.locked) {
+            background: rgba(59, 130, 246, 0.3);
+        }
+        .player-btn.selected {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+        }
+        .player-btn.locked {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .lock-badge {
+            font-size: 0.7rem;
+        }
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+    </style>
+</head>
+<body class="text-white p-4">
+    <!-- Header -->
+    <div class="max-w-lg mx-auto mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h1 class="text-2xl font-bold">SSBU Weekly #12</h1>
+                <p class="text-gray-400 text-sm">Make your bracket predictions</p>
+            </div>
+            <a href="leaderboard.html" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium">
+                Leaderboard
+            </a>
+        </div>
+
+        <!-- Progress -->
+        <div class="bg-white/10 rounded-xl p-4 mb-4">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-gray-300">Your Progress</span>
+                <span class="text-sm font-bold text-blue-400">8 / 15 picks</span>
+            </div>
+            <div class="w-full bg-white/20 rounded-full h-2">
+                <div class="bg-blue-500 h-2 rounded-full" style="width: 53%"></div>
+            </div>
+        </div>
+
+        <!-- Lock Status Banner -->
+        <div class="bg-yellow-500/20 border border-yellow-500/50 rounded-xl p-3 mb-4">
+            <div class="flex items-center gap-2">
+                <span class="text-yellow-400 text-lg">⏳</span>
+                <div>
+                    <p class="text-yellow-200 text-sm font-medium">Tournament starts in 2h 15m</p>
+                    <p class="text-yellow-200/70 text-xs">Early predictions lock at start - make picks now for full points!</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Display Name (first time) -->
+        <div id="namePrompt" class="bg-white/10 rounded-xl p-4 mb-4">
+            <label class="block text-sm text-gray-300 mb-2">Your Display Name</label>
+            <div class="flex gap-2">
+                <input type="text" id="displayName" placeholder="Enter your name"
+                    class="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
+                <button onclick="saveName()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bracket Rounds -->
+    <div class="max-w-lg mx-auto space-y-6">
+
+        <!-- Round 1 -->
+        <div>
+            <div class="flex items-center gap-2 mb-3">
+                <h2 class="text-lg font-bold text-gray-200">Round 1</h2>
+                <span class="bg-green-500/20 text-green-400 text-xs px-2 py-0.5 rounded-full">+1 pt each</span>
+                <span class="bg-green-500/20 text-green-400 text-xs px-2 py-0.5 rounded-full lock-badge">🔓 Open</span>
+            </div>
+
+            <div class="space-y-3">
+                <!-- Match 1 -->
+                <div class="match-card bg-white/10 rounded-xl p-3">
+                    <div class="text-xs text-gray-400 mb-2">Match 1</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="player-btn selected rounded-lg p-3 text-left border border-white/10" onclick="selectWinner(this)">
+                            <div class="font-medium">[1] MkLeo</div>
+                            <div class="text-xs text-gray-400">Your pick ✓</div>
+                        </button>
+                        <button class="player-btn rounded-lg p-3 text-left border border-white/10 bg-white/5" onclick="selectWinner(this)">
+                            <div class="font-medium">[16] Player16</div>
+                            <div class="text-xs text-gray-400">Tap to pick</div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Match 2 -->
+                <div class="match-card bg-white/10 rounded-xl p-3">
+                    <div class="text-xs text-gray-400 mb-2">Match 2</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="player-btn rounded-lg p-3 text-left border border-white/10 bg-white/5" onclick="selectWinner(this)">
+                            <div class="font-medium">[8] Sparg0</div>
+                            <div class="text-xs text-gray-400">Tap to pick</div>
+                        </button>
+                        <button class="player-btn selected rounded-lg p-3 text-left border border-white/10" onclick="selectWinner(this)">
+                            <div class="font-medium">[9] Tweek</div>
+                            <div class="text-xs text-gray-400">Your pick ✓</div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Match 3 - Not picked yet -->
+                <div class="match-card bg-white/10 rounded-xl p-3">
+                    <div class="text-xs text-gray-400 mb-2">Match 3</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="player-btn rounded-lg p-3 text-left border border-white/10 bg-white/5" onclick="selectWinner(this)">
+                            <div class="font-medium">[4] Light</div>
+                            <div class="text-xs text-gray-400">Tap to pick</div>
+                        </button>
+                        <button class="player-btn rounded-lg p-3 text-left border border-white/10 bg-white/5" onclick="selectWinner(this)">
+                            <div class="font-medium">[13] Riddles</div>
+                            <div class="text-xs text-gray-400">Tap to pick</div>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Semifinals -->
+        <div>
+            <div class="flex items-center gap-2 mb-3">
+                <h2 class="text-lg font-bold text-gray-200">Semifinals</h2>
+                <span class="bg-purple-500/20 text-purple-400 text-xs px-2 py-0.5 rounded-full">+8 pts each</span>
+                <span class="bg-green-500/20 text-green-400 text-xs px-2 py-0.5 rounded-full lock-badge">🔓 Open</span>
+            </div>
+
+            <div class="space-y-3">
+                <!-- Semi 1 -->
+                <div class="match-card bg-white/10 rounded-xl p-3">
+                    <div class="text-xs text-gray-400 mb-2">Semifinal 1</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="player-btn selected rounded-lg p-3 text-left border border-white/10" onclick="selectWinner(this)">
+                            <div class="font-medium">Winner of M1</div>
+                            <div class="text-xs text-blue-400">→ MkLeo (your pick)</div>
+                        </button>
+                        <button class="player-btn rounded-lg p-3 text-left border border-white/10 bg-white/5" onclick="selectWinner(this)">
+                            <div class="font-medium">Winner of M2</div>
+                            <div class="text-xs text-blue-400">→ Tweek (your pick)</div>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Finals -->
+        <div>
+            <div class="flex items-center gap-2 mb-3">
+                <h2 class="text-lg font-bold text-gray-200">Grand Finals</h2>
+                <span class="bg-yellow-500/20 text-yellow-400 text-xs px-2 py-0.5 rounded-full">+16 pts</span>
+                <span class="bg-green-500/20 text-green-400 text-xs px-2 py-0.5 rounded-full lock-badge">🔓 Open</span>
+            </div>
+
+            <div class="match-card bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-xl p-3 border border-yellow-500/30">
+                <div class="text-xs text-yellow-400 mb-2">Grand Finals</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button class="player-btn selected rounded-lg p-3 text-left border border-yellow-500/30" onclick="selectWinner(this)">
+                        <div class="font-medium">Winner of SF1</div>
+                        <div class="text-xs text-yellow-400">→ MkLeo (your pick)</div>
+                    </button>
+                    <button class="player-btn rounded-lg p-3 text-left border border-white/10 bg-white/5" onclick="selectWinner(this)">
+                        <div class="font-medium">Winner of SF2</div>
+                        <div class="text-xs text-gray-400">No pick yet</div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="pt-4 pb-8">
+            <button onclick="submitPredictions()" class="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 py-4 rounded-xl font-bold text-lg shadow-lg">
+                Save Predictions
+            </button>
+            <p class="text-center text-gray-400 text-xs mt-2">You can update until tournament starts</p>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 left-4 right-4 bg-green-600 text-white p-4 rounded-xl shadow-lg transform translate-y-full opacity-0 transition-all duration-300 max-w-lg mx-auto">
+        <div class="flex items-center gap-2">
+            <span>✓</span>
+            <span>Prediction saved!</span>
+        </div>
+    </div>
+
+    <script>
+        function selectWinner(btn) {
+            if (btn.classList.contains('locked')) return;
+
+            const parent = btn.parentElement;
+            parent.querySelectorAll('.player-btn').forEach(b => {
+                b.classList.remove('selected');
+                b.querySelector('.text-xs').textContent = 'Tap to pick';
+            });
+            btn.classList.add('selected');
+            btn.querySelector('.text-xs').textContent = 'Your pick ✓';
+            btn.querySelector('.text-xs').classList.add('text-blue-400');
+
+            showToast('Pick saved!');
+        }
+
+        function saveName() {
+            const name = document.getElementById('displayName').value;
+            if (name.trim()) {
+                document.getElementById('namePrompt').style.display = 'none';
+                showToast('Welcome, ' + name + '!');
+            }
+        }
+
+        function submitPredictions() {
+            showToast('All predictions saved!');
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.querySelector('span:last-child').textContent = message;
+            toast.classList.remove('translate-y-full', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-full', 'opacity-0');
+            }, 2000);
+        }
+    </script>
+</body>
+</html>

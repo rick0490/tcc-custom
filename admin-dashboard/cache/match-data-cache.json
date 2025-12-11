@@ -1,0 +1,28 @@
+{
+  "data": {
+    "tournamentId": "tuesday_h3_dec25_4g9r",
+    "matches": [],
+    "podium": {
+      "isComplete": false,
+      "first": null,
+      "second": null,
+      "third": null,
+      "has3rdPlace": false
+    },
+    "availableStations": [],
+    "participantsCache": {},
+    "timestamp": "2025-12-10T21:48:59.343Z",
+    "source": "live",
+    "metadata": {
+      "nextMatchId": null,
+      "nextMatchPlayers": null,
+      "completedCount": 0,
+      "underwayCount": 0,
+      "openCount": 0,
+      "totalCount": 0,
+      "progressPercent": 0
+    }
+  },
+  "timestamp": "2025-12-10T21:48:59.343Z",
+  "tournamentId": "tuesday_h3_dec25_4g9r"
+}

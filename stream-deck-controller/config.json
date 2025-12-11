@@ -1,0 +1,43 @@
+{
+  "admin_url": "https://admin.despairhardware.com",
+  "api_token": null,
+  "station_filter": null,
+  "brightness": 80,
+  "poll_interval": 5,
+  "websocket_enabled": true,
+  "websocket_reconnect_delay": 1,
+  "websocket_max_reconnect_delay": 60,
+  "poll_fallback_interval": 5,
+  "ticker_presets": [
+    {
+      "label": "5m Break",
+      "message": "5 MINUTE BREAK",
+      "duration": 10
+    },
+    {
+      "label": "Report In",
+      "message": "PLAYERS REPORT TO YOUR STATIONS",
+      "duration": 8
+    },
+    {
+      "label": "Starting",
+      "message": "MATCHES STARTING SOON",
+      "duration": 8
+    },
+    {
+      "label": "Finals",
+      "message": "GRAND FINALS STARTING NOW",
+      "duration": 10
+    },
+    {
+      "label": "Check-In",
+      "message": "CHECK-IN IS NOW OPEN",
+      "duration": 10
+    },
+    {
+      "label": "Last Call",
+      "message": "LAST CALL FOR CHECK-IN",
+      "duration": 10
+    }
+  ]
+}

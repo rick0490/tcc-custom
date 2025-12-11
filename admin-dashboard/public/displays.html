@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Displays - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="TV display management and control">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Debug Logs Modal -->
+	<div id="debugLogsModal" class="fixed inset-0 bg-black bg-opacity-75 z-50 hidden flex items-center justify-center p-4">
+		<div class="bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] border border-gray-700">
+			<!-- Modal Header -->
+			<div class="flex-shrink-0 flex items-center justify-between p-4 border-b border-gray-700">
+				<div>
+					<h3 class="text-lg font-bold text-white">Debug Logs</h3>
+					<p id="debugLogsHostname" class="text-sm text-gray-400">--</p>
+				</div>
+				<div class="flex items-center gap-3">
+					<select id="debugLogsLevelFilter" onchange="filterDebugLogs()" class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white">
+						<option value="">All Levels</option>
+						<option value="debug">Debug</option>
+						<option value="info">Info</option>
+						<option value="warn">Warning</option>
+						<option value="error">Error</option>
+					</select>
+					<select id="debugLogsSourceFilter" onchange="filterDebugLogs()" class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white">
+						<option value="">All Sources</option>
+						<option value="kiosk">Kiosk</option>
+						<option value="manager">Manager</option>
+						<option value="chromium">Chromium</option>
+						<option value="system">System</option>
+					</select>
+					<button id="refreshDebugLogsBtn" onclick="refreshDebugLogs()" class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-500 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
+						<svg id="refreshDebugLogsIcon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+						</svg>
+						<span id="refreshDebugLogsText">Refresh</span>
+					</button>
+					<button onclick="clearDebugLogs()" class="px-3 py-1 text-sm bg-red-600 hover:bg-red-500 rounded text-white">
+						Clear
+					</button>
+					<button onclick="closeDebugLogsModal()" class="text-gray-400 hover:text-white">
+						<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<!-- Modal Body - scrollable log content -->
+			<div class="p-4" style="height: calc(90vh - 180px); overflow: hidden;">
+				<div id="debugLogsContent" class="h-full overflow-y-auto font-mono text-sm bg-gray-900 rounded p-3 border border-gray-700">
+					<div class="text-center py-8 text-gray-500">Loading logs...</div>
+				</div>
+			</div>
+
+			<!-- Modal Footer -->
+			<div class="flex-shrink-0 flex items-center justify-between p-4 border-t border-gray-700">
+				<span id="debugLogsCount" class="text-sm text-gray-400">0 logs</span>
+				<div class="flex items-center gap-2">
+					<button onclick="copyDebugLogs()" class="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-500 rounded text-white">
+						Copy to Clipboard
+					</button>
+					<button onclick="downloadDebugLogs()" class="px-3 py-1 text-sm bg-green-600 hover:bg-green-500 rounded text-white">
+						Download
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Module Status Overview -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h2 class="text-xl font-bold text-white">MagicMirror Modules</h2>
+					<p class="text-sm text-gray-400 mt-1">Core display services status</p>
+				</div>
+				<button id="refreshModuleStatusBtn" onclick="refreshModuleStatus()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+					<svg id="refreshModuleStatusIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					<span id="refreshModuleStatusText">Refresh</span>
+				</button>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+				<!-- Match Module -->
+				<div id="moduleMatch" class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">Match Display</div>
+							<div class="text-xs text-gray-400">Port 8080 / API 2052</div>
+						</div>
+					</div>
+					<div class="space-y-2 text-sm">
+						<div class="flex justify-between">
+							<span class="text-gray-400">Tournament:</span>
+							<span class="module-tournament text-white">--</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-400">Last Updated:</span>
+							<span class="module-updated text-white">--</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-400">Cache:</span>
+							<span id="matchCacheStatus" class="text-white">--</span>
+						</div>
+					</div>
+					<div class="mt-3 pt-3 border-t border-gray-600">
+						<button onclick="forceUpdateMatches()" id="forceUpdateBtn" class="w-full px-3 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded flex items-center justify-center gap-2">
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+							</svg>
+							Force Update
+						</button>
+					</div>
+				</div>
+
+				<!-- Bracket Module -->
+				<div id="moduleBracket" class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">Bracket Display</div>
+							<div class="text-xs text-gray-400">Port 8081 / API 2053</div>
+						</div>
+					</div>
+					<div class="space-y-2 text-sm">
+						<div class="flex justify-between">
+							<span class="text-gray-400">Bracket:</span>
+							<span class="module-bracket text-white truncate max-w-48">--</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-400">Last Updated:</span>
+							<span class="module-updated text-white">--</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- Flyer Module -->
+				<div id="moduleFlyer" class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="status-indicator bg-gray-500"></div>
+						<div>
+							<div class="font-semibold text-white">Flyer Display</div>
+							<div class="text-xs text-gray-400">Port 8082 / API 2054</div>
+						</div>
+					</div>
+					<div class="space-y-2 text-sm">
+						<div class="flex justify-between">
+							<span class="text-gray-400">Flyer:</span>
+							<span class="module-flyer text-white">--</span>
+						</div>
+						<div class="flex justify-between">
+							<span class="text-gray-400">Last Updated:</span>
+							<span class="module-updated text-white">--</span>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="flex items-center justify-between mt-4 pt-4 border-t border-gray-700">
+				<span id="lastRefreshed" class="text-xs text-gray-500">Last checked: --</span>
+				<span class="text-xs text-gray-500">Auto-refresh: 5s</span>
+			</div>
+		</div>
+	</section>
+
+	<!-- Bracket Controls -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h2 class="text-xl font-bold text-white">Bracket Controls</h2>
+					<p class="text-sm text-gray-400 mt-1">Zoom, scroll, and focus the bracket display</p>
+				</div>
+				<div id="bracketControlStatus" class="flex items-center gap-2">
+					<div class="status-indicator bg-gray-500"></div>
+					<span class="text-sm text-gray-400">Checking...</span>
+				</div>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+				<!-- Zoom Control -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<h3 class="font-semibold text-white mb-3">Zoom Level</h3>
+					<div class="space-y-3">
+						<div class="flex items-center gap-4">
+							<input type="range" id="bracketZoomSlider" min="0.3" max="3" step="0.1" value="1.0"
+								oninput="document.getElementById('bracketZoomValue').textContent = parseFloat(this.value).toFixed(1) + 'x'"
+								class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
+							<span id="bracketZoomValue" class="text-white font-mono text-sm w-12 text-right">1.0x</span>
+						</div>
+						<div class="flex gap-2">
+							<button onclick="setBracketZoom(0.5)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">0.5x</button>
+							<button onclick="setBracketZoom(0.75)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">0.75x</button>
+							<button onclick="setBracketZoom(1.0)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">1.0x</button>
+							<button onclick="setBracketZoom(1.5)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">1.5x</button>
+							<button onclick="setBracketZoom(2.0)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">2.0x</button>
+						</div>
+						<button onclick="applyBracketZoom()" class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium">
+							Apply Zoom
+						</button>
+					</div>
+				</div>
+
+				</div>
+
+			<!-- Quick Actions Row -->
+			<div class="mt-4 flex flex-wrap gap-3">
+				<button onclick="resetBracketView()" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded text-white text-sm font-medium flex items-center gap-2">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					Reset View
+				</button>
+				<!-- Focus on Match removed - Challonge iframe doesn't support scrollToMatchIdentifier postMessage -->
+			</div>
+
+			<!-- Status Bar -->
+			<div class="mt-4 pt-4 border-t border-gray-700 flex items-center justify-between text-xs text-gray-500">
+				<span>Current zoom: <span id="currentZoomDisplay" class="text-white">1.0x</span></span>
+				<span>Bracket URL: <span id="currentBracketUrl" class="text-gray-400 truncate max-w-xs">--</span></span>
+			</div>
+		</div>
+	</section>
+
+	<!-- Registered Displays -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<div class="flex items-center gap-3">
+						<h2 class="text-xl font-bold text-white">Registered Displays</h2>
+						<span id="displaysLastUpdated" class="hidden sm:inline-flex items-center gap-1"></span>
+					</div>
+					<p class="text-sm text-gray-400 mt-1">Physical display devices connected to the system</p>
+				</div>
+				<button id="refreshDisplaysBtn" onclick="refreshDisplays()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+					<svg id="refreshDisplaysIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+					</svg>
+					<span id="refreshDisplaysText">Refresh</span>
+				</button>
+			</div>
+
+			<div id="displayList" class="space-y-4">
+				<div class="text-center py-8 text-gray-400">
+					<div class="spinner mx-auto mb-3"></div>
+					Loading displays...
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Display Instructions -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-4">Setup Instructions</h2>
+			<div class="space-y-4 text-sm text-gray-300">
+				<div class="flex gap-4">
+					<div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
+						<span class="text-blue-400 font-bold">1</span>
+					</div>
+					<div>
+						<div class="font-medium text-white">Configure Display Device</div>
+						<p class="text-gray-400">On your Raspberry Pi or display device, run the display client script to register with this admin panel.</p>
+					</div>
+				</div>
+				<div class="flex gap-4">
+					<div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
+						<span class="text-blue-400 font-bold">2</span>
+					</div>
+					<div>
+						<div class="font-medium text-white">Assign Display View</div>
+						<p class="text-gray-400">Once registered, select which MagicMirror view (Match, Bracket, or Flyer) should be shown on each display.</p>
+					</div>
+				</div>
+				<div class="flex gap-4">
+					<div class="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
+						<span class="text-blue-400 font-bold">3</span>
+					</div>
+					<div>
+						<div class="font-medium text-white">Monitor Status</div>
+						<p class="text-gray-400">Displays send heartbeats every 30 seconds. Green indicates online, red indicates offline or disconnected.</p>
+					</div>
+				</div>
+			</div>
+
+			<div class="mt-6 p-4 bg-gray-750 rounded-lg border border-gray-600">
+				<div class="font-medium text-white mb-2">MagicMirror URLs</div>
+				<div class="space-y-1 text-sm font-mono">
+					<div><span class="text-gray-400">Match:</span> <span class="text-blue-400">http://[server-ip]:8080</span></div>
+					<div><span class="text-gray-400">Bracket:</span> <span class="text-blue-400">http://[server-ip]:8081</span></div>
+					<div><span class="text-gray-400">Flyer:</span> <span class="text-blue-400">http://[server-ip]:8082</span></div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/displays.js?v=14"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Displays');
+		});
+	</script>
+</body>
+</html>

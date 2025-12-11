@@ -1,0 +1,1116 @@
+================================================================================
+TOURNAMENT CONTROL CENTER - COMPLETED IMPROVEMENTS & FEATURES
+================================================================================
+
+Generated: 2025-12-06
+System: Six-service tournament control platform with admin dashboard,
+        signup PWA, three MagicMirror displays, and Stream Deck controller
+
+This document tracks all completed features and improvements.
+For pending features, see: FUTURE_IMPROVEMENTS.txt
+
+================================================================================
+CURRENT SYSTEM FEATURES (FULLY IMPLEMENTED)
+================================================================================
+
+Admin Dashboard (port 3000):
+- Web interface with modular page-based design
+- Multi-user authentication with session-based auth + bcrypt
+- Role-based access control (admin/user roles)
+- Account lockout protection (5 failed attempts = 1 hour)
+- CSRF protection (Double-Submit Cookie pattern)
+- System settings management (7 categories)
+- Activity logging for audit trail
+- Dark/Light mode toggle with localStorage persistence
+- Mobile-responsive design with touch optimization
+- Last updated timestamps on all data panels
+- Game configuration management page (CRUD for game rulesets)
+- Live Activity Feed (real-time event stream with WebSocket, filtering, search)
+- **Command Center** (2025-12-07): Single-page tournament control with 4-quadrant layout,
+  keyboard shortcuts (1-5, W, L, S, Enter, Escape, R, T, ?), real-time WebSocket updates,
+  score modal with quick winners, ticker modal, system status display, mobile responsive
+
+Tournament Management:
+- Tournament selection from Challonge (pending/in-progress/completed)
+- Tournament creation wizard (3-step: Basic Info, Format, Schedule)
+- Tournament lifecycle controls (start, reset, finalize, delete)
+- Tournament edit modal for post-creation changes
+- Searchable game selection with 40+ games autocomplete
+- Real-time system status monitoring (5-second auto-refresh)
+- Tournament deployment to all display modules
+- **Auto rate mode check on lifecycle changes (2025-12-07)**: When starting, resetting, or
+  finalizing a tournament, the system immediately checks rate mode and starts match polling
+  if needed, eliminating the 2-hour delay between scheduled checks
+
+Match Management:
+- Match management page with state filtering (All, Open, In Progress, Complete)
+- Mark underway, enter scores, declare winners, reopen matches
+- DQ/Forfeit functionality (advance winner with 0-0 score)
+- TV station management (create/delete, assign matches, auto-assign)
+- Immediate match updates (~4 second latency)
+- Real-time WebSocket updates via Socket.IO
+
+Participant Management:
+- Full participant UI (edit, delete, drag-drop seed reordering)
+- Check-in management (check-in/undo, status display, count badges)
+- Bulk participant add (textarea or CSV format)
+- Search/filter participants, export to CSV
+- Seed randomization
+- Player Elo ratings per game (K=32, starting 1200)
+
+Display Management:
+- Remote Pi Display Management (reboot, shutdown via command queue)
+- Debug logging for Pi displays (toggle, view, filter, download)
+- Cross-network command queue (no SSH needed)
+- Health monitoring (CPU temp, memory, voltage, WiFi)
+- View assignment from dashboard
+
+Analytics & Reporting:
+- Historical Analytics with SQLite database
+- Tournament archive system for completed tournaments
+- Player profiles with full stats, match history, rating history
+- Player leaderboards per game
+- Attendance trends and statistics
+- Head-to-head records between players
+- Seeding suggestions based on Elo rankings
+- Export to CSV (standings, matches) and PDF (full reports)
+
+Display Features:
+- Flyer management with thumbnail gallery
+- Flyer JPG and MP4 video support (autoplay, loop, muted)
+- Ticker message system with presets
+- DQ timers per TV station + tournament-wide timer
+- QR code display (signup URL, bracket link, custom URL)
+- Sponsor logo overlay system (corners, banners, rotation)
+- Bracket display with zoom control
+
+API & Integration:
+- Adaptive API rate limiting (IDLE/UPCOMING/ACTIVE modes)
+- Challonge API v2.1 (complete migration, no v1 usage)
+- OAuth 2.0 authentication with automatic token refresh
+- Centralized match polling from admin dashboard
+- Hybrid caching for offline resilience
+- Page Visibility API (pauses polling when tab hidden)
+
+Tournament Signup PWA (port 3001):
+- Mobile-optimized signup form with Instagram integration
+- Smart registration window (configurable hours before tournament)
+- Signup cap enforcement with "Tournament Full" messaging
+- Tournament state awareness (pending, check-in, underway, complete)
+- Game-specific rules and prizes (SSBU, MKW, Halo 3, default)
+- Hot-reload game configs (auto-refresh without service restart)
+- Registration countdown timers
+- Auto-refresh every 30 seconds
+- PWA with service worker and offline caching
+- **Late walk-in support (2025-12-10)**: Registration stays open until tournament is
+  explicitly started via admin dashboard - does NOT auto-close at scheduled time.
+  Allows late entries at live events even after scheduled start time passes.
+
+MagicMirror Displays:
+- Match Display: Dynamic TV 1/TV 2 layout, winner animations, podium mode
+- Bracket Display: Challonge iframe embed with zoom control
+- Flyer Display: Static flyer/video display
+- Winston logging with 7-day rotation
+- Centralized polling mode (receives data from admin dashboard)
+
+Testing & CI/CD:
+- Jest + Supertest unit tests (73+ tests)
+- Playwright E2E browser tests (6 spec files)
+- GitHub Actions workflows (test.yml, deploy.yml)
+- Deployment scripts (deploy.sh, smoke-test.sh, backup-db.sh)
+
+Stream Deck Controller:
+- Physical control interface (Pi Zero 2 W + Elgato Module 15)
+- Multiple view modes (MAIN, MATCH_CONTROL, SCORE_ENTRY, TICKER)
+- Match overview and quick actions
+- Score entry with +/- buttons
+- Ticker message sending
+- **WebSocket real-time updates** (2025-12-07): Socket.IO connection for instant updates
+- **Connection status indicator** (key 11): WS (green), POLL (yellow), HTTP (purple)
+- **Auto-reconnect** with exponential backoff and HTTP polling fallback
+
+Raspberry Pi Display System:
+- Chromium kiosk mode with hardware acceleration
+- NVMe vs SD card detection with optimized settings
+- Crash detection with exponential backoff
+- Display manager with 30s heartbeats
+- Config polling every 10s for fast view switching
+- Remote reboot/shutdown via command queue
+- Debug mode with log push to admin dashboard
+- Screen blanking prevention
+- Secondary WiFi network as fallback
+
+================================================================================
+COMPLETED FEATURES BY DATE
+================================================================================
+
+--------------------------------------------------------------------------------
+2025-11-24: Admin Dashboard Restructure
+--------------------------------------------------------------------------------
+- Modular page-based admin dashboard with collapsible sidebar navigation
+- Match management page (mark underway, scores, declare winners, reopen)
+- Tournament lifecycle controls (start, reset, finalize, delete)
+- Tournament creation wizard (3-step: Basic Info, Format, Schedule)
+- Searchable game selection with 40+ games autocomplete
+- Flyer management page with thumbnail gallery
+- Display management page with module status
+- Dedicated tournament configuration page
+- Hamburger menu sidebar with localStorage state persistence
+- Mobile-responsive navigation with overlay menu
+- Dashboard "No Tournament Selected" / "Tournament Not Found" states
+- Bracket display changed to bracket-only
+
+--------------------------------------------------------------------------------
+2025-11-25: Participant & Match Improvements
+--------------------------------------------------------------------------------
+- Bulk Add Participants (textarea, Challonge bulk_add endpoint)
+- Native Randomize Seeds (Challonge native endpoint)
+- Match Stats Endpoint (total, completed, remaining)
+- Unmark Match as Underway (stop button)
+- Quick Winner Fix (default scores when declaring winner)
+- Chromium Browser on Pi (full CSS animation support)
+- Heartbeat Service Restoration (30-second heartbeats)
+
+--------------------------------------------------------------------------------
+2025-11-26: Display Controls & Ticker
+--------------------------------------------------------------------------------
+- Bracket Display Controls (zoom slider, presets, reset view)
+- Ticker Message System (presets, custom messages, configurable duration)
+
+--------------------------------------------------------------------------------
+2025-11-27: Centralized Polling
+--------------------------------------------------------------------------------
+- Centralized Match Polling (admin dashboard polls, pushes to displays)
+- Adaptive Rate Limiting Enhancements (manual override, dev mode)
+
+--------------------------------------------------------------------------------
+2025-11-28: Participant & Station Management
+--------------------------------------------------------------------------------
+- Full Participant Management UI (edit, delete, drag-drop seed reordering)
+- Participant Check-In Management (check-in/undo, status display, badges)
+- Bulk Participant Add (CSV format support)
+- Station Management UI (create/delete, assign matches, auto-assign)
+- DQ/Forfeit functionality (advance winner with 0-0 score)
+- Remote Pi Display Management (reboot, shutdown, debug logs)
+
+--------------------------------------------------------------------------------
+2025-12-01: Analytics
+--------------------------------------------------------------------------------
+- Historical Analytics with SQLite database
+- Player Elo ratings per game (K=32, starting 1200)
+- Seeding suggestions based on Elo rankings
+- Tournament archive system
+- Player profiles with full stats
+- Head-to-head records
+- Attendance trends
+
+--------------------------------------------------------------------------------
+2025-12-04: Real-time Updates & Timers
+--------------------------------------------------------------------------------
+- Real-time WebSocket updates (Socket.IO for instant updates)
+- DQ Timers per TV station (3-minute countdown)
+- Tournament Timer (custom duration, 1-60 minutes)
+- QR Code Display Mode (signup, bracket, custom URL)
+- Enhanced Status Dashboard (live matches, upcoming queue)
+- Immediate match updates (~4 second latency)
+- Hybrid caching for offline resilience
+
+--------------------------------------------------------------------------------
+2025-12-05: Mobile & Security
+--------------------------------------------------------------------------------
+- Mobile-Responsive Admin Dashboard
+  - Touch-optimized score entry (56px buttons, 64px inputs)
+  - Full-screen modals on mobile
+  - Swipe gestures for match filter navigation
+  - 44px minimum touch targets
+  - iOS zoom prevention
+- OAuth 2.0 Migration (system-wide Challonge account connection)
+- CSRF Protection (Double-Submit Cookie pattern)
+- Last Updated Timestamps (relative time, color coding, click-to-refresh)
+- Sort Persistence for participant table
+
+--------------------------------------------------------------------------------
+2025-12-07: Live Activity Feed Widget
+--------------------------------------------------------------------------------
+- Real-time activity feed on admin dashboard homepage
+- WebSocket updates via Socket.IO (activity:new, activity:initial events)
+- 6 activity categories: admin, tournament, participant, match, display, system
+- Filter buttons: All, Signups, Matches, Displays, Admin
+- Search box for filtering by text content
+- Connection status indicator (Live/Connecting/Disconnected)
+- Sound notifications toggle (Web Audio API beep)
+- Collapsible widget with localStorage persistence
+- Unread badge when collapsed
+- Load More pagination for history
+- Color-coded icons by activity category
+- GET /api/activity endpoint with pagination, category filter, search
+- POST /api/activity/external webhook for signup PWA integration
+- Token-based authentication for external webhooks (X-Activity-Token header)
+- Event logging for: login/logout, match start/complete/DQ, participant check-in/checkout/signup, display online/offline
+- Signup PWA webhook integration (fire-and-forget, non-blocking)
+- 12 unit tests for Activity API (Jest + Supertest)
+
+Activity Types Implemented:
+| Category | Events |
+| participant | participant_signup, participant_checkin, participant_checkout |
+| match | match_start, match_complete, match_dq |
+| display | display_online, display_offline |
+| admin | admin_login, admin_logout |
+| system | dev_mode_enabled, dev_mode_disabled, settings changes |
+
+Files Modified:
+- admin-dashboard/server.js (activity types, logActivity, API endpoints, WebSocket)
+- admin-dashboard/public/index.html (activity feed HTML section)
+- admin-dashboard/public/css/style.css (activity feed styling)
+- admin-dashboard/public/js/dashboard.js (Socket.IO client, rendering, filtering)
+- tournament-signup/server.js (webhook helper, notification after signup)
+- tournament-signup/.env (webhook configuration)
+- admin-dashboard/__tests__/api/activity.test.js (new test file)
+
+--------------------------------------------------------------------------------
+2025-12-06: API Token Authentication & v2.1 Migration
+--------------------------------------------------------------------------------
+- API Token Authentication for Stream Deck Controller
+  - Removed plaintext credentials from config.json
+  - api_tokens table in SQLite with SHA-256 hashing
+  - Token auth middleware (requireTokenOrSessionAuth)
+  - 4 API endpoints: create, list, revoke, verify tokens
+  - Token-authenticated requests bypass CSRF
+  - Environment file (.env) with chmod 600 for secure storage
+  - Tokens revocable from dashboard if compromised
+- COMPLETE Challonge API v1 Removal
+  - Match state changes migrated to v2.1 change_state.json
+  - Match score/winner operations migrated to v2.1
+  - Removed getV1AuthConfig function entirely
+  - Removed all v1 fallback code
+- Dark/Light Mode Toggle
+  - Theme toggle button in sidebar (sun/moon icon)
+  - CSS custom properties for all theme colors
+  - localStorage persistence
+  - System preference detection
+  - All 9 HTML pages support theming
+- Enhanced PDF Tournament Report
+  - Dark/minimalist design with red accents
+  - Medal circles for top 3 placements
+  - Tournament Statistics section
+  - Match Highlights (upsets, closest matches)
+  - Player Analytics (Elo changes, attendance)
+- Sponsor Logo Overlay System
+  - Upload sponsor logos (PNG, JPG, GIF, SVG, WEBP)
+  - Corner positions + banner positions
+  - Size and opacity controls
+  - Rotation settings (sequential/random)
+  - WebSocket real-time updates
+- Automated Testing Framework (CI/CD pipeline)
+- Export Tournament Results (CSV + PDF)
+
+================================================================================
+IMPLEMENTED FEATURE DETAILS
+================================================================================
+
+--------------------------------------------------------------------------------
+1. PARTICIPANT CHECK-IN MANAGEMENT
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-28)
+
+FEATURES:
+- Dashboard showing all registered participants with check-in status
+- One-click check-in buttons for each participant
+- "Undo check-in" capability for mistakes
+- Check-in status column with visual indicators
+- Filter participants by check-in status
+- Search participants by name or Instagram
+- Check-in count display in stats
+- API endpoints: POST/DELETE /api/participants/:tournamentId/:participantId/check-in
+
+--------------------------------------------------------------------------------
+2. QUICK MATCH SCORE ENTRY
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-24)
+
+FEATURES:
+- Dedicated matches.html page with match management UI
+- Match cards showing player names, round, state, and scores
+- Filter buttons: All, Open, In Progress, Complete
+- "Mark Underway" button for TV display highlighting
+- Score modal with +/- buttons
+- "Declare Winner" buttons for each player
+- "Reopen Match" button for completed matches
+- DQ/Forfeit buttons (advance winner with 0-0 score)
+
+--------------------------------------------------------------------------------
+3. TOURNAMENT CREATION WIZARD
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-24)
+
+FEATURES:
+- 3-step wizard modal:
+  - Step 1: Basic Info (name, game selection)
+  - Step 2: Format (bracket type, grand finals modifier, third place)
+  - Step 3: Schedule (start date/time, check-in duration, signup cap)
+- Searchable game selection with 40+ games
+- POST /api/tournaments/create endpoint
+- Summary preview before creation
+- Auto-refresh tournament list after creation
+
+--------------------------------------------------------------------------------
+4. BULK PARTICIPANT IMPORT
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-28)
+
+FEATURES:
+- Textarea input for bulk import (one name per line)
+- CSV format support (name, email, seed, misc)
+- Preview/parse participants before import
+- Duplicate detection (same name)
+- Error handling per participant
+- Randomize Seeds button
+- POST /api/participants/:tournamentId/bulk endpoint
+
+--------------------------------------------------------------------------------
+5. PARTICIPANT MANAGEMENT UI
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-28)
+
+FEATURES:
+- Edit participant details (name, email, seed, instagram, misc)
+- Delete individual participants
+- Drag-and-drop seed reordering (SortableJS)
+- Inline seed editing
+- "Clear all participants" with confirmation
+- Participant count display with statistics
+- Search/filter participants
+- Export to CSV
+
+--------------------------------------------------------------------------------
+6. TOURNAMENT LIFECYCLE CONTROLS
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-24)
+
+FEATURES:
+- "Start Tournament" button
+- "Reset Tournament" button with confirmation
+- "Finalize Tournament" button
+- Tournament state badge display
+- Lifecycle controls in tournament configuration page
+
+--------------------------------------------------------------------------------
+7. ENHANCED STATUS DASHBOARD
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-04)
+
+FEATURES:
+- Tournament Overview Cards (participant count, match progress, time estimate)
+- Current round display (W1/L2 format for double elimination)
+- In-progress match count
+- Enhanced Stats Row (during underway tournaments)
+- Live Matches Panel with elapsed time
+- Upcoming Matches Queue (next 5 matches)
+- API: GET /api/matches/:tournamentId/stats
+
+--------------------------------------------------------------------------------
+8. STATION MANAGEMENT UI
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-28)
+
+FEATURES:
+- Create/delete stations from dashboard
+- Assign stations to specific matches
+- Auto-assign toggle
+- Station status display
+- Station dropdown per match card
+- API: GET/POST/DELETE /api/stations/:tournamentId
+
+--------------------------------------------------------------------------------
+9. HISTORICAL TOURNAMENT ARCHIVE
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-01)
+
+FEATURES:
+- Analytics page with game tabs
+- SQLite database for historical data
+- Player Elo ratings per game (K=32, starting 1200)
+- Head-to-head records
+- Tournament archive system
+- Player profiles with stats, match history, rating history
+- Player leaderboards
+- Attendance trends
+- Seeding suggestions based on Elo
+- Player name fuzzy matching (Levenshtein distance)
+
+--------------------------------------------------------------------------------
+17. DISPLAY TIMERS
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-04)
+
+FEATURES:
+- DQ Timers per TV station (3-minute countdown, auto-hide)
+- Tournament Timer (custom duration 1-60 minutes)
+- Visual warning states (yellow at 30s, red at 10s)
+- Timer controls in admin dashboard ticker UI
+- API: POST /api/timer/dq, /api/timer/tournament, /api/timer/hide
+- WebSocket events: timer:dq, timer:tournament, timer:hide
+
+--------------------------------------------------------------------------------
+18. QR CODE DISPLAY MODE
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-04)
+
+FEATURES:
+- Quick buttons: "Signup Page", "Bracket Link"
+- Custom URL input with optional label
+- Fullscreen QR overlay on match display
+- Scale-in/out animations
+- API: GET /api/qr/generate, POST /api/qr/show, POST /api/qr/hide
+
+--------------------------------------------------------------------------------
+20. SPONSOR LOGO OVERLAY SYSTEM
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-06)
+
+FEATURES:
+- Admin dashboard sponsor management page
+- Upload logos (PNG, JPG, GIF, SVG, WEBP up to 10MB)
+- 6 positions: 4 corners + 2 banners
+- Size (50-200%) and opacity (10-100%) controls
+- Enable/disable per sponsor, drag-drop reorder
+- Rotation settings (sequential/random)
+- WebSocket real-time updates
+- HTTP API fallback
+
+--------------------------------------------------------------------------------
+27. CSRF PROTECTION
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+FEATURES:
+- Double-Submit Cookie pattern (custom implementation)
+- Per-session CSRF tokens (64-char hex)
+- XSRF-TOKEN cookie + X-CSRF-Token header validation
+- csrfFetch() wrapper in utils.js
+- Auto-retry on 403 CSRF errors
+- Exempt routes: login, Pi display endpoints
+- 13 automated tests
+
+--------------------------------------------------------------------------------
+30. DARK/LIGHT MODE TOGGLE
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-06)
+
+FEATURES:
+- Theme toggle button in sidebar (sun/moon icon)
+- localStorage persistence
+- System preference detection (prefers-color-scheme)
+- Smooth CSS transitions
+- CSS custom properties for all theme colors
+- Inline script prevents flash of wrong theme
+- All 9 HTML pages + login page support theming
+
+--------------------------------------------------------------------------------
+32. FLYER PREVIEW GALLERY
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-24)
+
+FEATURES:
+- Thumbnail grid view of all flyers
+- Click-to-preview with fullscreen lightbox
+- Delete button with confirmation
+- Quick flyer switch dropdown
+- Current display status
+- File size and modified date
+
+--------------------------------------------------------------------------------
+34. MOBILE-RESPONSIVE ADMIN DASHBOARD
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+FEATURES:
+- Hamburger menu for navigation
+- Collapsible sidebar with localStorage persistence
+- Touch-friendly score entry (56px buttons, 64px inputs)
+- Full-screen modals on mobile
+- Swipe gestures for match filter navigation
+- Mobile-optimized participant table
+- Horizontal scrolling filter buttons
+- 44px minimum touch targets
+- iOS zoom prevention (16px form inputs)
+
+--------------------------------------------------------------------------------
+37. LAST UPDATED TIMESTAMPS
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+FEATURES:
+- "Updated: 5s ago" on all data panels
+- Relative time formatting (Just now, 5s ago, 2m ago)
+- Color coding (green = fresh, yellow = stale, gray = old)
+- Click to force refresh
+- Auto-update every 10 seconds
+
+--------------------------------------------------------------------------------
+38. EXPORT TOURNAMENT RESULTS
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+FEATURES:
+- CSV export: standings, matches
+- PDF report with enhanced analytics
+- Dark/minimalist design (black header, red accents)
+- Medal circles for top 3 (gold, silver, bronze)
+- Tournament Statistics section
+- Match Highlights (upsets, closest matches)
+- Player Analytics (Elo changes, attendance)
+- API: GET /api/export/:tournamentId/standings/csv
+- API: GET /api/export/:tournamentId/matches/csv
+- API: GET /api/export/:tournamentId/report/pdf
+
+--------------------------------------------------------------------------------
+41. REAL-TIME WEBSOCKET UPDATES
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-04)
+
+FEATURES:
+- Socket.IO server on admin dashboard (port 3000)
+- MagicMirror-match connects via WebSocket
+- Instant match updates via broadcast
+- Ticker messages via WebSocket
+- Connection status tracking
+- Auto-reconnect with exponential backoff
+- WebSocket status endpoint
+- HTTP fallback
+
+Events: matches:update, ticker:message, tournament:update, display:register
+
+--------------------------------------------------------------------------------
+42. OAUTH 2.0 MIGRATION
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+FEATURES:
+- OAuth 2.0 authorization code flow
+- System-wide single Challonge account connection
+- Tokens stored encrypted in SQLite (AES-256-GCM)
+- Automatic token refresh (5 min before expiration)
+- Connect/disconnect UI in Settings page
+- Authorization-Type: v2 header for OAuth tokens
+- Automatic 401 fallback to legacy API key
+- 17 unit tests
+
+Endpoints:
+- GET /auth/challonge
+- GET /auth/challonge/callback
+- GET /api/oauth/status
+- POST /api/oauth/disconnect
+- POST /api/oauth/refresh
+
+--------------------------------------------------------------------------------
+44b. CHALLONGE API v2.1 MIGRATION
+--------------------------------------------------------------------------------
+STATUS: FULLY COMPLETED (2025-12-06)
+
+All Challonge API operations now use v2.1 exclusively:
+- Tournament operations (list, get, create, update, delete, lifecycle)
+- Participant operations (CRUD, bulk add, check-in, randomize)
+- Match operations (mark underway, scores, winner, reopen, DQ)
+- Analytics operations (archive, seeding, upcoming)
+- Station management
+- Rate limiter tournament check
+
+v1 API completely removed from codebase.
+
+--------------------------------------------------------------------------------
+45. AUTOMATED TESTING & DEPLOYMENT
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-06)
+
+Unit Tests (Jest + Supertest):
+- 73+ automated tests
+- Authentication, CSRF, Status API, Rate limiter, Input validation
+
+E2E Tests (Playwright):
+- 6 spec files: auth, navigation, dashboard, tournament, matches, theme
+
+CI/CD Pipeline:
+- GitHub Actions: test.yml, deploy.yml
+- Private repository: rick0490/tournament-control-center
+- Deployment scripts: deploy.sh, smoke-test.sh, backup-db.sh
+
+--------------------------------------------------------------------------------
+46. REMOTE PI DISPLAY MANAGEMENT
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-28)
+
+FEATURES:
+- View all registered Pi displays
+- Remote reboot/shutdown commands
+- Health monitoring (CPU temp, memory, voltage, WiFi)
+- Pi displays register on boot
+- View assignment from dashboard
+- Debug mode toggle with log viewing
+- System info display (IP, MAC, hostname)
+- 30s heartbeats, 10s config polling
+
+--------------------------------------------------------------------------------
+48. TOURNAMENT ANALYTICS DASHBOARD
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-01)
+
+FEATURES:
+- Analytics page with game tabs
+- Stats overview (tournaments, players, matches)
+- Player rankings/leaderboards
+- Player profiles with match/rating history
+- Head-to-head records
+- Attendance trends
+- SQLite database
+- Elo rating system
+- Seeding suggestions
+
+--------------------------------------------------------------------------------
+56. CHROMIUM BROWSER (Pi)
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-25)
+
+FEATURES:
+- Full Chromium browser with V8 JavaScript engine
+- CSS animations and transitions
+- Hardware-accelerated rendering
+- Kiosk mode with fullscreen display
+- DevTools for remote debugging
+
+--------------------------------------------------------------------------------
+60. HEARTBEAT SERVICE RESTORATION (Pi)
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-25)
+
+FEATURES:
+- Display manager service with 30-second heartbeats
+- Real-time online/offline status
+- CPU temperature and memory reporting
+- WiFi quality and signal strength
+- Remote URL configuration
+- Auto-reconnection on network loss
+
+--------------------------------------------------------------------------------
+70. CHECK-IN STATUS COLUMN
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-11-28)
+
+FEATURES:
+- Check-in status column with visual indicators
+- Filter by check-in status
+- Check-in count in stats
+- Individual check-in/undo buttons
+- Search across name and Instagram
+
+--------------------------------------------------------------------------------
+73. LAST REFRESHED TIMESTAMP
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+Merged with item 37. See "Last Updated Timestamps" above.
+
+--------------------------------------------------------------------------------
+77. SORT PERSISTENCE
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-05)
+
+FEATURES:
+- Remember sort column and direction
+- localStorage persistence
+- Visual indicator (blue arrow in header)
+- Loads preferences on page load
+
+--------------------------------------------------------------------------------
+16. STREAM DECK WEBSOCKET REAL-TIME UPDATES
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-07)
+
+PROBLEM: HTTP polling every 2-5 seconds caused latency and server load.
+
+FEATURES:
+- Socket.IO WebSocket connection via python-socketio library
+- Instant match updates (<100ms vs 2-5 seconds polling)
+- Connection status indicator on key 11:
+  - GREEN (WS:X): WebSocket connected, X = live match count
+  - YELLOW (POLL:X): WebSocket failed, using HTTP polling fallback
+  - PURPLE (HTTP:X): WebSocket disabled, HTTP polling only
+- Automatic reconnect with exponential backoff
+- HTTP polling fallback when WebSocket disconnects
+- Configuration options in config.json:
+  - websocket_enabled (default: true)
+  - websocket_reconnect_delay (default: 1s)
+  - websocket_max_reconnect_delay (default: 60s)
+  - poll_fallback_interval (default: 5s)
+
+FILES:
+- stream-deck-controller/websocket_client.py (NEW - Socket.IO client)
+- stream-deck-controller/api_client.py (WebSocket payload parsing)
+- stream-deck-controller/controller.py (WebSocket integration)
+- stream-deck-controller/config.json (WebSocket config options)
+- stream-deck-controller/requirements.txt (python-socketio, websocket-client)
+- stream-deck-controller/install.sh (updated file downloads)
+
+--------------------------------------------------------------------------------
+43. LOCAL DATABASE CACHING
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-07)
+
+PROBLEM: Repeated API calls to Challonge for same data
+
+FEATURES:
+- SQLite-based caching (integrated with analytics.db)
+- TTL-based expiration with configurable times
+- Stale-while-revalidate pattern for offline resilience
+- Cache for tournaments (60s), matches (30s), participants (120s), stations (300s)
+- Auto-invalidation on mutations
+- Cache management API endpoints (status, invalidate, clear)
+- Cache indicators in UI (matches, participants pages)
+- Cache statistics and management in Settings page
+
+FILES:
+- admin-dashboard/cache-db.js - Cache module (~520 lines)
+- admin-dashboard/analytics-db.js - Cache tables added
+- admin-dashboard/server.js - Cache integration in GET endpoints
+- admin-dashboard/public/js/settings.js - Cache settings UI
+
+--------------------------------------------------------------------------------
+PHASE 2: RELIABILITY & SECURITY IMPROVEMENTS (2025-12-09)
+--------------------------------------------------------------------------------
+STATUS: COMPLETED
+
+A comprehensive reliability and security improvement phase addressing:
+- Frontend memory leaks
+- Modular architecture foundation
+- Input validation infrastructure
+- Credential security
+- WebSocket delivery reliability
+
+--------------------------------------------------------------------------------
+P2-1. FRONTEND MEMORY LEAK FIXES
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-09)
+
+PROBLEM: setInterval/setTimeout not cleaned up on page navigation causing
+memory leaks in single-page dashboard.
+
+FIX: Added beforeunload cleanup handlers to all 10 frontend JS files.
+
+FILES MODIFIED:
+- public/js/dashboard.js - Added piDisplaysInterval tracking, cleanup handler
+- public/js/participants.js - Added participantsRefreshInterval, cleanup handler
+- public/js/nav.js - Clear sessionMonitor on logout, beforeunload cleanup
+- public/js/matches.js - Added beforeunload cleanup for refreshInterval
+- public/js/games.js - Added beforeunload cleanup for pollingInterval
+- public/js/analytics.js - Added cleanup for seedingPollingInterval, search timers
+- public/js/flyers.js - Added beforeunload cleanup for statusRefreshInterval
+- public/js/sponsors.js - Added beforeunload cleanup for statusRefreshInterval
+- public/js/settings.js - Added beforeunload cleanup for monitoringRefreshInterval
+- public/js/command-center.js - Fixed anonymous setInterval, added cleanup
+
+PATTERN APPLIED:
+```javascript
+// Track intervals in named variables
+let myInterval = setInterval(myFunction, 15000);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (myInterval) clearInterval(myInterval);
+});
+```
+
+--------------------------------------------------------------------------------
+P2-2. MODULAR REFACTOR - FULL EXTRACTION
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-09)
+
+PROBLEM: server.js was 12,000+ lines, hard to maintain and test.
+
+FIX: Full extraction of server.js into modular architecture with services,
+routes, helpers, and middleware. Server.js reduced to ~3,500 lines (orchestrator).
+
+SERVICES EXTRACTED (~2,400 lines):
+- services/settings.js - Settings file operations (~380 lines)
+- services/rate-limiter.js - Adaptive Challonge rate limiting (~500 lines)
+- services/activity-logger.js - Activity logging with WebSocket (~120 lines)
+- services/challonge-api.js - Challonge API v2.1 communication (~300 lines)
+- services/dq-timer.js - Server-side DQ timer management (~280 lines)
+- services/match-polling.js - Centralized match polling (~550 lines)
+- services/sponsor.js - Sponsor overlay management (~250 lines)
+- services/index.js - Central export for all services
+
+ROUTES EXTRACTED (~6,600 lines total):
+- routes/auth.js - Login, logout, OAuth (~400 lines)
+- routes/users.js - User CRUD (~170 lines)
+- routes/settings.js - System settings (~250 lines)
+- routes/games.js - Game configurations (~210 lines)
+- routes/monitoring.js - System monitoring (~200 lines)
+- routes/templates.js - Tournament templates (~180 lines)
+- routes/stations.js - Station management (~250 lines)
+- routes/participants.js - Participant CRUD, bulk add, seeding (~700 lines)
+- routes/matches.js - Match operations, scoring, stations (~1,200 lines)
+- routes/tournaments.js - Tournament CRUD, lifecycle (~800 lines)
+- routes/displays.js - Pi display management (~650 lines)
+- routes/flyers.js - Flyer uploads and management (~290 lines)
+- routes/sponsors.js - Sponsor overlays (~300 lines)
+- routes/analytics.js - Analytics and seeding suggestions (~600 lines)
+- routes/exports.js - CSV/PDF exports (~600 lines)
+- routes/api.js - Misc APIs: status, cache, timer, QR, notifications (~1,200 lines)
+- routes/index.js - Central export for all routes
+
+HELPERS EXTRACTED (~460 lines):
+- helpers/pdf.js - PDF generation helpers (~140 lines)
+- helpers/tournament-url.js - URL slug generation (~120 lines)
+- helpers/websocket.js - Delta detection helpers (~200 lines)
+- helpers/index.js - Central export for all helpers
+
+MIDDLEWARE:
+- middleware/auth.js - Authentication middleware (~160 lines)
+- middleware/validation.js - Joi validation middleware
+
+DIRECTORY STRUCTURE:
+```
+admin-dashboard/
+├── server.js            # Express server orchestrator (~3,500 lines)
+├── constants/           # Immutable constants
+│   └── index.js
+├── services/            # Business logic services (~2,400 lines)
+│   ├── index.js         # Central export
+│   ├── container.js     # Shared state container
+│   ├── settings.js      # Settings file operations
+│   ├── rate-limiter.js  # Adaptive rate limiting
+│   ├── activity-logger.js # Activity logging
+│   ├── challonge-api.js # Challonge API v2.1
+│   ├── dq-timer.js      # DQ timer management
+│   ├── match-polling.js # Centralized polling
+│   ├── sponsor.js       # Sponsor overlays
+│   └── websocket-ack.js # WebSocket delivery
+├── routes/              # Express Router modules (~6,600 lines)
+│   ├── index.js         # Central export
+│   ├── auth.js, users.js, settings.js, games.js
+│   ├── monitoring.js, templates.js, stations.js
+│   ├── participants.js, matches.js, tournaments.js
+│   ├── displays.js, flyers.js, sponsors.js
+│   ├── analytics.js, exports.js, api.js
+├── helpers/             # Utility functions (~460 lines)
+│   ├── index.js, pdf.js, tournament-url.js, websocket.js
+├── middleware/          # Express middleware
+│   ├── auth.js, validation.js
+├── validation/          # Schema definitions
+│   └── schemas.js       # All Joi schemas
+└── config/              # Configuration modules
+    └── secrets.js       # Credential encryption
+```
+
+TOTAL: ~9,620 lines extracted into reusable, testable modules.
+
+PATTERN USED: All route modules use dependency injection via init() function:
+```javascript
+// In route module
+let axios = null;
+function init(deps) { axios = deps.axios; }
+module.exports = router;
+module.exports.init = init;
+
+// In server.js
+routes.init({ axios, io, requireAuthAPI, ... });
+app.use('/api/auth', routes.auth);
+```
+
+--------------------------------------------------------------------------------
+P2-3. INPUT VALIDATION (JOI SCHEMAS)
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-09)
+
+PROBLEM: No centralized input validation; validation logic scattered or missing.
+
+FIX: Added Joi validation library with comprehensive schemas.
+
+PACKAGE ADDED: joi (npm install joi --save)
+
+NEW FILES:
+- admin-dashboard/validation/schemas.js (~400 lines)
+  - Authentication schemas (login, changePassword, createUser)
+  - Tournament schemas (create, update)
+  - Match schemas (score, winner, dq, station)
+  - Participant schemas (single, bulk)
+  - Station schemas (create, settings)
+  - Ticker & Timer schemas (message, dq, tournament, hide)
+  - QR Code schema (show)
+  - Display schemas (register, heartbeat, config, debug)
+  - Sponsor schemas (update, config)
+  - Game config schema
+  - Rate limit mode schema
+  - External activity schema
+
+- admin-dashboard/middleware/validation.js
+  - validate(schema, options) - Main validation middleware
+  - validateBody(schema) - Body validation shorthand
+  - validateQuery(schema) - Query param validation
+  - validateParams(schema) - Route param validation
+  - validationErrorHandler - Error formatting middleware
+
+USAGE:
+```javascript
+const { loginSchema } = require('../validation/schemas');
+const { validate } = require('../middleware/validation');
+
+app.post('/api/auth/login', validate(loginSchema), (req, res) => {
+  const { username, password } = req.validatedBody;
+});
+```
+
+--------------------------------------------------------------------------------
+P2-4. CREDENTIAL ENCRYPTION MODULE
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-09)
+
+PROBLEM: API keys and secrets stored in plaintext .env files.
+
+FIX: Created encrypted secrets module with AES-256-GCM encryption.
+
+NEW FILE: admin-dashboard/config/secrets.js
+
+FEATURES:
+- AES-256-GCM encryption with unique IV per encryption
+- Separate key file (.secrets.key) stored with 0600 permissions
+- Environment variable fallback (SECRETS_KEY)
+- Caching for performance
+- Migration helper from .env files
+
+STORAGE FILES:
+- /root/tournament-control-center/.secrets.enc - Encrypted secrets
+- /root/tournament-control-center/.secrets.key - Encryption key
+
+API:
+```javascript
+const secrets = require('./config/secrets');
+
+// Convenience getters (with .env fallback)
+secrets.getChallongeApiKey()
+secrets.getChallongeClientId()
+secrets.getChallongeClientSecret()
+secrets.getSessionSecret()
+secrets.getActivityWebhookToken()
+
+// Core operations
+secrets.encryptSecrets({ key: 'value' })
+secrets.decryptSecrets()
+secrets.setSecret('key', 'value')
+secrets.deleteSecret('key')
+secrets.migrateFromEnv()  // One-time migration helper
+```
+
+--------------------------------------------------------------------------------
+P2-5. WEBSOCKET ACK ENHANCEMENT
+--------------------------------------------------------------------------------
+STATUS: COMPLETED (2025-12-09)
+
+PROBLEM: Fire-and-forget WebSocket broadcasts; no retry on delivery failure.
+
+FIX: Enhanced WebSocket delivery with retry queue and ACK tracking.
+
+NEW FILE: admin-dashboard/services/websocket-ack.js
+
+FEATURES:
+- Message ID and sequence number for every broadcast
+- Per-display ACK tracking
+- Retry queue with configurable attempts (default: 3)
+- Retry delay between attempts (default: 5 seconds)
+- HTTP fallback after max retries
+- Memory-safe cleanup of old messages
+- Statistics tracking
+
+CONFIGURATION:
+- MAX_RETRY_ATTEMPTS = 3
+- RETRY_DELAY_MS = 5000 (5 seconds)
+- MESSAGE_TIMEOUT_MS = 30000 (30 seconds)
+- CLEANUP_INTERVAL_MS = 60000 (1 minute)
+
+API:
+```javascript
+const wsAck = require('./services/websocket-ack');
+
+// Initialize (call once at startup)
+wsAck.init(io, wsConnections, httpFallbackFn);
+
+// Broadcast with ACK tracking
+const messageId = wsAck.broadcastWithAck('matches:update', payload);
+
+// Register ACK handler on socket
+wsAck.registerAckHandler(socket, 'matches:ack');
+
+// Statistics
+wsAck.getStats();  // { messagesSent, messagesAcked, messagesRetried, ... }
+```
+
+CLIENT-SIDE ACK (MagicMirror modules):
+```javascript
+socket.on('matches:update', (data) => {
+  const { messageId, sequenceNumber, payload } = data;
+  processUpdate(payload);
+  socket.emit('matches:ack', { messageId, sequenceNumber });
+});
+```
+
+================================================================================
+CHALLONGE API USAGE
+================================================================================
+
+ALL OPERATIONS USE API v2.1 (as of 2025-12-06):
+
+Tournament Operations:
+- List tournaments
+- Get tournament details
+- Create tournament
+- Delete tournament
+- Update tournament
+- Start tournament
+- Reset tournament
+- Finalize tournament
+
+Participant Operations:
+- List participants
+- Add participants
+- Update participants
+- Bulk add participants
+- Check-in participants
+- Randomize seeds
+
+Match Operations (v2.1):
+- List matches with participants and stations
+- Mark match as underway (change_state.json)
+- Unmark match as underway (change_state.json)
+- Update scores (match array payload)
+- Declare winner (match array with rank/advancing)
+- Reopen match (change_state.json)
+- DQ/forfeit match
+
+Analytics Operations:
+- Archive tournament
+- Seeding suggestions
+- Upcoming tournaments
+
+Station Operations:
+- List stations
+- Create station
+- Update station
+- Delete station
+
+================================================================================
+CONTACT & REFERENCES
+================================================================================
+
+For pending features, see: FUTURE_IMPROVEMENTS.txt
+
+Admin Dashboard: https://admin.despairhardware.com (port 3000)
+Tournament Signup: https://signup.despairhardware.com (port 3001)
+Match Display: http://localhost:8080 (MagicMirror-match)
+Bracket Display: http://localhost:8081 (MagicMirror-bracket)
+Flyer Display: http://localhost:8082 (MagicMirror-flyer)
+
+GitHub Repository: https://github.com/rick0490/tournament-control-center (private)
+
+================================================================================
+END OF DOCUMENT
+================================================================================

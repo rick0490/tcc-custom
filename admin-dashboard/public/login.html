@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Login - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#f9fafb">
+	<meta name="description" content="Tournament Control Center login">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="default">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<script>tailwind.config = { corePlugins: { preflight: true } }</script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+	<div class="login-card rounded-lg shadow-lg w-full max-w-md p-8 border">
+		<!-- Header -->
+		<div class="text-center mb-8">
+			<h1 class="text-3xl font-bold mb-2">Control Center</h1>
+			<p>Sign in to access the dashboard</p>
+		</div>
+
+		<!-- Error Message -->
+		<div id="errorMessage" class="hidden mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+			<span id="errorText"></span>
+		</div>
+
+		<!-- Lockout Message -->
+		<div id="lockoutMessage" class="hidden mb-4 bg-orange-100 border border-orange-400 text-orange-700 px-4 py-3 rounded relative">
+			<strong class="font-bold">Account Locked!</strong>
+			<span id="lockoutText" class="block sm:inline"></span>
+		</div>
+
+		<!-- Login Form -->
+		<form id="loginForm" class="space-y-6">
+			<div>
+				<label for="username" class="block text-sm font-medium mb-2">
+					Username
+				</label>
+				<input
+					type="text"
+					id="username"
+					name="username"
+					required
+					autocomplete="username"
+					class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					placeholder="Enter your username"
+				>
+			</div>
+
+			<div>
+				<label for="password" class="block text-sm font-medium mb-2">
+					Password
+				</label>
+				<input
+					type="password"
+					id="password"
+					name="password"
+					required
+					autocomplete="current-password"
+					class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					placeholder="Enter your password"
+				>
+			</div>
+
+			<button
+				type="submit"
+				id="loginBtn"
+				class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md transition duration-200"
+			>
+				Sign In
+			</button>
+		</form>
+
+		<!-- Footer -->
+		<div class="mt-6 text-center text-sm text-gray-600">
+			<p>© 2025 Tournament Control Center</p>
+		</div>
+	</div>
+
+	<script src="js/pwa.js?v=2"></script>
+	<script>
+		const loginForm = document.getElementById('loginForm');
+		const errorMessage = document.getElementById('errorMessage');
+		const errorText = document.getElementById('errorText');
+		const lockoutMessage = document.getElementById('lockoutMessage');
+		const lockoutText = document.getElementById('lockoutText');
+		const loginBtn = document.getElementById('loginBtn');
+
+		loginForm.addEventListener('submit', async (e) => {
+			e.preventDefault();
+
+			// Hide previous messages
+			errorMessage.classList.add('hidden');
+			lockoutMessage.classList.add('hidden');
+
+			// Get form values
+			const username = document.getElementById('username').value;
+			const password = document.getElementById('password').value;
+
+			// Disable button during request
+			loginBtn.disabled = true;
+			loginBtn.textContent = 'Signing in...';
+
+			try {
+				const response = await fetch('/api/auth/login', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					credentials: 'include', // Ensure cookies are sent and received
+					body: JSON.stringify({ username, password })
+				});
+
+				const data = await response.json();
+
+				if (response.ok && data.success) {
+					// Redirect to dashboard
+					window.location.href = '/';
+				} else {
+					// Show error message
+					if (data.locked) {
+						lockoutText.textContent = data.message;
+						lockoutMessage.classList.remove('hidden');
+					} else {
+						errorText.textContent = data.message || 'Username or password is incorrect. Please try again.';
+						errorMessage.classList.remove('hidden');
+					}
+				}
+			} catch (error) {
+				errorText.textContent = 'An error occurred. Please try again.';
+				errorMessage.classList.remove('hidden');
+			} finally {
+				// Re-enable button
+				loginBtn.disabled = false;
+				loginBtn.textContent = 'Sign In';
+			}
+		});
+	</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Tournament Stream Deck Controller
+# Python dependencies
+
+# Image processing for key images
+Pillow>=9.0.0
+
+# HTTP client for API communication
+requests>=2.28.0
+
+# WebSocket client for real-time updates (Socket.IO)
+python-socketio[client]>=5.0.0
+websocket-client>=1.0.0

@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tournament - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Tournament setup and control">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=17">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Active Tournament Banner -->
+	<section id="activeTournamentBanner" class="mb-6 hidden">
+		<div class="bg-green-900/30 border border-green-700 rounded-lg p-4">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center gap-4">
+					<div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+					<div>
+						<div class="text-sm text-green-300">Currently Active</div>
+						<div id="activeTournamentName" class="text-lg font-bold text-white">Tournament Name</div>
+					</div>
+				</div>
+				<div class="flex items-center gap-3">
+					<span id="activeTournamentState" class="px-3 py-1 bg-green-600/30 text-green-300 rounded-full text-xs font-semibold uppercase">underway</span>
+					<button onclick="completeTournament()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition text-sm font-medium">
+						Complete Tournament
+					</button>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Tournament Selection -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div>
+					<h2 class="text-xl font-bold text-white">Select Tournament</h2>
+					<p class="text-sm text-gray-400 mt-1">Choose a pending tournament to configure and deploy</p>
+				</div>
+				<div class="flex items-center gap-3">
+					<button onclick="openCreateWizard()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition text-sm font-medium flex items-center gap-2">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+						</svg>
+						Create Tournament
+					</button>
+					<button id="refreshTournamentsBtn" onclick="refreshTournaments()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+						<svg id="refreshTournamentsIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+						</svg>
+						<span id="refreshTournamentsText">Refresh</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Tournament Tabs -->
+			<div class="flex border-b border-gray-700 mb-4">
+				<button onclick="switchTab('pending')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-400" data-tab="pending">
+					Pending
+				</button>
+				<button onclick="switchTab('inProgress')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300" data-tab="inProgress">
+					In Progress
+				</button>
+				<button onclick="switchTab('completed')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300" data-tab="completed">
+					Completed
+				</button>
+			</div>
+
+			<!-- Tournament List -->
+			<div id="tournamentList" class="space-y-2 max-h-80 overflow-y-auto">
+				<div class="text-center py-8 text-gray-400">
+					<div class="spinner mx-auto mb-3"></div>
+					Loading tournaments...
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Pre-Flight Checklist Section -->
+	<section id="checklistSection" class="mb-6 hidden">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-10 h-10 bg-yellow-600/20 rounded-lg flex items-center justify-center">
+						<svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+						</svg>
+					</div>
+					<div>
+						<h2 class="text-xl font-bold text-white">Pre-Flight Checklist</h2>
+						<p class="text-sm text-gray-400">Verify setup before starting the tournament</p>
+					</div>
+				</div>
+				<div class="flex items-center gap-3">
+					<span id="checklistProgress" class="text-sm text-gray-400">0/0 ready</span>
+					<button onclick="refreshChecklist()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+						</svg>
+						Refresh
+					</button>
+				</div>
+			</div>
+
+			<!-- Checklist Items -->
+			<div id="checklistItems" class="space-y-3">
+				<!-- Displays Connected -->
+				<div class="checklist-item" data-check="displays">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">Display Modules Online</div>
+						<div class="checklist-description">Match, Bracket, and Flyer displays are running</div>
+					</div>
+					<div class="checklist-status" id="checkDisplaysStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+
+				<!-- Pi Displays Connected -->
+				<div class="checklist-item" data-check="pi-displays">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">Pi Displays Connected</div>
+						<div class="checklist-description" id="checkPiDescription">At least one Raspberry Pi display is online</div>
+					</div>
+					<div class="checklist-status" id="checkPiStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+
+				<!-- Tournament Deployed -->
+				<div class="checklist-item" data-check="deployed">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">Tournament Deployed</div>
+						<div class="checklist-description">Tournament is configured on all display modules</div>
+					</div>
+					<div class="checklist-status" id="checkDeployedStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+
+				<!-- Participants Ready -->
+				<div class="checklist-item" data-check="participants">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">Participants Registered</div>
+						<div class="checklist-description" id="checkParticipantsDescription">Minimum 2 participants required to start</div>
+					</div>
+					<div class="checklist-status" id="checkParticipantsStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+
+				<!-- Flyer Set -->
+				<div class="checklist-item" data-check="flyer">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">Flyer Configured</div>
+						<div class="checklist-description" id="checkFlyerDescription">Active flyer is set for display</div>
+					</div>
+					<div class="checklist-status" id="checkFlyerStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+
+				<!-- Stations Configured -->
+				<div class="checklist-item" data-check="stations">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">TV Stations Ready</div>
+						<div class="checklist-description" id="checkStationsDescription">TV stations configured for match assignments</div>
+					</div>
+					<div class="checklist-status" id="checkStationsStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+
+				<!-- Challonge API -->
+				<div class="checklist-item" data-check="api">
+					<div class="checklist-icon">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
+						</svg>
+					</div>
+					<div class="checklist-content">
+						<div class="checklist-title">Challonge API Connected</div>
+						<div class="checklist-description">API connection is active and working</div>
+					</div>
+					<div class="checklist-status" id="checkApiStatus">
+						<span class="checklist-badge pending">Checking...</span>
+					</div>
+				</div>
+			</div>
+
+			<!-- All Clear Banner -->
+			<div id="checklistAllClear" class="hidden mt-4 p-4 bg-green-600/20 border border-green-600/40 rounded-lg">
+				<div class="flex items-center gap-3">
+					<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+					</svg>
+					<div>
+						<div class="font-semibold text-green-400">All Systems Ready</div>
+						<div class="text-sm text-green-300/70">Pre-flight checks passed. You're ready to start the tournament!</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Issues Banner -->
+			<div id="checklistIssues" class="hidden mt-4 p-4 bg-yellow-600/20 border border-yellow-600/40 rounded-lg">
+				<div class="flex items-center gap-3">
+					<svg class="w-6 h-6 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+					</svg>
+					<div>
+						<div class="font-semibold text-yellow-400">Action Required</div>
+						<div id="checklistIssuesText" class="text-sm text-yellow-300/70">Some items need attention before starting.</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Configuration Section -->
+	<section id="configSection" class="mb-6 hidden">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-4">Configuration</h2>
+
+			<!-- Selected Tournament Info -->
+			<div id="selectedTournamentInfo" class="bg-gray-750 rounded-lg p-4 mb-6 border border-gray-600">
+				<div class="flex items-start justify-between">
+					<div>
+						<div class="text-xs text-gray-400 uppercase tracking-wide">Selected Tournament</div>
+						<div id="selectedName" class="text-lg font-bold text-white mt-1">--</div>
+						<div id="selectedGame" class="text-sm text-gray-400">--</div>
+					</div>
+					<div class="text-right">
+						<div id="selectedParticipants" class="text-2xl font-bold text-white">--</div>
+						<div class="text-xs text-gray-400">Participants</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Registration Settings -->
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+				<div>
+					<label for="registrationWindow" class="block text-sm font-medium text-gray-300 mb-2">
+						Registration Window (hours before start)
+					</label>
+					<input type="number" id="registrationWindow" value="48" min="1" max="336"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+					<p class="text-xs text-gray-400 mt-1">Default: 48 hours. Max: 336 hours (2 weeks)</p>
+				</div>
+				<div>
+					<label for="signupCap" class="block text-sm font-medium text-gray-300 mb-2">
+						Maximum Participants (optional)
+					</label>
+					<input type="number" id="signupCap" placeholder="Unlimited" min="2" max="256"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+					<p class="text-xs text-gray-400 mt-1">Leave empty for unlimited signups</p>
+				</div>
+			</div>
+
+			<!-- Deploy Button -->
+			<div class="flex items-center justify-between pt-4 border-t border-gray-700">
+				<div class="text-sm text-gray-400">
+					This will configure all display modules with the selected tournament
+				</div>
+				<button id="deployBtn" onclick="deployTournament()" disabled
+					class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-md transition font-semibold">
+					Deploy Tournament
+				</button>
+			</div>
+		</div>
+	</section>
+
+	<!-- Tournament Lifecycle Controls -->
+	<section id="lifecycleSection" class="mb-6 hidden">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-4">Tournament Controls</h2>
+			<p class="text-sm text-gray-400 mb-6">Manage the tournament lifecycle on Challonge</p>
+
+			<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+				<!-- Start Tournament -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="w-10 h-10 bg-green-600/20 rounded-lg flex items-center justify-center">
+							<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+							</svg>
+						</div>
+						<div>
+							<div class="font-medium text-white">Start Tournament</div>
+							<div class="text-xs text-gray-400">Begin bracket play</div>
+						</div>
+					</div>
+					<div id="startPrerequisites" class="mb-2 text-xs hidden">
+						<div id="startPrereqMessage" class="flex items-center gap-1 text-yellow-400">
+							<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+							</svg>
+							<span></span>
+						</div>
+					</div>
+					<button id="startTournamentBtn" onclick="startTournament()" disabled
+						class="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded-md transition text-sm font-medium">
+						Start
+					</button>
+				</div>
+
+				<!-- Reset Tournament -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="w-10 h-10 bg-yellow-600/20 rounded-lg flex items-center justify-center">
+							<svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+							</svg>
+						</div>
+						<div>
+							<div class="font-medium text-white">Reset Tournament</div>
+							<div class="text-xs text-gray-400">Clear all match results</div>
+						</div>
+					</div>
+					<button id="resetTournamentBtn" onclick="resetTournament()" disabled
+						class="w-full bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded-md transition text-sm font-medium">
+						Reset
+					</button>
+				</div>
+
+				<!-- Finalize Tournament -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center">
+							<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+							</svg>
+						</div>
+						<div>
+							<div class="font-medium text-white">Finalize Tournament</div>
+							<div class="text-xs text-gray-400">Mark as complete</div>
+						</div>
+					</div>
+					<button id="finalizeTournamentBtn" onclick="finalizeTournament()" disabled
+						class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded-md transition text-sm font-medium">
+						Finalize
+					</button>
+				</div>
+
+				<!-- Delete Tournament -->
+				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
+					<div class="flex items-center gap-3 mb-3">
+						<div class="w-10 h-10 bg-red-600/20 rounded-lg flex items-center justify-center">
+							<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+							</svg>
+						</div>
+						<div>
+							<div class="font-medium text-white">Delete Tournament</div>
+							<div class="text-xs text-gray-400">Permanently remove</div>
+						</div>
+					</div>
+					<button id="deleteTournamentBtn" onclick="deleteTournament()" disabled
+						class="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded-md transition text-sm font-medium">
+						Delete
+					</button>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Export Results Section (shown when tournament is complete) -->
+	<section id="exportSection" class="hidden mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<h2 class="text-xl font-bold text-white mb-4">Export Results</h2>
+			<p class="text-sm text-gray-400 mb-6">Download tournament results in various formats</p>
+
+			<div class="flex flex-wrap gap-4">
+				<button onclick="exportStandingsCSV()"
+					class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md transition text-sm font-medium flex items-center gap-2">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+					</svg>
+					Download Standings (CSV)
+				</button>
+				<button onclick="exportMatchesCSV()"
+					class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md transition text-sm font-medium flex items-center gap-2">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+					</svg>
+					Download Matches (CSV)
+				</button>
+				<button onclick="exportPDF()"
+					class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md transition text-sm font-medium flex items-center gap-2">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+					</svg>
+					Download Full Report (PDF)
+				</button>
+			</div>
+		</div>
+	</section>
+
+	<!-- Create Tournament Wizard Modal -->
+	<div id="createWizardModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg w-full max-w-2xl mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<!-- Modal Header -->
+			<div class="flex items-center justify-between p-6 border-b border-gray-700">
+				<div>
+					<h3 class="text-xl font-bold text-white">Create Tournament</h3>
+					<p class="text-sm text-gray-400 mt-1">Step <span id="wizardStepNum">1</span> of 3</p>
+				</div>
+				<button onclick="closeCreateWizard()" class="text-gray-400 hover:text-white">
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					</svg>
+				</button>
+			</div>
+
+			<!-- Progress Bar -->
+			<div class="px-6 pt-4">
+				<div class="flex items-center gap-2">
+					<div id="step1Indicator" class="flex-1 h-2 bg-blue-600 rounded-full"></div>
+					<div id="step2Indicator" class="flex-1 h-2 bg-gray-600 rounded-full"></div>
+					<div id="step3Indicator" class="flex-1 h-2 bg-gray-600 rounded-full"></div>
+				</div>
+				<div class="flex justify-between mt-2 text-xs text-gray-400">
+					<span>Basic Info</span>
+					<span>Format</span>
+					<span>Schedule</span>
+				</div>
+			</div>
+
+			<!-- Step 1: Basic Info -->
+			<div id="wizardStep1" class="p-6">
+				<div class="space-y-4">
+					<!-- Template Selection -->
+					<div class="bg-gray-700/50 rounded-lg p-4 border border-gray-600">
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Load from Template
+						</label>
+						<div class="flex gap-2">
+							<select id="wizardTemplateSelect" onchange="applyTemplate(this.value)"
+								class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+								<option value="">-- Start Fresh --</option>
+							</select>
+							<button type="button" onclick="refreshTemplates()" title="Refresh templates"
+								class="px-3 py-2 bg-gray-600 hover:bg-gray-500 rounded-md text-white transition">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+										d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+								</svg>
+							</button>
+						</div>
+						<p class="text-xs text-gray-400 mt-1">Select a saved template to pre-fill settings</p>
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Tournament Name <span class="text-red-500">*</span>
+						</label>
+						<input type="text" id="wizardName" maxlength="60" placeholder="e.g., SSBU Weekly #42"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						<p class="text-xs text-gray-400 mt-1">Max 60 characters</p>
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Game
+						</label>
+						<input type="text" id="wizardGame" list="gamesList" placeholder="Search or type a game name..."
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500"
+							autocomplete="off">
+						<datalist id="gamesList">
+							<!-- Fighting Games -->
+							<option value="Super Smash Bros. Ultimate">
+							<option value="Super Smash Bros. Melee">
+							<option value="Super Smash Bros. Brawl">
+							<option value="Street Fighter 6">
+							<option value="Tekken 8">
+							<option value="Mortal Kombat 1">
+							<option value="Guilty Gear Strive">
+							<option value="Dragon Ball FighterZ">
+							<option value="Dead or Alive 6">
+							<option value="Dead or Alive Extreme Beach Volleyball">
+							<option value="MultiVersus">
+							<!-- Racing Games -->
+							<option value="Mario Kart 8 Deluxe">
+							<option value="Mario Kart World">
+							<option value="Rocket League">
+							<option value="F-Zero 99">
+							<option value="Gran Turismo 7">
+							<option value="Forza Motorsport">
+							<!-- Shooters -->
+							<option value="Halo Infinite">
+							<option value="Halo 3">
+							<option value="Halo: Combat Evolved">
+							<option value="Call of Duty: Modern Warfare III">
+							<option value="Call of Duty: Warzone">
+							<option value="Call of Duty: Black Ops 6">
+							<option value="Call of Duty: World At War">
+							<option value="Counter-Strike 2">
+							<option value="Valorant">
+							<option value="Apex Legends">
+							<option value="Fortnite">
+							<option value="Splatoon 3">
+							<!-- Sports -->
+							<option value="FIFA 24">
+							<option value="EA Sports FC 25">
+							<option value="NBA 2K25">
+							<option value="Madden NFL 25">
+							<option value="MLB The Show 24">
+							<!-- Party/Other -->
+							<option value="Super Mario Party Jamboree">
+							<option value="Tetris 99">
+							<option value="Puyo Puyo Tetris 2">
+							<option value="Pokemon Unite">
+							<option value="Brawlhalla">
+						</datalist>
+						<p class="text-xs text-gray-400 mt-1">Type to search or enter a custom game name</p>
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Description (optional)
+						</label>
+						<textarea id="wizardDescription" rows="3" placeholder="Tournament description..."
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+					</div>
+				</div>
+			</div>
+
+			<!-- Step 2: Format -->
+			<div id="wizardStep2" class="p-6 hidden">
+				<div class="space-y-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Tournament Format <span class="text-red-500">*</span>
+						</label>
+						<div class="grid grid-cols-2 gap-3">
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="single elimination" checked class="hidden">
+								<div class="p-4 bg-gray-700 border-2 border-blue-500 rounded-lg text-center hover:border-blue-400 transition">
+									<div class="text-white font-medium">Single Elimination</div>
+									<div class="text-xs text-gray-400 mt-1">Lose once, you're out</div>
+								</div>
+							</label>
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="double elimination" class="hidden">
+								<div class="p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition">
+									<div class="text-white font-medium">Double Elimination</div>
+									<div class="text-xs text-gray-400 mt-1">Losers bracket included</div>
+								</div>
+							</label>
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="round robin" class="hidden">
+								<div class="p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition">
+									<div class="text-white font-medium">Round Robin</div>
+									<div class="text-xs text-gray-400 mt-1">Everyone plays everyone</div>
+								</div>
+							</label>
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="swiss" class="hidden">
+								<div class="p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition">
+									<div class="text-white font-medium">Swiss</div>
+									<div class="text-xs text-gray-400 mt-1">Fixed rounds, ranked by wins</div>
+								</div>
+							</label>
+						</div>
+					</div>
+
+					<!-- Single Elim Options -->
+					<div id="singleElimOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600">
+						<label class="flex items-center gap-3 cursor-pointer">
+							<input type="checkbox" id="wizardThirdPlace" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+							<div>
+								<div class="text-white text-sm font-medium">Third Place Match</div>
+								<div class="text-xs text-gray-400">Include a match for 3rd place between semifinal losers</div>
+							</div>
+						</label>
+					</div>
+
+					<!-- Double Elim Options -->
+					<div id="doubleElimOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600 hidden">
+						<label class="block text-sm font-medium text-gray-300 mb-2">Grand Finals Format</label>
+						<select id="wizardGrandFinals" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<option value="">Standard (bracket reset possible)</option>
+							<option value="single match">Single Match (no bracket reset)</option>
+							<option value="skip">Skip Grand Finals</option>
+						</select>
+						<p class="text-xs text-gray-400 mt-1">Standard: Winners bracket finalist must lose twice to be eliminated</p>
+					</div>
+
+					<!-- Round Robin Options -->
+					<div id="roundRobinOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600 hidden space-y-4">
+						<div class="text-sm font-medium text-gray-300">Round Robin Settings</div>
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Iterations</label>
+								<select id="wizardRrIterations" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="1">1 (play each opponent once)</option>
+									<option value="2">2 (play each opponent twice)</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Ranking Method</label>
+								<select id="wizardRankedBy" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="match wins">Match Wins</option>
+									<option value="game wins">Game Wins</option>
+									<option value="points scored">Points Scored</option>
+									<option value="points difference">Points Difference</option>
+									<option value="custom">Custom</option>
+								</select>
+							</div>
+						</div>
+						<div id="rrCustomPoints" class="hidden">
+							<div class="text-xs text-gray-400 mb-2">Custom Point Values</div>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label class="block text-xs text-gray-500 mb-1">Match Win</label>
+									<input type="number" id="wizardRrMatchWin" value="1.0" step="0.5" min="0"
+										class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+								</div>
+								<div>
+									<label class="block text-xs text-gray-500 mb-1">Match Tie</label>
+									<input type="number" id="wizardRrMatchTie" value="0.5" step="0.5" min="0"
+										class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+								</div>
+								<div>
+									<label class="block text-xs text-gray-500 mb-1">Game Win</label>
+									<input type="number" id="wizardRrGameWin" value="0" step="0.5" min="0"
+										class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+								</div>
+								<div>
+									<label class="block text-xs text-gray-500 mb-1">Game Tie</label>
+									<input type="number" id="wizardRrGameTie" value="0" step="0.5" min="0"
+										class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Swiss Options -->
+					<div id="swissOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600 hidden space-y-4">
+						<div class="text-sm font-medium text-gray-300">Swiss Settings</div>
+						<div>
+							<label class="block text-xs text-gray-400 mb-1">Number of Rounds</label>
+							<input type="number" id="wizardSwissRounds" placeholder="Auto (2/3 of players)" min="1" max="20"
+								class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-500 mt-1">Recommended: less than 2/3 of participant count</p>
+						</div>
+						<div class="text-xs text-gray-400 mb-2">Point Values</div>
+						<div class="grid grid-cols-3 gap-3">
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Match Win</label>
+								<input type="number" id="wizardSwissMatchWin" value="1.0" step="0.5" min="0"
+									class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Match Tie</label>
+								<input type="number" id="wizardSwissMatchTie" value="0.5" step="0.5" min="0"
+									class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Bye</label>
+								<input type="number" id="wizardSwissBye" value="1.0" step="0.5" min="0"
+									class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+						</div>
+						<div class="grid grid-cols-2 gap-3">
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Game Win</label>
+								<input type="number" id="wizardSwissGameWin" value="0" step="0.5" min="0"
+									class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-500 mb-1">Game Tie</label>
+								<input type="number" id="wizardSwissGameTie" value="0" step="0.5" min="0"
+									class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+						</div>
+					</div>
+
+					<!-- Group Stage Options (for elimination formats) -->
+					<div id="wizardGroupStageSection" class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Enable Group Stage (Pools)</div>
+								<div class="text-xs text-gray-400">Add pools/groups before the bracket phase</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardGroupStageEnabled" class="sr-only peer" onchange="toggleWizardGroupStageOptions()">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<div id="wizardGroupStageOptions" class="hidden space-y-3 pl-4 border-l-2 border-blue-500">
+							<div class="grid grid-cols-2 gap-4">
+								<div>
+									<label class="block text-xs text-gray-400 mb-1">Group Size</label>
+									<select id="wizardGroupSize" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+										<option value="3">3 per group</option>
+										<option value="4" selected>4 per group</option>
+										<option value="5">5 per group</option>
+										<option value="6">6 per group</option>
+										<option value="8">8 per group</option>
+									</select>
+								</div>
+								<div>
+									<label class="block text-xs text-gray-400 mb-1">Advance to Bracket</label>
+									<select id="wizardGroupAdvance" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+										<option value="1">Top 1 per group</option>
+										<option value="2" selected>Top 2 per group</option>
+										<option value="3">Top 3 per group</option>
+										<option value="4">Top 4 per group</option>
+									</select>
+								</div>
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Group Stage Format</label>
+								<select id="wizardGroupStageType" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="round robin" selected>Round Robin</option>
+									<option value="single elimination">Single Elimination</option>
+									<option value="double elimination">Double Elimination</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Group Ranking Method</label>
+								<select id="wizardGroupRankedBy" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="match wins" selected>Match Wins</option>
+									<option value="game wins">Game/Set Wins</option>
+									<option value="points scored">Points Scored</option>
+									<option value="points difference">Points Difference</option>
+								</select>
+							</div>
+						</div>
+					</div>
+
+					<!-- Seeding & Display Options -->
+					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
+						<div class="text-sm font-medium text-gray-300 mb-2">Seeding & Display</div>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Hide Seeds</div>
+								<div class="text-xs text-gray-400">Hide participant seed numbers from public view</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardHideSeeds" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Sequential Pairings</div>
+								<div class="text-xs text-gray-400">Pair 1v2, 3v4, etc. instead of 1v8, 2v7 seeding</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardSequentialPairings" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label id="showRoundsOption" class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Show Round Labels</div>
+								<div class="text-xs text-gray-400">Label rounds in bracket (e.g., Round 1, Quarterfinals)</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardShowRounds" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+
+					<!-- Station Options -->
+					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
+						<div class="text-sm font-medium text-gray-300 mb-2">Station Management</div>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Auto-Assign Stations</div>
+								<div class="text-xs text-gray-400">Automatically assign matches to available TV stations</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardAutoAssign" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+				</div>
+			</div>
+
+			<!-- Step 3: Schedule & Settings -->
+			<div id="wizardStep3" class="p-6 hidden">
+				<div class="space-y-4">
+					<!-- Schedule -->
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Start Date & Time (CT)
+						</label>
+						<input type="datetime-local" id="wizardStartAt"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						<p class="text-xs text-gray-400 mt-1">Central Time - when the tournament is scheduled to begin</p>
+					</div>
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">
+								Check-in Duration (minutes)
+							</label>
+							<input type="number" id="wizardCheckIn" placeholder="e.g., 30" min="0" max="1440"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Leave empty to skip check-in</p>
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">
+								Participant Cap
+							</label>
+							<input type="number" id="wizardSignupCap" placeholder="Unlimited" min="2" max="512"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Max participants allowed</p>
+						</div>
+					</div>
+
+					<!-- Registration & Privacy -->
+					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
+						<div class="text-sm font-medium text-gray-300 mb-2">Registration & Privacy</div>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Open Signup</div>
+								<div class="text-xs text-gray-400">Allow public registration via Challonge signup page</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardOpenSignup" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Private Tournament</div>
+								<div class="text-xs text-gray-400">Hide from Challonge search and public indexes</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardPrivate" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Hide Forum</div>
+								<div class="text-xs text-gray-400">Disable discussion forum tab on Challonge page</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardHideForum" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+
+					<!-- Match Settings -->
+					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
+						<div class="text-sm font-medium text-gray-300 mb-2">Match Settings</div>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Accept Attachments</div>
+								<div class="text-xs text-gray-400">Allow file/link attachments on matches (screenshots, VODs)</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardAcceptAttachments" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+
+					<!-- Notifications -->
+					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
+						<div class="text-sm font-medium text-gray-300 mb-2">Email Notifications</div>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Notify on Match Open</div>
+								<div class="text-xs text-gray-400">Email participants when their matches are ready</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardNotifyMatchOpen" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<div class="text-white text-sm font-medium">Notify on Tournament End</div>
+								<div class="text-xs text-gray-400">Email final results to all participants</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardNotifyTournamentEnd" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+
+					<!-- Summary -->
+					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 mt-6">
+						<h4 class="text-white font-medium mb-3">Tournament Summary</h4>
+						<div class="space-y-2 text-sm">
+							<div class="flex justify-between">
+								<span class="text-gray-400">Name:</span>
+								<span id="summaryName" class="text-white">--</span>
+							</div>
+							<div class="flex justify-between">
+								<span class="text-gray-400">Game:</span>
+								<span id="summaryGame" class="text-white">--</span>
+							</div>
+							<div class="flex justify-between">
+								<span class="text-gray-400">Format:</span>
+								<span id="summaryFormat" class="text-white">--</span>
+							</div>
+							<div class="flex justify-between">
+								<span class="text-gray-400">Start:</span>
+								<span id="summaryStart" class="text-white">--</span>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Modal Footer -->
+			<div class="flex items-center justify-between p-6 border-t border-gray-700">
+				<button id="wizardBackBtn" onclick="wizardBack()" class="hidden px-4 py-2 text-gray-400 hover:text-white transition">
+					Back
+				</button>
+				<div class="flex-1"></div>
+				<div class="flex gap-3">
+					<button onclick="closeCreateWizard()" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition">
+						Cancel
+					</button>
+					<button id="wizardNextBtn" onclick="wizardNext()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition font-medium">
+						Next
+					</button>
+					<button id="wizardCreateBtn" onclick="createTournament()" class="hidden px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition font-medium">
+						Create Tournament
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Edit Tournament Modal -->
+	<div id="editTournamentModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg w-full max-w-3xl mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<!-- Modal Header -->
+			<div class="flex items-center justify-between p-6 border-b border-gray-700 sticky top-0 bg-gray-800 z-10">
+				<div>
+					<h3 class="text-xl font-bold text-white">Edit Tournament</h3>
+					<p id="editTournamentState" class="text-sm text-gray-400 mt-1">State: --</p>
+				</div>
+				<button onclick="closeEditModal()" class="text-gray-400 hover:text-white">
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					</svg>
+				</button>
+			</div>
+
+			<!-- Edit Form -->
+			<div class="p-6 space-y-6">
+				<!-- Basic Info Section -->
+				<div class="space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Basic Information</h4>
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">
+							Tournament Name <span class="text-red-500">*</span>
+						</label>
+						<input type="text" id="editName" maxlength="60"
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						<p class="text-xs text-gray-400 mt-1">Max 60 characters</p>
+					</div>
+
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Game</label>
+							<input type="text" id="editGame" list="editGamesList" placeholder="Search or type a game name..."
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500"
+								autocomplete="off">
+							<datalist id="editGamesList">
+								<option value="Super Smash Bros. Ultimate">
+								<option value="Super Smash Bros. Melee">
+								<option value="Street Fighter 6">
+								<option value="Tekken 8">
+								<option value="Mortal Kombat 1">
+								<option value="Guilty Gear Strive">
+								<option value="Mario Kart 8 Deluxe">
+								<option value="Mario Kart World">
+								<option value="Rocket League">
+							</datalist>
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Format</label>
+							<div class="px-4 py-2 bg-gray-600 border border-gray-500 rounded-md text-gray-300">
+								<span id="editFormatDisplay">--</span>
+								<span class="text-xs text-gray-400 ml-2">(cannot be changed)</span>
+							</div>
+						</div>
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-2">Description</label>
+						<textarea id="editDescription" rows="3" placeholder="Tournament description..."
+							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+					</div>
+				</div>
+
+				<!-- Schedule Section -->
+				<div class="space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Schedule</h4>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Start Date & Time (CT)</label>
+							<input type="datetime-local" id="editStartAt"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Check-in Duration (minutes)</label>
+							<input type="number" id="editCheckIn" placeholder="e.g., 30" min="0" max="1440"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Leave empty to skip check-in</p>
+						</div>
+					</div>
+				</div>
+
+				<!-- Registration Section -->
+				<div class="space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Registration</h4>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Participant Cap</label>
+							<input type="number" id="editSignupCap" placeholder="Unlimited" min="2" max="512"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Leave empty for unlimited</p>
+						</div>
+						<div class="flex items-center">
+							<label for="editOpenSignup" class="flex items-center justify-between cursor-pointer w-full bg-gray-750 p-4 rounded-lg border border-gray-600">
+								<div>
+									<div class="text-white text-sm font-medium">Open Signup</div>
+									<div class="text-xs text-gray-400">Allow public registration via Challonge</div>
+								</div>
+								<div class="relative">
+									<input type="checkbox" id="editOpenSignup" class="sr-only peer">
+									<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+								</div>
+							</label>
+						</div>
+					</div>
+				</div>
+
+				<!-- Format Options Section -->
+				<div class="space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Format Options</h4>
+
+					<!-- Single Elimination Options -->
+					<div id="editSingleElimOptions" class="hidden space-y-3">
+						<label for="editThirdPlace" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+							<div>
+								<div class="text-white text-sm font-medium">Third Place Match</div>
+								<div class="text-xs text-gray-400">Include a match between semifinal losers</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="editThirdPlace" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+
+					<!-- Double Elimination Options -->
+					<div id="editDoubleElimOptions" class="hidden space-y-3">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Grand Finals Format</label>
+							<select id="editGrandFinals" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+								<option value="">Standard (bracket reset possible)</option>
+								<option value="single match">Single Match (no bracket reset)</option>
+								<option value="skip">Skip Grand Finals</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- Round Robin Options -->
+					<div id="editRoundRobinOptions" class="hidden space-y-3">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Ranking Method</label>
+							<select id="editRankedBy" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+								<option value="match wins">Match Wins</option>
+								<option value="game wins">Game/Set Wins</option>
+								<option value="points scored">Points Scored</option>
+								<option value="points difference">Points Difference</option>
+								<option value="custom">Custom</option>
+							</select>
+						</div>
+						<div id="editRrCustomPoints" class="hidden grid grid-cols-2 md:grid-cols-4 gap-3">
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Match Win</label>
+								<input type="number" id="editRrMatchWin" step="0.5" value="1.0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Match Tie</label>
+								<input type="number" id="editRrMatchTie" step="0.5" value="0.5" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Game Win</label>
+								<input type="number" id="editRrGameWin" step="0.5" value="0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Game Tie</label>
+								<input type="number" id="editRrGameTie" step="0.5" value="0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+						</div>
+					</div>
+
+					<!-- Swiss Options -->
+					<div id="editSwissOptions" class="hidden space-y-3">
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Number of Rounds</label>
+							<input type="number" id="editSwissRounds" min="1" max="20" placeholder="Auto-calculated"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+						</div>
+						<div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Match Win</label>
+								<input type="number" id="editSwissMatchWin" step="0.5" value="1.0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Match Tie</label>
+								<input type="number" id="editSwissMatchTie" step="0.5" value="0.5" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Bye</label>
+								<input type="number" id="editSwissBye" step="0.5" value="1.0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Game Win</label>
+								<input type="number" id="editSwissGameWin" step="0.5" value="0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Game Tie</label>
+								<input type="number" id="editSwissGameTie" step="0.5" value="0" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm">
+							</div>
+						</div>
+					</div>
+
+					<!-- Elimination Format Options (shown for single/double) -->
+					<div id="editElimOptions" class="hidden space-y-3">
+						<label for="editSequentialPairings" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+							<div>
+								<div class="text-white text-sm font-medium">Sequential Pairings</div>
+								<div class="text-xs text-gray-400">Seeds 1v2, 3v4 instead of 1v16, 2v15</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="editSequentialPairings" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label for="editShowRounds" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+							<div>
+								<div class="text-white text-sm font-medium">Show Round Labels</div>
+								<div class="text-xs text-gray-400">Display "Round 1", "Quarterfinals", etc.</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="editShowRounds" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+				</div>
+
+				<!-- Group Stage Section (for elimination tournaments only) -->
+				<div id="editGroupStageSection" class="hidden space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Group Stage (Pools)</h4>
+					<label for="editGroupStageEnabled" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+						<div>
+							<div class="text-white text-sm font-medium">Enable Group Stage</div>
+							<div class="text-xs text-gray-400">Add pools/groups before the bracket</div>
+						</div>
+						<div class="relative">
+							<input type="checkbox" id="editGroupStageEnabled" class="sr-only peer" onchange="toggleGroupStageOptions()">
+							<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+						</div>
+					</label>
+					<div id="editGroupStageOptions" class="hidden space-y-3 pl-4 border-l-2 border-blue-500">
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+							<div>
+								<label class="block text-sm font-medium text-gray-300 mb-2">Group Size</label>
+								<select id="editGroupSize" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+									<option value="3">3 participants per group</option>
+									<option value="4" selected>4 participants per group</option>
+									<option value="5">5 participants per group</option>
+									<option value="6">6 participants per group</option>
+									<option value="8">8 participants per group</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-sm font-medium text-gray-300 mb-2">Advance to Bracket</label>
+								<select id="editGroupAdvance" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+									<option value="1">Top 1 per group</option>
+									<option value="2" selected>Top 2 per group</option>
+									<option value="3">Top 3 per group</option>
+									<option value="4">Top 4 per group</option>
+								</select>
+							</div>
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Group Stage Format</label>
+							<select id="editGroupStageType" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+								<option value="round robin" selected>Round Robin</option>
+								<option value="single elimination">Single Elimination</option>
+								<option value="double elimination">Double Elimination</option>
+							</select>
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Group Ranking Method</label>
+							<select id="editGroupRankedBy" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+								<option value="match wins" selected>Match Wins</option>
+								<option value="game wins">Game/Set Wins</option>
+								<option value="points scored">Points Scored</option>
+								<option value="points difference">Points Difference</option>
+							</select>
+						</div>
+					</div>
+				</div>
+
+				<!-- Display & Privacy Section -->
+				<div class="space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Display & Privacy</h4>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+						<label for="editHideSeeds" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+							<div>
+								<div class="text-white text-sm font-medium">Hide Seeds</div>
+								<div class="text-xs text-gray-400">Hide seed numbers publicly</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="editHideSeeds" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label for="editPrivate" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+							<div>
+								<div class="text-white text-sm font-medium">Private Tournament</div>
+								<div class="text-xs text-gray-400">Hide from public listings</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="editPrivate" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<label for="editHideForum" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+							<div>
+								<div class="text-white text-sm font-medium">Hide Forum</div>
+								<div class="text-xs text-gray-400">Disable discussion forum tab</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="editHideForum" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+					</div>
+				</div>
+
+				<!-- Match Settings Section -->
+				<div class="space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Match Settings</h4>
+					<label for="editAcceptAttachments" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
+						<div>
+							<div class="text-white text-sm font-medium">Accept Attachments</div>
+							<div class="text-xs text-gray-400">Allow screenshots, VODs on matches</div>
+						</div>
+						<div class="relative">
+							<input type="checkbox" id="editAcceptAttachments" class="sr-only peer">
+							<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+						</div>
+					</label>
+					<p class="text-xs text-gray-500 italic">Note: Quick Advance setting is not supported by the Challonge API. Change it on Challonge.com directly.</p>
+				</div>
+
+				<!-- Challonge Link -->
+				<div class="bg-gray-750 p-4 rounded-lg border border-gray-600">
+					<div class="flex items-center justify-between">
+						<span class="text-gray-400 text-sm">Challonge URL:</span>
+						<a id="editChallongeLink" href="#" target="_blank" class="text-blue-400 hover:text-blue-300 text-sm truncate max-w-md">--</a>
+					</div>
+				</div>
+			</div>
+
+			<!-- Modal Footer -->
+			<div class="flex items-center justify-end gap-3 p-6 border-t border-gray-700 sticky bottom-0 bg-gray-800">
+				<button onclick="closeEditModal()" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition">
+					Cancel
+				</button>
+				<button id="saveEditBtn" onclick="saveTournamentEdit()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition font-medium">
+					Save Changes
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Save as Template Modal -->
+	<div id="saveTemplateModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg w-full max-w-md mx-4 border border-gray-700">
+			<div class="flex items-center justify-between p-4 border-b border-gray-700">
+				<h3 class="text-lg font-semibold text-white">Save as Template</h3>
+				<button onclick="closeSaveTemplateModal()" class="text-gray-400 hover:text-white">
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+					</svg>
+				</button>
+			</div>
+			<div class="p-6 space-y-4">
+				<p class="text-sm text-gray-400">Save these tournament settings as a template for quick setup of future tournaments.</p>
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-2">
+						Template Name <span class="text-red-500">*</span>
+					</label>
+					<input type="text" id="saveTemplateName" maxlength="50" placeholder="e.g., Weekly SSBU Singles"
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+				</div>
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-2">Description (optional)</label>
+					<textarea id="saveTemplateDesc" rows="2" placeholder="Brief description of this template..."
+						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+				</div>
+			</div>
+			<div class="flex gap-3 p-4 border-t border-gray-700">
+				<button onclick="closeSaveTemplateModal()" class="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-md transition">
+					Cancel
+				</button>
+				<button id="saveTemplateBtn" onclick="saveAsTemplate()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition font-medium">
+					Save Template
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=1"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/tournament.js?v=34"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Tournament');
+		});
+	</script>
+</body>
+</html>

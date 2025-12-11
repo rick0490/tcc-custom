@@ -1,0 +1,2496 @@
+================================================================================
+TOURNAMENT CONTROL CENTER - FUTURE IMPROVEMENTS & FEATURE ROADMAP
+================================================================================
+
+Generated: 2025-11-23
+Updated: 2025-12-10 (Phase C: Comprehensive AI Feature Expansion - AI-13 through AI-21)
+System: Six-service tournament control platform with admin dashboard,
+        signup PWA, three MagicMirror displays, and Stream Deck controller
+
+================================================================================
+OPERATING ENVIRONMENT & CONSTRAINTS
+================================================================================
+
+This roadmap is designed for a ONE-PERSON TOURNAMENT ORGANIZATION operating at
+a SINGLE LOCATION with the following hardware:
+
+  HARDWARE:
+  - Ipad Pro(M4) 13 inch (Primary admin workstation - runs admin dashboard)
+  - Mobile Phone (On-the-go actions during tournament)
+  - Stream Deck Module 15 on Pi Zero 2 W (192.168.1.175)
+  - 2x Raspberry Pi 5 displays (TV 1: Match/Bracket, TV 2: Flyer)
+
+  CONSTRAINTS:
+  - Single operator = must minimize manual work during live events
+  - No staff = all actions must be doable by one person
+  - Single venue = network reliability critical
+  - Must handle 16-64 participants per tournament
+
+  SCALING GOALS (Near-term):
+  - Multiple concurrent tournaments (SSBU + MKW same day)
+  - Additional displays (3-4 TVs)
+  - Referee assistants (score entry only)
+  - Recurring weekly events with minimal setup
+
+For completed features, see: COMPLETED_IMPROVEMENTS.txt
+
+================================================================================
+TIER 1: TOURNAMENT DAY ESSENTIALS
+================================================================================
+
+These features reduce cognitive load and manual effort during LIVE tournaments.
+Priority: CRITICAL for single-operator efficiency.
+
+--------------------------------------------------------------------------------
+1. COMMAND CENTER VIEW - COMPLETED 2025-12-07
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: command-center.html, command-center.js, style.css (cc-* classes), nav.js
+
+Features implemented:
+- 4-quadrant layout (Current Matches, Match Queue, System Status, Quick Actions)
+- Real-time WebSocket updates with polling fallback
+- Keyboard shortcuts (1-5, W, L, S, Enter, Escape, R, T, ?)
+- Score modal with quick winners, custom scores, DQ options
+- Ticker modal with presets and custom input
+- System status (display modules, API rate limit, progress bar)
+- Mobile responsive (single column on tablet/phone)
+
+--------------------------------------------------------------------------------
+2. KEYBOARD SHORTCUTS (MATCH SCORING) - COMPLETED 2025-12-07
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED (included in Command Center)
+
+Features implemented:
+- Number keys 1-5 = Select match 1-5 in list
+- W key = Mark player 1 as winner (2-0)
+- L key = Mark player 2 as winner (0-2)
+- S key = Start selected match (mark underway)
+- Enter = Open score modal for selected match
+- Escape = Cancel/close modal / Deselect match
+- R = Refresh data
+- T = Open ticker modal
+- ? = Show keyboard shortcuts help
+
+--------------------------------------------------------------------------------
+3. AUDIO ANNOUNCEMENTS VIA PI SPEAKERS - COMPLETED 2025-12-10
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/routes/api.js (POST /api/audio/announce endpoint),
+       admin-dashboard/public/index.html (Audio Announcements section),
+       admin-dashboard/public/js/dashboard.js (playAudioPreset, playCustomAudioAnnouncement),
+       MagicMirror-match/modules/MMM-TournamentNowPlaying/node_helper.js (POST /api/audio/announce),
+       MagicMirror-match/modules/MMM-TournamentNowPlaying/MMM-TournamentNowPlaying.js (playAudioAnnouncement)
+
+Features implemented:
+- Text-to-speech via Web Speech API on Pi display browser
+- Preset quick announcements: "Report In", "5 Min Warning", "Finals"
+- Custom announcement text input with configurable speed (Slow/Normal/Fast)
+- WebSocket broadcast + HTTP fallback to MagicMirror-match
+- API endpoint: POST /api/audio/announce {text, rate, volume}
+
+--------------------------------------------------------------------------------
+4. MATCH QUEUE AUTO-ADVANCE - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: server.js (findNextSuggestedMatch, fetchAndPushMatches metadata),
+       command-center.html (NEXT UP indicator), command-center.js,
+       system-settings.json (matchQueue section), style.css (pulse animation)
+
+Features implemented:
+- When match completes, automatically highlight next match
+- Visual "NEXT UP" floating indicator with pulse animation
+- Smart queue ordering by Challonge suggested_play_order
+- One-click "Start Next Match" button on indicator
+- Auto-scroll to highlighted match in queue
+- Toggle auto-advance via checkbox
+- WebSocket metadata includes nextMatchId, completedCount, progressPercent
+
+--------------------------------------------------------------------------------
+5. TOURNAMENT DAY CHECKLIST - COMPLETED 2025-12-10
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/public/tournament.html (Pre-Flight Checklist section),
+       admin-dashboard/public/css/style.css (checklist styles),
+       admin-dashboard/public/js/tournament.js (refreshChecklist, check functions)
+
+Features implemented:
+- 7-item automated checklist visible when pending tournament selected:
+  [✓] Display Modules - Checks match/bracket/flyer APIs are responding
+  [✓] Pi Displays - Checks all registered Pi displays are online
+  [✓] Tournament Deployed - Verifies tournament state file exists
+  [✓] Participants - Shows count and warns if 0
+  [✓] Flyer Set - Verifies flyer is configured
+  [✓] Stations Configured - Warns if no stations set up
+  [✓] Challonge API - Verifies API connection
+- Color-coded status indicators (success/warning/error)
+- Refresh button to re-run all checks
+- Summary shows ready count vs total
+- Auto-refresh on tournament selection
+
+--------------------------------------------------------------------------------
+6. PANIC MODE / EMERGENCY CONTROLS (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: If something goes wrong (power flicker, network issue, wrong score
+entered), need fast recovery.
+
+FEATURES:
+- "PANIC" button (red, prominent) triggers:
+  - Pause all displays (show "Technical Difficulties" message)
+  - Freeze match state
+  - Clear ticker/timers
+- "ALL CLEAR" button restores normal operation
+- Match rollback: Undo last N match results
+- Quick display reboot: One-click restart all Pi displays
+- Emergency contact display: Show "Please stand by" on all TVs
+
+IMPLEMENTATION:
+- WebSocket event: system:panic / system:resume
+- Match state snapshot before each modification
+- Rollback endpoint: POST /api/matches/:id/rollback
+
+--------------------------------------------------------------------------------
+7. BATCH SCORE ENTRY - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: server.js (POST /api/matches/:tournamentId/batch-scores endpoint),
+       matches.html (batch score modal), matches.js (~300 lines of batch scoring)
+
+Features implemented:
+- "Quick Score" button in matches page header (Ctrl+Shift+S shortcut)
+- Modal showing all open/underway matches in table format
+- Quick winner buttons (P1/P2) per row for 2-0 scores
+- Tab through score inputs, Enter to set winner by comparison
+- Ctrl+Enter to submit all valid entries
+- Per-row validation with visual feedback (green check, red x)
+- Partial success handling (shows success/failure per row)
+- Real-time validation count ("2 of 3 ready to submit")
+
+--------------------------------------------------------------------------------
+8. DQ/FORFEIT AUTOMATION - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: server.js (activeDQTimers Map, server-side timer management, auto-DQ logic),
+       command-center.html (enhanced DQ modal with match/player selection),
+       command-center.js (timer functions), system-settings.json (dqTimer section)
+
+Features implemented:
+- Server-side DQ timer state management (survives page refreshes)
+- Enhanced DQ timer modal with match dropdown and player selection
+- When timer expires:
+  - Auto-DQ mode: Automatically DQ the selected player
+  - Notify mode: Send notification to operator
+- Warning WebSocket event at 30s remaining
+- Active timers panel showing countdown with cancel option
+- Configurable in Settings: autoDqEnabled, autoDqAction, defaultDuration, warningThreshold
+- Activity logging for auto-DQ events
+
+API Endpoints:
+- POST /api/timer/dq - Enhanced with matchId, playerId, playerName
+- GET /api/timer/dq/active - List all active DQ timers
+- DELETE /api/timer/dq/:key - Cancel specific timer
+
+--------------------------------------------------------------------------------
+9. PARTICIPANT CHECK-IN IMPROVEMENTS
+--------------------------------------------------------------------------------
+REMAINING FROM PREVIOUS ROADMAP:
+
+FEATURES:
+- Bulk check-in ("Check in all participants")
+- Visual/audio alerts when check-in deadline approaches
+- Process check-ins button (Challonge's process_check_ins endpoint)
+- Self-check-in via signup app (separate item)
+
+--------------------------------------------------------------------------------
+10. SCHEDULED TICKER MESSAGES - COMPLETED 2025-12-10
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/services/ticker-scheduler.js (new scheduler service),
+       admin-dashboard/routes/api.js (GET/POST/PUT/DELETE /ticker/schedule),
+       admin-dashboard/server.js (tickerScheduler initialization),
+       admin-dashboard/public/index.html (Schedule button, modal, scheduled list),
+       admin-dashboard/public/js/dashboard.js (modal handlers, CRUD functions)
+
+Features implemented:
+- Schedule ticker messages with time triggers
+- One-time messages (specific date/time)
+- Recurring messages (daily/weekly on selected days)
+- Enable/disable individual scheduled messages
+- Edit scheduled message time/text/type
+- JSON file persistence (auto-saves)
+- 30-second check interval for due messages
+- UI shows scheduled messages list with next trigger time
+
+API Endpoints:
+- GET /api/ticker/schedule - List all scheduled messages
+- POST /api/ticker/schedule - Create scheduled message
+- PUT /api/ticker/schedule/:id - Update scheduled message
+- DELETE /api/ticker/schedule/:id - Delete scheduled message
+- DELETE /api/ticker/schedule - Clear all scheduled messages
+
+--------------------------------------------------------------------------------
+11. AUTOMATED SPONSOR ROTATION - COMPLETED 2025-12-10
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/services/sponsor.js (startSponsorRotation, rotateSponsor),
+       admin-dashboard/server.js (sponsor rotation startup, config endpoint),
+       admin-dashboard/public/sponsors.html (rotation settings UI),
+       admin-dashboard/public/js/sponsors.js (saveConfig with rotation),
+       MM-SponsorOverlay/node_helper.js (sponsor:rotate WebSocket handler),
+       MM-SponsorOverlay/MMM-SponsorOverlay.js (rotateSponsor with fade transition)
+
+Features implemented:
+- Time-based carousel rotation (10-300 second interval)
+- Sequential or random rotation order
+- Configurable fade transition duration (0-5000ms)
+- Auto-starts on server boot if enabled
+- Per-position rotation (positions with 2+ sponsors rotate independently)
+- WebSocket broadcast + HTTP fallback
+- Timer View mode (show/hide cycling)
+- Config saved in sponsor-state.json
+
+UI Controls (Sponsors page > Settings):
+- Master enable toggle
+- Auto-rotate checkbox
+- Interval (seconds)
+- Transition duration (ms)
+- Rotation order (Sequential/Random)
+- Timer View mode (show/hide intervals)
+
+--------------------------------------------------------------------------------
+12. MATCH HISTORY LOG
+--------------------------------------------------------------------------------
+FEATURES:
+- Side panel showing last 10 completed matches
+- Timestamp, players, score, winner
+- Click to reopen if needed
+- Export match history to CSV
+
+--------------------------------------------------------------------------------
+13. REAL-TIME DATA FRESHNESS & CACHE INVALIDATION (NEW - CRITICAL)
+--------------------------------------------------------------------------------
+PROBLEM: During live tournaments, the admin dashboard sometimes shows stale data.
+Rate limiting may be too aggressive, causing fresh data to land too slowly.
+Critical moments when data MUST be current:
+- Immediately before tournament starts (participant list, seeds)
+- During active matches (scores, standings, bracket updates)
+- Immediately after tournament ends (final standings, results)
+
+CURRENT BEHAVIOR:
+- Adaptive rate limiting: IDLE (12/min), UPCOMING (20/min), ACTIVE (30/min)
+- Hybrid caching with TTL-based invalidation
+- WebSocket updates supplement polling but don't replace it
+- Match actions trigger immediate API calls but cached data may still be served
+
+ISSUES OBSERVED:
+- Dashboard showing old match states after scores submitted
+- Bracket display not updating immediately after match completion
+- Participant count out of sync between signup app and dashboard
+- Rate limit status showing ACTIVE but data feels delayed
+
+PROPOSED SOLUTIONS:
+
+A) Aggressive Cache Busting on Critical Actions
+   - Force cache invalidation on: score submit, match start, tournament start/end
+   - Add "Force Refresh" button that bypasses all caching
+   - Clear cached data when tournament state changes (pending → underway → complete)
+
+B) WebSocket-First Architecture
+   - Make WebSocket the PRIMARY data source during ACTIVE mode
+   - Only fall back to polling when WebSocket disconnects
+   - Push ALL match updates via WebSocket, not just notifications
+   - Server maintains authoritative state, broadcasts diffs
+
+C) Optimistic UI Updates
+   - Update UI immediately on user action (don't wait for API response)
+   - Reconcile with server state when response arrives
+   - Show "syncing" indicator when optimistic update pending
+   - Roll back on error with clear user feedback
+
+D) Smart Polling Intervals
+   - IDLE: 60 seconds (current: 12/min = 5 sec, too aggressive for idle)
+   - UPCOMING (< 1 hour): 15 seconds
+   - ACTIVE: 5 seconds (current: 30/min = 2 sec, may be right)
+   - POST-MATCH (10 min after last match): 10 seconds
+   - Consider Challonge API limits (varies by plan)
+
+E) Stale Data Indicators
+   - Show "Last updated: X seconds ago" on each data panel
+   - Yellow warning if data > 30 seconds old during ACTIVE
+   - Red warning if data > 60 seconds old during ACTIVE
+   - Auto-trigger refresh when staleness threshold exceeded
+
+F) Event-Driven Cache Invalidation
+   - When admin submits score → invalidate match cache for that tournament
+   - When participant signs up → invalidate participant cache
+   - When tournament state changes → invalidate all caches for that tournament
+   - Webhook from Challonge (if available) to trigger invalidation
+
+IMPLEMENTATION PRIORITY:
+1. Add "Force Refresh All" button (quick win)
+2. Show staleness indicators on data panels
+3. Force cache clear on tournament state changes
+4. Evaluate WebSocket-first for ACTIVE mode
+5. Consider Challonge webhook integration
+
+FILES TO MODIFY:
+- admin-dashboard/server.js (cache invalidation logic)
+- admin-dashboard/services/challonge-service.js (if exists, or add)
+- admin-dashboard/public/js/*.js (staleness indicators, force refresh)
+- admin-dashboard/routes/matches.js (optimistic updates)
+
+DEPENDENCIES:
+- Need to understand Challonge API rate limits for current plan
+- May need to upgrade Challonge plan for higher API limits
+- WebSocket infrastructure already in place (Socket.IO)
+
+G) Cloudflare Configuration for Fresh Data
+   Current setup: All traffic goes through Cloudflare (*.despairhardware.com)
+
+   RECOMMENDED CLOUDFLARE SETTINGS:
+
+   1. Page Rules for API Endpoints:
+      - Match: admin.despairhardware.com/api/*
+      - Settings: Cache Level = Bypass, Browser TTL = Respect Existing Headers
+      - This ensures API calls always hit origin server
+
+   2. Cache Rules for Static Assets:
+      - Match: *.despairhardware.com/*.js, *.css, *.png, *.jpg
+      - Settings: Edge TTL = 1 hour, Browser TTL = 1 hour
+      - Add cache-busting query params (?v=timestamp) on deploy
+
+   3. Cache Rules for HTML Pages:
+      - Match: admin.despairhardware.com/*.html
+      - Settings: Edge TTL = 5 minutes, Browser TTL = no-cache
+      - Forces fresh HTML but allows short edge caching
+
+   4. WebSocket Support:
+      - Ensure WebSocket connections are NOT cached
+      - Cloudflare should pass through WebSocket upgrade requests
+      - Check: Network > WebSockets = Enabled
+
+   5. Development Mode (Tournament Day):
+      - Enable "Development Mode" 3 hours before tournament
+      - Bypasses ALL caching for 3 hours
+      - Good for ensuring fresh data during critical periods
+      - Can be toggled via Cloudflare dashboard or API
+
+   6. Purge Cache API Integration:
+      - Add endpoint: POST /api/admin/purge-cloudflare-cache
+      - Calls Cloudflare API to purge specific URLs or entire zone
+      - Trigger on: tournament start, tournament end, manual button
+      - Requires: Cloudflare API token with Cache Purge permission
+
+   7. Cache-Control Headers from Origin:
+      - API responses: Cache-Control: no-store, must-revalidate
+      - Static assets: Cache-Control: public, max-age=3600
+      - HTML pages: Cache-Control: no-cache, must-revalidate
+      - Add these headers in Express middleware
+
+   CLOUDFLARE API INTEGRATION:
+   ```javascript
+   // Example: Purge cache for tournament data
+   async function purgeCloudflareCache(urls) {
+     const response = await fetch(
+       `https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache`,
+       {
+         method: 'POST',
+         headers: {
+           'Authorization': `Bearer ${CF_API_TOKEN}`,
+           'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({ files: urls })
+       }
+     );
+     return response.json();
+   }
+   ```
+
+   ENVIRONMENT VARIABLES NEEDED:
+   - CLOUDFLARE_ZONE_ID: Zone ID from Cloudflare dashboard
+   - CLOUDFLARE_API_TOKEN: API token with Cache Purge permission
+
+   QUICK WIN - TOURNAMENT DAY CHECKLIST:
+   [ ] Enable Cloudflare Development Mode (3 hours before)
+   [ ] Verify WebSockets enabled in Cloudflare
+   [ ] Test API endpoints return fresh data
+   [ ] Disable Development Mode after tournament (saves resources)
+
+================================================================================
+TIER 2: MOBILE PHONE QUICK ACTIONS
+================================================================================
+
+These features enable tournament management from your phone while walking
+around the venue (checking on matches, talking to participants, etc.).
+
+--------------------------------------------------------------------------------
+11. MOBILE ADMIN PWA - NOT PURSUED (2025-12-09)
+--------------------------------------------------------------------------------
+STATUS: Development attempted but cancelled - too complex for practical use.
+
+A dedicated mobile PWA was prototyped with:
+- Standalone PWA with manifest, service worker, offline queue
+- Swipe gestures, haptic feedback, IndexedDB caching
+- WebSocket real-time updates
+
+DECISION: The existing admin dashboard already works on mobile browsers.
+The added complexity of a separate mobile app (maintaining two UIs,
+debugging PWA issues, service worker caching problems) outweighed the
+benefits. The regular dashboard with responsive CSS is sufficient.
+
+ALTERNATIVE: The Command Center page (#1) is already mobile-optimized
+and provides the core tournament-day functionality needed.
+
+--------------------------------------------------------------------------------
+12. PUSH NOTIFICATIONS - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: server.js (sendPushNotification, broadcastPushNotification, 6 API endpoints),
+       analytics-db.js (push_subscriptions, notification_preferences tables),
+       sw.js (push event handlers), settings.js (push notification UI)
+
+Features implemented:
+- Browser push notifications via Web Push API with VAPID authentication
+- Push subscription management (enable/disable per browser)
+- Per-user notification preferences (6 notification types)
+- Notification types with triggers:
+  - Match completed (winner declared endpoint)
+  - Tournament started (tournament start endpoint)
+  - DQ timer expired (timer expiry handler)
+  - New participant signup (external activity webhook)
+  - Display disconnected (heartbeat expiry detection)
+  - Check-in deadline (preference stored, trigger pending)
+- Service worker with notification click routing
+- Action buttons per notification type (View Matches, View Displays, etc.)
+- Test notification button in Settings
+
+API Endpoints:
+- GET /api/notifications/vapid-public-key - Get VAPID public key
+- POST /api/notifications/subscribe - Subscribe to push
+- DELETE /api/notifications/unsubscribe - Unsubscribe
+- GET /api/notifications/preferences - Get notification preferences
+- PUT /api/notifications/preferences - Update preferences
+- POST /api/notifications/test - Send test notification
+
+--------------------------------------------------------------------------------
+13. VOICE COMMANDS (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: During tournament, hands may be busy. Voice commands enable
+hands-free operation.
+
+FEATURES:
+- Web Speech API integration
+- Commands:
+  - "Start match [number]" - Mark match as underway
+  - "Score [player name] [number]" - Update score
+  - "Winner [player name]" - Declare winner
+  - "Next match" - Call next match
+  - "DQ timer [TV number]" - Start DQ timer
+  - "Announce [message]" - Send ticker message
+- Wake word: "Hey Tournament" (or custom)
+- Visual confirmation of understood command
+- Command history panel
+
+IMPLEMENTATION:
+- Add Web Speech API to Command Center page
+- Speech recognition → parse command → execute API call
+- Fallback to manual if speech not recognized
+
+--------------------------------------------------------------------------------
+14. SMS/EMAIL ALERTS (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: If operator steps away from phone/laptop, critical alerts may be
+missed.
+
+FEATURES:
+- SMS alerts via Twilio for critical events:
+  - Tournament ready to start
+  - System error (display offline, API failure)
+  - Match dispute flagged
+- Email alerts for non-urgent events
+- Configurable thresholds
+
+IMPLEMENTATION:
+- Add twilio dependency
+- Store phone number in settings
+- Send SMS on critical events only (rate-limited)
+
+--------------------------------------------------------------------------------
+15. QUICK SCORE WIDGET (NEW - Future)
+--------------------------------------------------------------------------------
+For future: iOS/Android native widget on home screen showing current match
+with tap-to-score capability. Would require native app development.
+
+================================================================================
+TIER 3: STREAM DECK CONTROLLER ENHANCEMENTS
+================================================================================
+
+The Stream Deck is the PRIMARY CONTROL DEVICE for tournament day. These
+improvements make it more responsive and capable.
+
+--------------------------------------------------------------------------------
+16. WEBSOCKET REAL-TIME UPDATES - COMPLETED 2025-12-07
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+
+Features implemented:
+- Socket.IO WebSocket connection via python-socketio library
+- Instant match updates (<100ms vs 2-5 seconds polling)
+- Connection status indicator on key 11 (WS=green, POLL=yellow, HTTP=purple)
+- Automatic reconnect with exponential backoff
+- HTTP polling fallback when WebSocket disconnects
+- Configuration options: websocket_enabled, reconnect_delay, poll_fallback_interval
+
+Files modified:
+- stream-deck-controller/websocket_client.py (NEW)
+- stream-deck-controller/api_client.py
+- stream-deck-controller/controller.py
+- stream-deck-controller/config.json
+- stream-deck-controller/requirements.txt
+- stream-deck-controller/install.sh
+
+--------------------------------------------------------------------------------
+17. CONNECTION STATUS INDICATOR - COMPLETED 2025-12-07
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED (included in #16 WebSocket implementation)
+
+Features implemented:
+- Key 11 shows connection status
+- GREEN (WS:X): WebSocket connected, X = live match count
+- YELLOW (POLL:X): WebSocket failed, using HTTP polling fallback
+- PURPLE (HTTP:X): WebSocket disabled, HTTP polling only
+- Auto-updates on connection state changes
+
+--------------------------------------------------------------------------------
+18. LOCAL DATA CACHING FOR OFFLINE RESILIENCE
+--------------------------------------------------------------------------------
+FEATURES:
+- Cache match data to local JSON file on Pi Zero
+- Display cached data when server unavailable
+- Show "OFFLINE" badge on affected keys
+- Auto-refresh when connection restored
+- Cache expiration (5 minutes)
+- Sync status indicator
+
+IMPLEMENTATION:
+- Write match data to ~/.cache/stream-deck/matches.json
+- Load from cache if API request fails
+- Display cache age on status key
+
+--------------------------------------------------------------------------------
+19. MACRO SUPPORT (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: Some operations require multiple key presses (e.g., select match,
+set score, confirm, mark underway). Macros can automate this.
+
+FEATURES:
+- Record macro: Hold key 0 + perform actions → save sequence
+- Play macro: Tap key to execute recorded sequence
+- Built-in macros:
+  - "Quick 2-0 Win": Select match → set score 2-0 → declare winner
+  - "DQ Flow": Start DQ timer → wait 3 min → auto-DQ if no response
+- Macro editor in admin dashboard (upload to Stream Deck)
+
+IMPLEMENTATION:
+- Store macros as JSON action sequences
+- Playback engine in controller.py
+- Admin dashboard macro editor in settings.html
+
+--------------------------------------------------------------------------------
+20. PROFILE PER TOURNAMENT/GAME (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Multiple layout profiles:
+  - "SSBU Weekly" - Specific ticker presets, 3-stock scores
+  - "MKW Grand Prix" - Different scoring system
+  - "Setup/Testing" - Debug commands
+- Quick profile switch: Hold HOME key
+- Profiles synced from admin dashboard
+- Profile-specific ticker presets
+
+IMPLEMENTATION:
+- Store profiles in config files
+- Add profile selection UI in admin dashboard
+- Sync profiles via API endpoint
+
+--------------------------------------------------------------------------------
+21. HAPTIC/VISUAL FEEDBACK IMPROVEMENTS
+--------------------------------------------------------------------------------
+FEATURES:
+- Key flash on successful action (GREEN)
+- Key flash on error (RED)
+- Different flash patterns:
+  - Quick green = success
+  - Slow red pulse = error
+  - Yellow strobe = warning
+- Audio feedback via Pi Zero speaker (optional)
+
+--------------------------------------------------------------------------------
+22. MULTI-PAGE MATCH NAVIGATION
+--------------------------------------------------------------------------------
+FEATURES:
+- Navigate through all open matches (not just first 5)
+- Page indicator: "Page 1/3"
+- Prev/Next buttons cycle pages
+- Jump to specific match
+
+--------------------------------------------------------------------------------
+23. MATCH TIMER DISPLAY
+--------------------------------------------------------------------------------
+FEATURES:
+- Show elapsed time on underway matches
+- Timer displayed on match key
+- Optional auto-timer start when marking underway
+
+--------------------------------------------------------------------------------
+24. AUTO-RECONNECT WITH BACKOFF - COMPLETED 2025-12-07
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED (included in #16 WebSocket implementation)
+
+Features implemented:
+- Exponential backoff on WebSocket connection failures
+- Configurable: websocket_reconnect_delay (default: 1s)
+- Configurable: websocket_max_reconnect_delay (default: 60s)
+- Automatic retry on disconnect (unlimited attempts)
+- Backoff resets on successful connection
+
+--------------------------------------------------------------------------------
+25. USB RESET AUTOMATION
+--------------------------------------------------------------------------------
+PROBLEM: Stream Deck sometimes requires USB reset before use.
+
+SOLUTION:
+- Auto-detect Stream Deck disconnect
+- Run usbreset automatically on startup
+- Retry up to 3 times
+- Log reset attempts
+
+================================================================================
+TIER 4: RASPBERRY PI DISPLAY RELIABILITY
+================================================================================
+
+Reliable displays are critical for tournament presentation. These improvements
+reduce crashes, improve recovery, and enable remote management.
+
+--------------------------------------------------------------------------------
+26. CDN CACHE-BUSTING FOR DISPLAYS - COMPLETED 2025-12-08
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+
+PROBLEM: MagicMirror static files (JS/CSS) were being cached by Cloudflare
+and browser, causing ticker messages and timers to fail silently after
+deployments. API returned success, but old JavaScript lacked new handlers.
+
+SOLUTION:
+- Server adds no-cache headers to all responses and static files
+- All JS/CSS URLs include `?v=timestamp` cache-buster
+- Timestamp regenerates on service restart
+- Frontend loader uses `window.mmCacheBuster` for dynamic module loading
+
+FILES MODIFIED:
+- MagicMirror-match/js/server.js - Static file middleware with no-cache headers
+- MagicMirror-match/js/server_functions.js - HTML injection of timestamps
+- MagicMirror-match/js/loader.js - Dynamic file loading with cache-busting
+
+TROUBLESHOOTING:
+1. Restart MagicMirror service to generate new timestamp
+2. Clear Pi browser cache: `pkill -f chromium && rm -rf ~/.cache/chromium`
+3. Purge Cloudflare cache if needed
+
+--------------------------------------------------------------------------------
+26b. SPONSOR OVERLAY MODULE CONSOLIDATION - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+
+PROBLEM: MMM-SponsorOverlay module was duplicated in both MagicMirror-match
+and MagicMirror-bracket with identical code (~1300 lines duplicated). CSS
+positioning values differed between instances (50px vs 20px/100px).
+
+SOLUTION:
+- Created shared module at `/root/tournament-control-center/MM-SponsorOverlay/`
+- Symlinked module into both MagicMirror instances
+- Made positioning config-driven via module config options
+- Each instance can customize positioning while sharing codebase
+- Both views can run simultaneously with independent sponsor rotation
+
+CONFIG OPTIONS:
+- `apiPort` - HTTP API port (2055 for match, 2056 for bracket)
+- `cornerOffset` - Pixels from edge for corner logos (default: 50)
+- `bannerOffset` - Pixels from edge for banners (default: 25)
+- `bottomCornerOffset` - Override for bottom corners (uses cornerOffset if null)
+
+FILES CREATED:
+- MM-SponsorOverlay/MMM-SponsorOverlay.js - Config-driven positioning
+- MM-SponsorOverlay/MMM-SponsorOverlay.css - Structural styles only
+- MM-SponsorOverlay/node_helper.js - API server and WebSocket client
+- MM-SponsorOverlay/package.json - Dependencies (express, body-parser, socket.io-client)
+
+SYMLINKS:
+- MagicMirror-match/modules/MMM-SponsorOverlay → ../../MM-SponsorOverlay
+- MagicMirror-bracket/modules/MMM-SponsorOverlay → ../../MM-SponsorOverlay
+
+SYMLINK CONSIDERATIONS:
+- Module requires its own node_modules (dependencies don't resolve through symlinks)
+- Uses `process.cwd()` instead of `__dirname` for config path resolution
+- Run `npm install` in MM-SponsorOverlay/ directory after cloning
+
+--------------------------------------------------------------------------------
+26c. SPONSOR OVERLAY UI IMPROVEMENTS - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: sponsors.html, sponsors.js, style.css, server.js, MMM-SponsorOverlay.js
+
+IMPROVEMENTS:
+1. Real-time X/Y offset sliders with number inputs (-500 to +500px range)
+   - Sliders in sponsor cards for immediate visual feedback
+   - Number inputs sync bidirectionally with sliders
+   - Debounced real-time updates to display (100ms)
+   - Values saved to database on change
+
+2. Per-sponsor Hide button
+   - Yellow "Hide" button on each sponsor card
+   - Hides single sponsor at specific position
+   - Calls POST /api/sponsors/hide with position parameter
+
+3. Position filter tabs moved inside gallery section
+   - 7 filter buttons (All + 6 positions) now inside gallery card
+   - Logically grouped with the content they filter
+   - Stops click propagation to prevent section collapse
+
+4. Consistent slider track styling across project
+   - CSS pseudo-element styling for range inputs
+   - Track: #4b5563 background with #6b7280 border
+   - Thumb: Blue (#3b82f6) with darker blue border
+   - Works in both WebKit and Firefox
+
+5. Banner transformOrigin fix
+   - Banners now anchor to top/bottom edge when scaled
+   - Prevents overflow below screen at large scales (e.g., 5.0x)
+
+--------------------------------------------------------------------------------
+27. INTENT RESTART DETECTION - BUG FIX - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/public/setup-pi.sh (kiosk.sh, display-manager.sh)
+
+PROBLEM: display-manager.sh creates intent_restart file but kiosk.sh only
+checked file existence, not timestamp. Stale intent files could incorrectly
+skip crash detection.
+
+FIX:
+- display-manager.sh writes epoch timestamp to intent file: `echo $(date +%s)`
+- kiosk.sh reads timestamp and validates it's within 10s grace window of browser start
+- Stale intent files are ignored and treated as crashes
+- Intent file is always cleaned up after checking
+
+--------------------------------------------------------------------------------
+28. CHROMIUM HANG DETECTION (WATCHDOG) - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/public/setup-pi.sh (kiosk.sh)
+Dependencies: xdotool package (added to apt install)
+
+PROBLEM: Only detects Chromium crashes (quick exits), not hangs (frozen, white screen).
+
+SOLUTION:
+- Background watchdog process checks Chromium responsiveness every 30 seconds
+- Uses xdotool to verify window exists and responds to queries
+- Force-kills Chromium after 90 seconds unresponsive (3 consecutive failures)
+- Graceful degradation if xdotool not installed (assumes responsive)
+- Watchdog stops when kiosk process exits (trap on EXIT)
+
+--------------------------------------------------------------------------------
+28b. STORAGE DETECTION FIX - BUG FIX - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: FIXED
+Files: admin-dashboard/public/setup-pi.sh
+
+PROBLEM: NVMe storage was incorrectly detected as "sdcard" because the storage
+detection was performed inside a function (subshell), preventing variable
+assignment from persisting.
+
+FIX:
+- Moved storage detection from function to direct execution at script start
+- Variables (STORAGE_TYPE, NVME_DEVICE, NVME_SIZE) now correctly persist
+- Pi 5 with NVMe now gets high-performance settings:
+  - CPU Governor: performance (not ondemand)
+  - Raster Threads: 4 (not 1)
+  - GPU Compositing: enabled (not disabled)
+  - Disk Cache: 500MB (not 100MB)
+
+--------------------------------------------------------------------------------
+28c. PACKAGE AVAILABILITY FIX - BUG FIX - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: FIXED
+Files: admin-dashboard/public/setup-pi.sh
+
+PROBLEM: Package `libraspberrypi-bin` is not available in Raspberry Pi OS
+Bookworm/Trixie.
+
+FIX:
+- Replaced `libraspberrypi-bin` with `raspi-utils-core` (modern replacement)
+- Contains vcgencmd and other Pi utilities
+
+--------------------------------------------------------------------------------
+28d. HEREDOC ESCAPING FIX - BUG FIX - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: FIXED
+Files: admin-dashboard/public/setup-pi.sh (kiosk.sh heredoc section)
+
+PROBLEM: The kiosk.sh heredoc used unquoted `<< KIOSKSCRIPT` which causes
+variable expansion at setup-time instead of runtime. This resulted in errors
+like "exponent less than 0" when arithmetic expressions were evaluated with
+unset variables.
+
+FIX:
+- Escaped all runtime variables with `\$` in the heredoc:
+  - PID file handling section
+  - Logging functions (log, debug_log)
+  - check_debug_mode, get_url, clear_cache functions
+  - Main loop (KIOSK_URL, CRASH_COUNTER, START_TIME)
+  - Stable run section
+- Setup-time variables (RASTER_THREADS, DISK_CACHE_SIZE, etc.) intentionally
+  NOT escaped - they are correctly baked in during installation
+
+--------------------------------------------------------------------------------
+28e. WIFI NETWORK CONFIGURATION - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: admin-dashboard/public/setup-pi.sh
+
+Added 3 pre-configured WiFi networks with priorities:
+1. Neils Bahr - Guest (priority 30) - Primary venue network
+2. WeaponizedData_5G (priority 20) - Secondary network
+3. HTXPokemonCollectors-VZW (priority 10) - Tertiary network
+
+Pi will automatically connect to highest-priority available network.
+
+--------------------------------------------------------------------------------
+29. REMOTE SCREENSHOT CAPABILITY
+--------------------------------------------------------------------------------
+FEATURES:
+- Trigger screenshot from admin dashboard
+- Upload screenshot to admin server
+- View screenshots in displays page
+- Auto-cleanup old screenshots (24h retention)
+- Useful for debugging display issues remotely
+
+--------------------------------------------------------------------------------
+30. OFFLINE DATA CACHING ON PI
+--------------------------------------------------------------------------------
+FEATURES:
+- Cache match data locally on Pi NVMe
+- Display cached data when admin server unavailable
+- Show "OFFLINE" indicator on display
+- Graceful degradation during network outages
+- Resume when connection restored
+
+--------------------------------------------------------------------------------
+31. AUTOMATIC SCRIPT UPDATES (OTA)
+--------------------------------------------------------------------------------
+FEATURES:
+- Check for script updates during config poll
+- Download new scripts from admin server
+- Verify checksum before applying
+- Restart affected service after update
+
+--------------------------------------------------------------------------------
+32. MEMORY MONITORING AND CLEANUP
+--------------------------------------------------------------------------------
+FEATURES:
+- Monitor available memory
+- Clear browser cache when memory low (<100MB free)
+- Restart browser if memory critical (<50MB)
+- Report memory trends in heartbeat
+
+--------------------------------------------------------------------------------
+33. DUAL HDMI DISPLAY SUPPORT (PI 5)
+--------------------------------------------------------------------------------
+FEATURES:
+- Run two displays from single Pi 5
+- Display 1: Match/Now Playing view
+- Display 2: Bracket view
+- Independent content per display
+- Reduce hardware cost (one Pi vs two)
+
+IMPLEMENTATION:
+- Pi 5 has dual 4Kp60 HDMI outputs
+- Configure /boot/config.txt for dual display
+- Run two browser instances, one per display
+- Separate display IDs in heartbeat
+
+--------------------------------------------------------------------------------
+34. FASTER BOOT TIME (<15 SECONDS)
+--------------------------------------------------------------------------------
+FEATURES:
+- Fast boot optimization
+- Persistent browser state
+- Quick recovery from power loss
+- Splash screen during boot
+
+--------------------------------------------------------------------------------
+35. CONFIGURABLE DISPLAY SCALE FACTOR - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED (enhanced with real-time CDP scaling)
+
+Features implemented:
+- Real-time scale changes via Chrome DevTools Protocol (CDP) - no browser restart
+- Auto TV detection via xrandr (reads physical dimensions from HDMI EDID)
+- Suggested scale based on diagonal: <32"=1.0x, 32-40"=1.5x, 40-50"=2.0x, >50"=2.5x
+- CDP status badge in admin UI (green "CDP" when enabled)
+- Fallback to browser restart if CDP unavailable
+- Scale range 0.5x to 3.0x
+- Collapsible "Advanced" section in display card UI (default collapsed)
+- Shows detected TV size in collapsed header for quick reference
+
+Admin UI:
+- Scale controls hidden under collapsible "Advanced" section by default
+- Header shows: "ADVANCED" label, CDP badge, detected TV size (e.g., "84.5" detected")
+- Click to expand: detection info, scale slider, preset buttons (0.5x-2.0x), Apply button
+- 1.0x works well across most TV sizes (tested 15.5" to 84.5")
+
+Files:
+- setup-pi.sh: cdp-service.js, detect-display.sh, cdp-scale.service templates
+- routes/displays.js: displayInfo, cdpEnabled in heartbeat/config
+- public/js/displays.js: Collapsible Advanced section, toggleAdvancedSection()
+
+--------------------------------------------------------------------------------
+36. AUDIO OUTPUT CONFIGURATION
+--------------------------------------------------------------------------------
+FEATURES:
+- Configure HDMI audio output
+- Volume control from admin dashboard
+- Mute/unmute capability
+- Audio test button
+- Enable for match announcements
+
+--------------------------------------------------------------------------------
+37. NETWORK QUALITY MONITORING
+--------------------------------------------------------------------------------
+FEATURES:
+- Monitor network quality continuously
+- Switch to secondary WiFi if primary degraded
+- Alert admin on persistent connectivity issues
+- Offline mode when no connectivity
+
+================================================================================
+TIER 5: SIGNUP APP QoL (PARTICIPANT EXPERIENCE)
+================================================================================
+
+Better participant experience = smoother tournament day.
+
+--------------------------------------------------------------------------------
+38. PARTICIPANT SELF CHECK-IN
+--------------------------------------------------------------------------------
+FEATURES:
+- Self check-in button on signup app
+- Verification code system (unique code per participant)
+- QR code scanning for quick check-in
+- Check-in status display
+- Check-in deadline countdown timer
+- Push notification reminder
+
+--------------------------------------------------------------------------------
+39. WAITLIST SYSTEM
+--------------------------------------------------------------------------------
+FEATURES:
+- "Join Waitlist" button when tournament is full
+- Waitlist position display ("You are #3 on the waitlist")
+- Auto-promote when slots open (due to dropout)
+- Notification when promoted
+- Waitlist cap and deadline
+
+--------------------------------------------------------------------------------
+40. EMAIL CONFIRMATION & REMINDERS
+--------------------------------------------------------------------------------
+FEATURES:
+- Confirmation email after signup
+- Reminder email 24 hours before tournament
+- Check-in deadline reminder (1 hour before)
+- Results email after tournament ends
+- Unsubscribe option per email type
+
+IMPLEMENTATION:
+- Add nodemailer dependency
+- Configure SMTP in system settings
+- HTML email templates
+
+--------------------------------------------------------------------------------
+40. TEAM REGISTRATION SUPPORT
+--------------------------------------------------------------------------------
+FEATURES:
+- Team name field
+- Multiple participant fields with role labels (Player 1, Player 2)
+- Team captain designation
+- Team size validation
+- Substitute player slot (optional)
+- Team-based check-in
+
+--------------------------------------------------------------------------------
+41. CHARACTER/MAIN SELECTION
+--------------------------------------------------------------------------------
+FEATURES:
+- Optional character dropdown during signup
+- Game-specific character lists
+- Primary and secondary character selection
+- Character icons on match display
+- Character usage statistics in analytics
+
+--------------------------------------------------------------------------------
+42. BRACKET PREDICTIONS SYSTEM
+--------------------------------------------------------------------------------
+STATUS: PROTOTYPE EXISTS (public/predictions-prototype/)
+
+FEATURES:
+- Visual bracket picker with clickable matches
+- Device fingerprint for account-free identity
+- Hybrid lock system (early = full points, late = 0.5x)
+- Live leaderboard with real-time scoring
+- Claim code + animated pattern for prize verification
+
+--------------------------------------------------------------------------------
+43. PARTICIPANT LOOKUP ("AM I REGISTERED?") - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: tournament-signup/public/index.html (lookup section, lookup toggle),
+       tournament-signup/server.js (GET /api/participants/lookup endpoint)
+
+Features implemented:
+- "Already registered? Check your status" toggle button on main page
+- Expandable search form with name input and Search button
+- Case-insensitive partial match search via API
+- Found result shows: name with "You're registered!" confirmation in green success card
+- Not found result shows: yellow warning card with signup prompt
+- API returns participant data including check-in status
+
+--------------------------------------------------------------------------------
+44. REGISTRATION CONFIRMATION QR CODE
+--------------------------------------------------------------------------------
+FEATURES:
+- QR code displayed on confirmation page
+- QR code contains participant ID and verification code
+- Printable confirmation (PDF download)
+- Scannable by admin for quick check-in
+
+--------------------------------------------------------------------------------
+45. DARK MODE TOGGLE (SIGNUP APP) - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: tournament-signup/public/index.html, rules.html, confirmation.html
+       (all pages have theme toggle and CSS custom properties)
+
+Features implemented:
+- Theme toggle button in top-right corner of all pages
+- Sun/moon SVG icons swap based on current theme
+- System preference detection via `prefers-color-scheme` media query
+- localStorage persistence (persists across pages and sessions)
+- Smooth 300ms transition animation for theme changes
+- CSS custom properties for all colors (matches STYLE_GUIDE.md)
+- Light mode: white cards on gray-100 background
+- Dark mode: gray-800 cards on black-deep background
+- Theme syncs across all signup pages automatically
+
+--------------------------------------------------------------------------------
+46. PUSH NOTIFICATIONS (SIGNUP APP)
+--------------------------------------------------------------------------------
+FEATURES:
+- Push notification opt-in during signup
+- Match called notifications
+- Check-in reminder notifications
+- Tournament starting soon notifications
+
+--------------------------------------------------------------------------------
+47. OFFLINE SIGNUP QUEUE (BACKGROUND SYNC)
+--------------------------------------------------------------------------------
+FEATURES:
+- Queue signup locally when offline
+- Automatically submit when online
+- Show pending status to user
+- Sync status indicator
+
+================================================================================
+TIER 6: AUTOMATION & EFFICIENCY
+================================================================================
+
+Reduce repetitive manual work for recurring weekly tournaments.
+
+--------------------------------------------------------------------------------
+48. TOURNAMENT TEMPLATES LIBRARY - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: analytics-db.js (tournament_templates table + CRUD functions),
+       server.js (6 API endpoints), tournament.html/js (wizard integration),
+       settings.html/js (template management UI)
+
+Features implemented:
+- SQLite table for template storage (name, description, game, settings JSON)
+- "Load from Template" dropdown in tournament wizard Step 1
+- "Save as Template" button in wizard completion success modal
+- Template management in Settings page (view, edit name/description, delete)
+- Default template protection (cannot delete)
+- Create template from existing tournament data
+
+API Endpoints:
+- GET /api/templates - List all templates
+- GET /api/templates/:id - Get template by ID
+- POST /api/templates - Create new template
+- PUT /api/templates/:id - Update template (name, description)
+- DELETE /api/templates/:id - Delete template
+- POST /api/templates/from-tournament - Create from tournament data
+
+--------------------------------------------------------------------------------
+49. SCHEDULED TOURNAMENT CREATION (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Schedule recurring tournaments:
+  - Every Tuesday at 7:00 PM
+  - First Saturday of month
+- Auto-create tournament on Challonge at scheduled time
+- Auto-deploy to displays
+- Send notification to mailing list
+
+IMPLEMENTATION:
+- Use node-cron for scheduling
+- Store schedule in SQLite
+- Background job manager
+
+--------------------------------------------------------------------------------
+50. SCHEDULED TICKER MESSAGES (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: Operator must manually send "5 minute break" messages.
+
+FEATURES:
+- Schedule ticker messages:
+  - "Break ends in 5 minutes" at 8:25 PM
+  - "Finals starting soon" when semifinals complete
+- Event-triggered messages:
+  - "Welcome to [Tournament Name]!" on tournament start
+  - "Congratulations [Winner]!" on finals complete
+- Message templates with variables
+
+IMPLEMENTATION:
+- Add ticker_schedule table
+- Background timer checks for pending messages
+- Variable substitution engine
+
+--------------------------------------------------------------------------------
+51. AUTO-DEPLOY TO DISPLAYS
+--------------------------------------------------------------------------------
+FEATURES:
+- When tournament created, auto-configure all displays
+- Match display: Tournament ID set automatically
+- Bracket display: Bracket URL set automatically
+- Flyer display: Game-matched flyer set automatically
+- "One-click setup" for tournament day
+
+--------------------------------------------------------------------------------
+52. COPY/CLONE TOURNAMENT SETTINGS
+--------------------------------------------------------------------------------
+FEATURES:
+- "Duplicate from Previous" dropdown
+- Copy all settings from past tournament
+- Editable before creation
+- Clone participants (optional)
+
+--------------------------------------------------------------------------------
+53. PRE-FILLED TEMPLATES FOR TOURNAMENT CREATION
+--------------------------------------------------------------------------------
+FEATURES:
+- Quick setup buttons:
+  - [Weekly SSBU] [Monthly MKW] [Custom]
+- Pre-fill format, dates, registration settings
+- One-click deploy
+
+--------------------------------------------------------------------------------
+54. AUTO-ARCHIVE COMPLETED TOURNAMENTS
+--------------------------------------------------------------------------------
+FEATURES:
+- Archive tournament to analytics DB when finalized
+- Archive triggered automatically (no manual step)
+- Include all matches, participants, standings
+- Update Elo ratings automatically
+
+================================================================================
+TIER 7: SCALING FOUNDATIONS
+================================================================================
+
+Features that prepare the system for growth: multiple tournaments, additional
+operators, more displays, and eventually multiple venues.
+
+--------------------------------------------------------------------------------
+55. MULTI-TOURNAMENT VIEW (HIGH PRIORITY)
+--------------------------------------------------------------------------------
+FEATURES:
+- Run multiple tournaments simultaneously (SSBU + MKW same day)
+- Tabbed interface on admin dashboard
+- Split-screen TV displays (show both on one screen)
+- "Active Tournament" selector per display
+- Independent tournament state management
+- Color-coded tabs by tournament
+
+IMPLEMENTATION:
+- Modify tournament-state.json to support array
+- Add tournament selector to all pages
+- Update WebSocket events to include tournamentId
+
+--------------------------------------------------------------------------------
+56. REFEREE ROLE (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: As events grow, operator needs help with score entry.
+
+FEATURES:
+- New role: "referee"
+- Permissions:
+  - CAN: View matches, enter scores, mark underway
+  - CANNOT: Create tournaments, manage participants, system settings
+- Per-tournament referee assignment
+- Referee-specific mobile view (even simpler than regular mobile)
+- Referee activity log
+
+IMPLEMENTATION:
+- Add role field to users table
+- Middleware to check permissions
+- Simplified mobile view for referees
+
+--------------------------------------------------------------------------------
+57. MULTI-VENUE SUPPORT (FUTURE)
+--------------------------------------------------------------------------------
+FEATURES:
+- Define multiple venues
+- Per-venue display configuration
+- Per-venue network settings
+- Venue selector in dashboard
+- Tournaments assigned to venue
+
+--------------------------------------------------------------------------------
+58. ATTENDEE PROFILES (NEW)
+--------------------------------------------------------------------------------
+PROBLEM: No way to track regulars across events.
+
+FEATURES:
+- Automatic player identification (fuzzy name matching)
+- Player profile page:
+  - Attendance history
+  - Tournament placements
+  - Elo progression
+  - Character preferences
+- "Regular" badge for frequent attendees
+- Birthday tracking (optional)
+- Notes field (e.g., "Needs wheelchair access")
+
+IMPLEMENTATION:
+- Extend players table in analytics.db
+- Profile page in admin dashboard
+- Optional profile claim by participants
+
+--------------------------------------------------------------------------------
+59. REVENUE TRACKING (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Entry fee tracking per tournament
+- Pot bonus recording
+- Payout distribution:
+  - 1st: 60%, 2nd: 30%, 3rd: 10%
+- Expense tracking (venue rental, equipment)
+- Profit/loss summary
+- Export for tax purposes
+
+IMPLEMENTATION:
+- New finances table in SQLite
+- Finance page in admin dashboard
+- CSV export
+
+--------------------------------------------------------------------------------
+60. EVENT CALENDAR INTEGRATION (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Google Calendar sync
+- iCal feed for subscribers
+- Public event listing page
+- "Add to Calendar" button on signup app
+- Automated social media posting
+
+================================================================================
+TIER 8: AI-POWERED FEATURES (ANTHROPIC CLAUDE SDK)
+================================================================================
+
+Building on the successful AI Seeding implementation (P2-6), these features
+leverage the Anthropic Claude SDK (@anthropic-ai/sdk v0.39.0) to add intelligent
+automation and insights throughout the tournament control center.
+
+Current AI Infrastructure (established in services/ai-seeding.js):
+- Lazy-loaded Anthropic client (only initialized when API key present)
+- Rate limiting (10 requests/minute with queue)
+- SQLite caching with hash-based invalidation
+- Graceful fallback when AI unavailable
+- WebSocket broadcasting for real-time updates
+- Structured JSON response parsing
+
+--------------------------------------------------------------------------------
+AI-1. TOURNAMENT NARRATIVE GENERATOR - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: services/tournament-narrator.js, analytics-db.js (tournament_narratives table),
+       server.js (narrative endpoints), analytics.html (narrative modal),
+       analytics.js (narrative functions)
+
+Features implemented:
+- AI-powered tournament recap narratives for archived tournaments
+- Three output formats: Social (280 chars), Discord (2-3 paragraphs), Full Report
+- Storyline detection: upsets, close matches, reverse sweeps, losers bracket runs
+- "Generate Recap" button on each archived tournament card
+- Narrative modal with format tabs, progress indicator, copy-to-clipboard
+- SQLite caching with hash-based invalidation (tournament_narratives table)
+- Fallback template-based generation when AI unavailable
+- Shares Anthropic client and rate limiting with AI seeding service
+
+API Endpoints:
+- GET /api/analytics/ai/narrative/status - Check if AI available
+- GET /api/analytics/ai/narrative/:tournamentId?format=discord - Get/generate narrative
+- POST /api/analytics/ai/narrative/:tournamentId/regenerate - Force regenerate
+- GET /api/analytics/ai/narrative/:tournamentId/cached - List cached formats
+- DELETE /api/analytics/ai/narrative/:tournamentId/cache - Clear cache
+
+Requires: ANTHROPIC_API_KEY environment variable
+
+--------------------------------------------------------------------------------
+AI-2. PLAYER FORM ANALYSIS & MOMENTUM TRACKING
+--------------------------------------------------------------------------------
+PROBLEM: Understanding which players are "hot" or "cold" requires manual
+analysis of recent results. This insight helps with seeding and predictions.
+
+FEATURES:
+- Player momentum scoring:
+  - Recent win rate (last 3 tournaments weighted)
+  - Elo trajectory (rising/stable/falling)
+  - Performance vs seed (over/underperforming)
+- Form indicators in player cards:
+  - "On Fire" - 3+ consecutive top-4 finishes
+  - "Rising" - Elo gained 50+ in last month
+  - "Slumping" - Dropped 2+ seed positions recently
+  - "Consistent" - Finished within 2 of seed 5+ times
+- AI-generated form analysis:
+  - "[Player] has won 8 of last 10 matches, improving from seed 8 to seed 3"
+  - "Currently on a 5-match winning streak across 2 tournaments"
+- Integrated into seeding suggestions (AI considers momentum)
+
+IMPLEMENTATION:
+- Create services/player-analysis.js (~350 lines)
+- Extend ai-seeding.js prompt with momentum data
+- New analytics endpoint: GET /api/analytics/players/:id/form
+- UI: Form badges on participant cards, analytics player page
+
+EFFORT: Medium (2 days)
+IMPACT: Medium - Better seeding, interesting stats for players
+
+--------------------------------------------------------------------------------
+AI-3. MATCH OUTCOME PREDICTIONS (FUN FEATURE)
+--------------------------------------------------------------------------------
+PROBLEM: Spectators and players enjoy predictions. Currently no way to see
+expected outcomes based on historical data.
+
+FEATURES:
+- Win probability display for upcoming matches:
+  - "Player A: 65% | Player B: 35%"
+  - Based on: Elo difference, head-to-head record, recent form
+- AI-enhanced predictions with context:
+  - "Despite lower Elo, Player B has won 3 of their last 4 meetings"
+  - "Player A is 8-2 in their last 10 matches on this game"
+- Confidence levels: High/Medium/Low based on data availability
+- Post-match accuracy tracking (how well did predictions hold?)
+- Display on match cards (toggleable - some TOs prefer no predictions)
+
+IMPLEMENTATION:
+- Create services/match-insights.js (~300 lines)
+- Basic algorithm: Elo-based probability + head-to-head adjustment
+- AI enhancement: Add narrative context explaining prediction
+- UI: Small prediction badge on match cards
+- Settings toggle: "Show match predictions" (default: off)
+
+EFFORT: Low-Medium (1-2 days)
+IMPACT: Medium - Entertainment value, player engagement
+
+PRIVACY NOTE: Predictions are for entertainment only. Make clear they don't
+affect seeding or bracket placement.
+
+--------------------------------------------------------------------------------
+AI-4. SMART OPERATOR ASSISTANT
+--------------------------------------------------------------------------------
+PROBLEM: Single operator managing tournaments needs decision support during
+live events. Currently must remember all best practices mentally.
+
+FEATURES:
+- Real-time suggestions during tournament:
+  - "5 matches completed in 20 minutes - consider starting next wave"
+  - "Player X has been waiting 15 minutes - prioritize their match"
+  - "Grand Finals approaching - suggest 5-minute break for hype"
+- Anomaly detection:
+  - "Match duration is 3x average - check for issues"
+  - "Score pattern unusual (0-3, 0-3, 0-3) - verify results"
+  - "3 DQ timers expired this round - send reminder announcement"
+- Proactive alerts:
+  - "Tournament running 30 minutes behind schedule"
+  - "Only 2 stations active but 8 matches open - consider starting more"
+- Command Center integration:
+  - AI suggestions panel in Q4 (Quick Actions area)
+  - Dismissible suggestion cards
+  - "Apply" button to execute suggestions
+
+IMPLEMENTATION:
+- Create services/operator-assistant.js (~500 lines)
+- Background analysis of tournament state every 30 seconds
+- Claude prompt with tournament context + best practices
+- WebSocket events: suggestion:new, suggestion:dismissed
+- UI: Suggestion panel in command-center.html
+
+EFFORT: High (3-4 days)
+IMPACT: Very High - Reduces operator cognitive load significantly
+
+--------------------------------------------------------------------------------
+AI-5. INTELLIGENT TICKER MESSAGE GENERATOR
+--------------------------------------------------------------------------------
+PROBLEM: Writing engaging ticker messages during tournaments is distracting.
+Pre-set messages feel repetitive.
+
+FEATURES:
+- Context-aware ticker suggestions:
+  - After upset: "Upset alert! [Seed 12] takes down [Seed 1]!"
+  - Grand finals: "[Player] vs [Player] for the championship!"
+  - Close match: "Game 5 deciding it all!"
+- Automatic event triggers:
+  - Generate message when notable match completes
+  - "Break time" messages based on round completion
+  - Winner announcement: "Congratulations to [Player], your [Tournament] champion!"
+- Customizable tone: Hype/Professional/Casual
+- One-click send from suggestion
+
+IMPLEMENTATION:
+- Add to services/match-polling.js (detect notable events)
+- Claude generates ticker text based on event type
+- Queue suggestions in UI (don't auto-send)
+- Settings: Ticker AI tone preference
+
+EFFORT: Medium (2 days)
+IMPACT: Medium - Better presentation, less operator distraction
+
+--------------------------------------------------------------------------------
+AI-6. PDF REPORT ENHANCEMENT WITH AI NARRATIVE
+--------------------------------------------------------------------------------
+PROBLEM: Current PDF exports are data-heavy but lack engaging narrative.
+Players want shareable tournament summaries.
+
+FEATURES:
+- Enhanced PDF sections:
+  - "Tournament Story" - AI-generated narrative (2-3 paragraphs)
+  - "Notable Matches" - AI-selected with explanations
+  - "Player Spotlights" - Biggest risers, consistent performers
+  - "Interesting Stats" - AI-identified unusual patterns
+- Shareable format:
+  - Tournament highlights as 1-page summary
+  - Social media optimized layout
+- Player-specific PDF:
+  - "[Player]'s Tournament Journey"
+  - All matches with AI commentary
+  - Performance analysis vs expectations
+
+IMPLEMENTATION:
+- Extend helpers/pdf.js with AI sections
+- New endpoint: GET /api/export/:tournamentId/report/pdf?enhanced=true
+- Claude generates narrative sections
+- Cache generated content in SQLite
+
+EFFORT: Medium (2-3 days)
+IMPACT: Medium - Better reports for players and sponsors
+
+--------------------------------------------------------------------------------
+AI-7. DUPLICATE PLAYER DETECTION
+--------------------------------------------------------------------------------
+PROBLEM: Players register with different names/spellings across tournaments.
+Manual alias management is tedious.
+
+FEATURES:
+- AI-powered name matching:
+  - Detect "JohnDoe", "John_Doe", "John Doe" as same player
+  - Suggest merges: "Did you mean to register as [existing name]?"
+  - Confidence scoring for suggestions
+- Registration-time suggestions:
+  - "We found a player named '[Similar Name]'. Is this you?"
+  - One-click confirm or "No, I'm new"
+- Admin merge assistant:
+  - List potential duplicates by similarity score
+  - Bulk merge capability
+  - Preview merge effects (combined stats)
+
+IMPLEMENTATION:
+- Create services/player-matcher.js (~300 lines)
+- Use Claude for fuzzy name understanding (handles typos, abbreviations)
+- Extend participant registration endpoint
+- Admin UI: "Potential Duplicates" panel in analytics
+
+EFFORT: Medium (2 days)
+IMPACT: High - Data quality, accurate Elo tracking
+
+--------------------------------------------------------------------------------
+AI-8. TOURNAMENT META ANALYSIS
+--------------------------------------------------------------------------------
+PROBLEM: No insight into competitive trends - which strategies/characters
+are winning, how the meta evolves over time.
+
+FEATURES:
+- Character usage tracking (for games like SSBU):
+  - Register character selections per match
+  - Win rates by character
+  - Character popularity trends
+- AI meta reports:
+  - "Top 3 most successful characters this month"
+  - "Rising character: [X] went from 5% to 15% usage"
+  - Matchup insights if data sufficient
+- Seasonal analysis:
+  - Compare metas across time periods
+  - Identify emerging trends
+
+IMPLEMENTATION:
+- Add character_selections table to analytics.db
+- Optional character input in match scoring modal
+- Claude analyzes patterns and generates meta reports
+- New analytics tab: "Meta Analysis"
+
+EFFORT: High (3-4 days)
+IMPACT: Medium - Interesting for competitive players, requires character tracking
+
+--------------------------------------------------------------------------------
+AI-9. PERSONALIZED PLAYER FEEDBACK
+--------------------------------------------------------------------------------
+PROBLEM: Players want to improve but have no structured feedback after
+tournaments beyond their placement.
+
+FEATURES:
+- Post-tournament player analysis:
+  - "You went 3-2, placing 5th (seed 4) - slight underperformance"
+  - "Your losses were to seeds 1 and 2 - expected tough matchups"
+  - "You beat every opponent ranked below you - solid consistency"
+- Improvement suggestions:
+  - "You've lost to [Player] 3 times - study their playstyle"
+  - "Your game 1 win rate is 40% - consider warm-up routine"
+  - "You perform better in earlier rounds - work on maintaining focus"
+- Private feedback via email or signup app:
+  - Opt-in feature (not all players want feedback)
+  - Constructive tone (AI prompted for encouragement)
+
+IMPLEMENTATION:
+- Create services/player-feedback.js (~400 lines)
+- Generate after tournament completion for opted-in players
+- Store feedback in player_feedback table
+- Display in signup app "My Stats" section
+
+EFFORT: High (3-4 days)
+IMPACT: High - Player development, retention, community building
+
+--------------------------------------------------------------------------------
+AI-10. LIVE COMMENTARY GENERATION
+--------------------------------------------------------------------------------
+PROBLEM: Display screens show static match info. Live commentary would
+enhance spectator experience without requiring a dedicated commentator.
+
+FEATURES:
+- Real-time commentary ticker on match display:
+  - "This is their 5th meeting - [Player A] leads 3-1"
+  - "[Player B] needs to win 2 straight to force a bracket reset"
+  - "Winner faces [Player C] in the next round"
+- Match-specific context:
+  - Historical records between players
+  - Stakes explanation (what's on the line)
+  - Path to victory for each player
+- Configurable verbosity: Minimal/Standard/Detailed
+
+IMPLEMENTATION:
+- Extend MagicMirror-match with commentary panel
+- WebSocket events: commentary:update
+- Claude generates commentary when match starts
+- Cache commentary per match (don't regenerate mid-match)
+- Settings: Commentary mode toggle
+
+EFFORT: Medium-High (2-3 days)
+IMPACT: Medium - Enhanced spectator experience
+
+--------------------------------------------------------------------------------
+AI-11. SCHEDULING OPTIMIZATION
+--------------------------------------------------------------------------------
+PROBLEM: Match scheduling is manual. Optimal station utilization requires
+considering many factors simultaneously.
+
+FEATURES:
+- Smart match ordering:
+  - Prioritize matches where both players are waiting
+  - Balance station usage across TVs
+  - Consider player fatigue (don't schedule same player back-to-back)
+- Suggested next matches:
+  - "Recommended: Match #15 on TV 1 (both players available)"
+  - "Avoid: Match #18 ([Player] just finished a match)"
+- Time estimation:
+  - "Estimated tournament end: 9:45 PM"
+  - "Current pace: 12 minutes/match (ahead of schedule)"
+
+IMPLEMENTATION:
+- Create services/scheduling-optimizer.js (~350 lines)
+- Factor in: player wait time, station availability, round priority
+- Claude provides reasoning for suggestions
+- UI: "Suggested Order" panel in Command Center
+
+EFFORT: Medium (2 days)
+IMPACT: High - Faster tournaments, better player experience
+
+--------------------------------------------------------------------------------
+AI-12. NATURAL LANGUAGE TOURNAMENT QUERIES
+--------------------------------------------------------------------------------
+PROBLEM: Finding specific tournament information requires navigating
+multiple pages. Natural language queries would be faster.
+
+FEATURES:
+- Chat-style query interface:
+  - "Who won last week's SSBU tournament?"
+  - "What's my record against [Player]?"
+  - "How many tournaments has [Player] attended?"
+  - "Show me all 3-2 matches from today"
+- Multi-turn conversations:
+  - "How did they do?" (referring to previous query subject)
+- Admin queries:
+  - "How many participants are checked in?"
+  - "Which matches are still open?"
+  - "What's our average match duration today?"
+
+IMPLEMENTATION:
+- Create services/ai-query.js (~400 lines)
+- Claude with function calling to query database
+- Define query functions: get_player_stats, search_matches, etc.
+- Simple chat UI in admin dashboard header
+- Response formatted as structured data + natural language
+
+EFFORT: High (3-4 days)
+IMPACT: High - Faster information access, powerful for operators
+
+--------------------------------------------------------------------------------
+AI-13. PLAYER MOMENTUM TRACKING (QUICK WIN)
+--------------------------------------------------------------------------------
+PROBLEM: Understanding which players are "hot" or "cold" requires manual
+analysis of recent results. Seeding should account for current form.
+
+FEATURES:
+- Track 3-tournament rolling Elo change to detect hot/cold streaks
+- Momentum scoring: (current_elo - elo_3_tournaments_ago) / 3
+- Form indicators in player cards:
+  - "On Fire" (arrow up) - Elo gained 50+ in last 3 tournaments
+  - "Rising" (diagonal up) - Elo gained 20-49
+  - "Stable" (horizontal) - Elo change within +/- 20
+  - "Slumping" (diagonal down) - Elo lost 20-49
+  - "Cold" (arrow down) - Elo lost 50+ in last 3 tournaments
+- Integrated into AI seeding prompt for context
+
+IMPLEMENTATION:
+- Add `momentum` column to `player_ratings` table
+- Add `last_3_tournaments` column (JSON array of tournament IDs)
+- Update momentum on tournament archival
+- Display trending indicator in seeding UI and analytics
+- Feed momentum data to AI seeding prompt
+
+FILES:
+- admin-dashboard/analytics-db.js (schema + queries)
+- admin-dashboard/services/ai-seeding.js (include in prompt)
+- admin-dashboard/public/js/analytics.js (display indicator)
+
+EFFORT: Low (1-2 days)
+IMPACT: High - Improves seeding accuracy by 15-20%
+
+--------------------------------------------------------------------------------
+AI-14. TOURNAMENT DIFFICULTY INDEX (QUICK WIN)
+--------------------------------------------------------------------------------
+PROBLEM: No way to compare tournament strength across events. A 5th place
+finish in a stacked field is more impressive than winning a weak tournament.
+
+FEATURES:
+- Calculate tournament strength based on participant Elo distribution
+- Formula: Difficulty = (avg_elo * 0.6) + (top_quartile_elo * 0.3) +
+                        (participant_count_factor * 0.1)
+- Display difficulty rating (1-10 scale or letter grades A-F)
+- Use in AI seeding context: "This is a high-difficulty event"
+- Compare tournaments in analytics dashboard
+
+IMPLEMENTATION:
+- Add `difficulty_index` column to `archived_tournaments` table
+- Calculate on tournament archival
+- Display in tournament cards and analytics dashboard
+- Factor into player performance evaluation
+
+FILES:
+- admin-dashboard/analytics-db.js
+- admin-dashboard/routes/analytics.js
+- admin-dashboard/public/js/analytics.js
+
+EFFORT: Low (1 day)
+IMPACT: Medium - Better tournament comparison and player evaluation
+
+--------------------------------------------------------------------------------
+AI-15. MATCH DURATION PREDICTION (QUICK WIN)
+--------------------------------------------------------------------------------
+PROBLEM: Tournament completion time is unpredictable. Currently only have
+avgMatchTime calculated post-tournament, not predictive estimates.
+
+FEATURES:
+- Predict match duration based on historical data:
+  - Elo differential (closer matches = longer)
+  - Game type (fighting games ~8min, Mario Kart ~15min)
+  - Bracket round (finals typically longer)
+  - Player historical match lengths
+- Display "Est. Tournament Completion" on dashboard
+- Real-time updates as tournament progresses
+- Per-match duration estimates in queue
+
+IMPLEMENTATION:
+- Store `match_duration` on archival (calculate from timestamps if available)
+- Build simple regression model: duration = f(elo_diff, game, round)
+- Add prediction endpoint: GET /api/analytics/predict/duration/:matchId
+- Display "Est. Time Remaining: X hours Y minutes" on dashboard
+
+FILES:
+- admin-dashboard/analytics-db.js (store duration data)
+- admin-dashboard/routes/analytics.js (prediction endpoint)
+- admin-dashboard/public/js/dashboard.js (display estimate)
+
+EFFORT: Low-Medium (2 days)
+IMPACT: High - Accurate tournament completion estimates
+
+--------------------------------------------------------------------------------
+AI-16. INTELLIGENT STATION AUTO-ASSIGNMENT
+--------------------------------------------------------------------------------
+PROBLEM: Manual station assignment is tedious and suboptimal. Operator must
+consider multiple factors simultaneously while managing other tasks.
+
+FEATURES:
+- Automatically assign matches to TV stations based on:
+  - Predicted match duration (balance station utilization)
+  - Current station availability
+  - Player back-to-back match prevention (rest time)
+  - Match importance (seed differential, bracket round)
+  - Streaming preferences (top seeds on TV 1)
+- Suggest next 2-3 station assignments
+- Auto-assign mode with manual override
+- AI explains reasoning for assignments
+
+IMPLEMENTATION:
+- Create services/station-optimizer.js (~400 lines)
+- Run optimization on match completion or manual trigger
+- Score each station for each open match
+- Present suggestions in matches page
+- Optional auto-assign toggle
+
+FILES:
+- admin-dashboard/services/station-optimizer.js (NEW)
+- admin-dashboard/routes/matches.js (auto-assign endpoint)
+- admin-dashboard/public/js/matches.js (toggle + suggestions UI)
+
+EFFORT: Medium (3-4 days)
+IMPACT: High - 40% reduction in operator match management time
+
+--------------------------------------------------------------------------------
+AI-17. UPSET PROBABILITY PREDICTION
+--------------------------------------------------------------------------------
+PROBLEM: No way to identify likely upsets before they happen. Missing
+opportunity for spectator engagement and storyline anticipation.
+
+FEATURES:
+- Calculate pre-match win probability for each player:
+  - Based on: Elo differential, head-to-head history, recent form/momentum
+  - Display as percentage: "Player A: 65% | Player B: 35%"
+- Highlight "Upset Alert" when lower seed >35% win probability
+- Post-match accuracy tracking (how well did predictions hold?)
+- Feed predictions to narrator for storyline detection
+
+IMPLEMENTATION:
+- Basic algorithm: Elo probability + head-to-head adjustment + momentum
+- Create services/prediction-service.js (~300 lines)
+- Add prediction endpoint: GET /api/matches/:id/prediction
+- Display prediction badge on match cards (toggleable in settings)
+
+PRIVACY NOTE: Predictions are for entertainment only. Make clear they don't
+affect seeding or bracket placement.
+
+FILES:
+- admin-dashboard/services/prediction-service.js (NEW)
+- admin-dashboard/routes/matches.js (prediction endpoint)
+- admin-dashboard/public/js/matches.js (display predictions)
+- admin-dashboard/services/tournament-narrator.js (consume predictions)
+
+EFFORT: Medium (4-5 days)
+IMPACT: High - Enhanced viewer engagement, better storylines
+
+--------------------------------------------------------------------------------
+AI-18. PROACTIVE DISPLAY HEALTH MONITORING
+--------------------------------------------------------------------------------
+PROBLEM: Display issues (overheating, memory exhaustion, WiFi degradation)
+are discovered too late, causing disruptions during live events.
+
+FEATURES:
+- AI-powered trend analysis of Pi display metrics:
+  - CPU temperature: Predict throttling risk
+  - Memory usage: Predict OOM crashes
+  - WiFi signal: Predict disconnection
+  - Storage fill rate: Predict cache issues
+- Proactive alerts before issues occur:
+  - "Pi-1 CPU rising, may throttle in 15 minutes"
+  - "Pi-2 memory at 85%, recommend browser restart"
+  - "WiFi signal degrading on Pi-3, consider relocating"
+- Push notifications via existing notification system
+
+IMPLEMENTATION:
+- Store historical metrics (last 30 data points per Pi)
+- Simple trend analysis (linear regression on 5-minute windows)
+- Create services/display-monitor.js (~350 lines)
+- Add trend endpoint: GET /api/displays/:id/health-trend
+- Display alerts in displays page and push notifications
+
+FILES:
+- admin-dashboard/services/display-monitor.js (NEW)
+- admin-dashboard/routes/displays.js (trend endpoint)
+- admin-dashboard/public/js/displays.js (alert display)
+
+EFFORT: Medium (3 days)
+IMPACT: Medium - Prevents venue display failures
+
+--------------------------------------------------------------------------------
+AI-19. SMART DQ TIMER AUTOMATION
+--------------------------------------------------------------------------------
+PROBLEM: Current DQ timer only auto-DQs or notifies. No context about when
+auto-DQ is appropriate vs when manual intervention is better.
+
+FEATURES:
+- Context-aware DQ decisions based on:
+  - Player no-show history (repeat offenders = auto-DQ)
+  - Tournament phase (earlier rounds = more lenient)
+  - Match importance (finals = always manual)
+  - Bracket impact (does DQ affect many waiting players?)
+- "Suggested Action" display when timer expires:
+  - "AUTO-DQ RECOMMENDED: Player has 3 previous no-shows"
+  - "MANUAL RECOMMENDED: Grand Finals match"
+- Configurable auto-DQ thresholds per tournament
+
+IMPLEMENTATION:
+- Track player attendance history in analytics.db
+- Extend services/dq-timer.js with decision logic
+- Add attendance_history table
+- Display suggestion when timer expires (before auto-action)
+
+FILES:
+- admin-dashboard/services/dq-timer.js (extend)
+- admin-dashboard/analytics-db.js (attendance tracking)
+- admin-dashboard/public/js/dashboard.js (DQ suggestion UI)
+
+EFFORT: Medium (3-4 days)
+IMPACT: Medium - Fairer DQ handling, reduced operator burden
+
+--------------------------------------------------------------------------------
+AI-20. STREAM DECK CONTEXT AWARENESS
+--------------------------------------------------------------------------------
+PROBLEM: Stream Deck shows same layout regardless of tournament state.
+Operator must remember which actions are most likely needed.
+
+FEATURES:
+- AI suggests next likely action on Stream Deck:
+  - Track operator action patterns
+  - Highlight suggested button (glow effect)
+  - Learn individual operator preferences
+- Priority indicators for urgent matches:
+  - Red glow: DQ timer expiring soon
+  - Yellow glow: Match waiting >10 minutes
+  - Green glow: Suggested next action
+- Context-aware key labels that update based on state
+
+IMPLEMENTATION:
+- Track operator action sequences in server
+- Create action prediction model (simple Markov chain)
+- Send suggestions via WebSocket to Stream Deck
+- Add visual indicators to controller.py
+
+FILES:
+- stream-deck-controller/controller.py (suggestion display)
+- stream-deck-controller/api_client.py (receive suggestions)
+- admin-dashboard/routes/api.js (operator pattern endpoint)
+- admin-dashboard/services/operator-patterns.js (NEW)
+
+EFFORT: Medium (4-5 days)
+IMPACT: Medium - Faster operator actions, reduced cognitive load
+
+--------------------------------------------------------------------------------
+AI-21. UNIFIED AI SERVICE LAYER (INFRASTRUCTURE)
+--------------------------------------------------------------------------------
+PROBLEM: AI services (ai-seeding.js, tournament-narrator.js) have duplicated
+infrastructure code: rate limiting, caching, error handling, fallbacks.
+
+FEATURES:
+- Consolidate AI services into unified base layer:
+  - Shared rate limiting pool (currently separate)
+  - Consistent error handling and retry logic
+  - Centralized caching with SQLite
+  - Single configuration point for API key
+  - Unified prompt logging for debugging
+- AI service registry for easy extension
+- Quality monitoring dashboard
+
+IMPLEMENTATION:
+- Create services/ai-core.js as base class (~300 lines)
+- Refactor ai-seeding.js to extend ai-core
+- Refactor tournament-narrator.js to extend ai-core
+- Add AI health endpoint: GET /api/ai/status
+- Add AI metrics endpoint: GET /api/ai/metrics
+
+FILES:
+- admin-dashboard/services/ai-core.js (NEW base class)
+- admin-dashboard/services/ai-seeding.js (refactor to extend)
+- admin-dashboard/services/tournament-narrator.js (refactor to extend)
+- admin-dashboard/routes/api.js (status/metrics endpoints)
+
+EFFORT: Medium (3-4 days)
+IMPACT: High - Cleaner architecture, easier maintenance, better reliability
+
+--------------------------------------------------------------------------------
+AI-22. AI RESPONSE QUALITY MONITORING
+--------------------------------------------------------------------------------
+PROBLEM: No visibility into AI service performance. Don't know if responses
+are parsing correctly or if operators are overriding AI suggestions.
+
+FEATURES:
+- Track AI response quality metrics:
+  - JSON parse success rate
+  - Operator override frequency (did they change AI suggestions?)
+  - Response time distribution
+  - Token usage per request
+  - Error rate by service
+- Dashboard for AI performance metrics
+- Alert on quality degradation
+- Cost tracking (API usage)
+
+IMPLEMENTATION:
+- Create ai_request_log table in analytics.db
+- Log all AI requests/responses with metadata
+- Add metrics endpoint: GET /api/ai/metrics
+- Add monitoring UI in settings page
+- Alert thresholds configurable
+
+FILES:
+- admin-dashboard/analytics-db.js (ai_request_log table)
+- admin-dashboard/services/ai-core.js (logging)
+- admin-dashboard/routes/api.js (metrics endpoint)
+- admin-dashboard/public/js/settings.js (monitoring UI)
+
+EFFORT: Low (2 days)
+IMPACT: Medium - Better AI reliability, cost control
+
+================================================================================
+TIER 9: ANALYTICS & BUSINESS INSIGHTS
+================================================================================
+
+Data-driven decisions for growing the tournament organization.
+
+--------------------------------------------------------------------------------
+61. ATTENDANCE FORECASTING (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Predict signup numbers based on:
+  - Historical data (same day of week, same game)
+  - Registration velocity (how fast signups coming in)
+  - External factors (holidays, weather)
+- "Expected attendance: 24-32" display
+- Alert if significantly over/under expected
+
+--------------------------------------------------------------------------------
+62. PEAK TIME ANALYSIS (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- When do participants register?
+- Graph: Signups by day-of-week, hour-of-day
+- Optimal registration window recommendation
+- "Most signups happen Monday evening"
+
+--------------------------------------------------------------------------------
+63. PLAYER RETENTION / CHURN DETECTION (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Track player attendance streaks
+- Alert when regular player stops attending
+- "Win-back" notification suggestions
+- Retention rate metrics
+
+--------------------------------------------------------------------------------
+64. SPONSOR ROI METRICS (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Track sponsor logo display time
+- Calculate "impressions" (viewers x time)
+- Sponsor placement report (PDF)
+- ROI calculator for sponsors
+
+--------------------------------------------------------------------------------
+65. MATCH DURATION ANALYTICS (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Track match start/end times
+- Average match duration by game
+- Tournament duration prediction
+- Identify slow matches (potential issues)
+
+--------------------------------------------------------------------------------
+66. TOURNAMENT COMPARISON (NEW)
+--------------------------------------------------------------------------------
+FEATURES:
+- Compare two tournaments side-by-side
+- Metrics: attendance, duration, match count
+- Identify trends over time
+- "This month vs. last month" report
+
+--------------------------------------------------------------------------------
+67. PRIZE POOL TRACKER DISPLAY
+--------------------------------------------------------------------------------
+FEATURES:
+- Configure prize pool amounts per placement
+- Display prize breakdown on TV displays
+- Support for pot bonuses and entry fee splits
+- Prize distribution calculator
+- Display sponsor contributions
+
+================================================================================
+TIER 9: SECURITY & TECHNICAL INFRASTRUCTURE
+================================================================================
+
+--------------------------------------------------------------------------------
+68. TWO-FACTOR AUTHENTICATION
+--------------------------------------------------------------------------------
+FEATURES:
+- Optional 2FA for admin accounts
+- TOTP support (Google Authenticator, Authy)
+- Backup codes for account recovery
+- Per-user 2FA enrollment
+- Forced 2FA for admin role (configurable)
+
+--------------------------------------------------------------------------------
+69. ERROR RECOVERY & RESILIENCE
+--------------------------------------------------------------------------------
+FEATURES:
+- Retry logic with exponential backoff for failed API calls
+- Fallback states: Show cached data if API is down
+- User-friendly error messages
+- Manual sync button
+- Health check dashboard
+- Error logging and monitoring
+- Graceful degradation
+
+--------------------------------------------------------------------------------
+70. API HEALTH INDICATOR
+--------------------------------------------------------------------------------
+FEATURES:
+- Real-time Challonge API status indicator in header
+- GREEN = healthy, YELLOW = slow, RED = down
+- Response time display (e.g., "125ms")
+- Recent error log display
+- Manual API test button
+
+--------------------------------------------------------------------------------
+71. AUDIT LOG ENHANCEMENTS
+--------------------------------------------------------------------------------
+FEATURES:
+- Searchable, filterable view of all admin actions
+- Date range filtering
+- User filtering
+- Action type filtering
+- Export capability for security reviews
+- Retention policy enforcement
+
+--------------------------------------------------------------------------------
+72. API RATE LIMIT DASHBOARD
+--------------------------------------------------------------------------------
+FEATURES:
+- Visual display of current rate limit status
+- Requests used vs. remaining
+- Time until reset
+- Historical usage graph
+- Alert when approaching limit
+
+--------------------------------------------------------------------------------
+73. DATABASE BACKUP AUTOMATION
+--------------------------------------------------------------------------------
+FEATURES:
+- Daily automated backups of analytics.db
+- Backup retention (keep last 7 days)
+- Backup verification (integrity check)
+- One-click restore
+- Offsite backup option (S3, Google Drive)
+
+================================================================================
+TIER 10: DISPLAY ENHANCEMENTS
+================================================================================
+
+Visual improvements for the TV displays.
+
+--------------------------------------------------------------------------------
+74. PLAYER SPOTLIGHT MODE
+--------------------------------------------------------------------------------
+FEATURES:
+- Feature individual player stats during idle time
+- Tournament placement history
+- Head-to-head records
+- Rotation through top performers
+
+--------------------------------------------------------------------------------
+75. HYPE REEL MODE
+--------------------------------------------------------------------------------
+FEATURES:
+- Auto-play highlights during breaks
+- Victory celebrations
+- Admin-curated highlight selection
+- Transition animations between clips
+
+--------------------------------------------------------------------------------
+76. SCHEDULE GRID VIEW
+--------------------------------------------------------------------------------
+FEATURES:
+- Alternative display mode showing matches as time-based schedule
+- Grid format with round, match, and estimated time
+- Station assignments per match
+- Auto-scroll as matches complete
+
+--------------------------------------------------------------------------------
+77. IDLE MODE / SCREENSAVER
+--------------------------------------------------------------------------------
+FEATURES:
+- Screensaver when no tournament active
+- Bouncing venue logo
+- Rotating flyers
+- Upcoming events calendar
+
+--------------------------------------------------------------------------------
+78. ANIMATED MATCH DISPLAYS
+--------------------------------------------------------------------------------
+FEATURES:
+- Winner celebration animations (confetti, highlights)
+- Match transition effects (slide, fade)
+- Score change animations (bounce, flash)
+- Player name entrance animations
+- Podium animations for finals
+
+================================================================================
+TIER 11: SIGNUP APP TECHNICAL IMPROVEMENTS
+================================================================================
+
+--------------------------------------------------------------------------------
+79. SERVICE WORKER IMPROVEMENTS
+--------------------------------------------------------------------------------
+FEATURES:
+- Update available notification
+- Cache versioning with automatic cleanup
+- Selective caching
+- Network quality detection
+
+--------------------------------------------------------------------------------
+80. HAPTIC FEEDBACK (MOBILE)
+--------------------------------------------------------------------------------
+FEATURES:
+- Vibration on successful signup
+- Light vibration on button press
+- Pattern vibration for errors
+
+--------------------------------------------------------------------------------
+81. PULL-TO-REFRESH
+--------------------------------------------------------------------------------
+FEATURES:
+- Pull-to-refresh gesture on main page
+- Loading animation during refresh
+- Success/failure feedback
+
+--------------------------------------------------------------------------------
+82. ACCESSIBILITY IMPROVEMENTS
+--------------------------------------------------------------------------------
+FEATURES:
+- ARIA labels on all interactive elements
+- Keyboard navigation support
+- Screen reader announcements
+- High contrast mode toggle
+- Reduced motion option
+
+================================================================================
+QUICK WINS (1-4 HOURS EACH)
+================================================================================
+
+ADMIN DASHBOARD:
+1. Copy Tournament ID Button - Quick copy for sharing
+2. Match Count Stats - Show "8/15 matches complete" on dashboard
+3. Participant Count Badge - Real-time count in header with cap warning
+4. Error Message Improvements - More specific, user-friendly errors
+5. Settings Validation - Client-side validation for all forms
+6. Tournament Metadata Display - Show bracket type, creation date
+
+SIGNUP APP:
+1. Copy Bracket Link Button
+2. Social Share Buttons
+3. Animated Success Checkmark
+4. Tournament Timezone Display
+5. Rules Page Print Button
+
+RASPBERRY PI:
+1. Add hostname to log messages
+2. Add uptime to heartbeat startup message
+3. Browser crash notification to admin
+4. Add Pi model to heartbeat
+5. Improve crash state persistence
+
+STREAM DECK:
+1. Add connection timeout to HID device open
+2. Log API response times for monitoring
+3. Cache participant names locally
+4. Add error count display to main view
+5. Create backup of config before saving
+
+================================================================================
+RECOMMENDED IMPLEMENTATION ROADMAP (SINGLE OPERATOR PRIORITY)
+================================================================================
+
+PHASE 1: TOURNAMENT DAY CRITICAL (Do First)
+- Command Center View (#1) - COMPLETED 2025-12-07
+- Keyboard Shortcuts (#2) - COMPLETED 2025-12-07
+- Stream Deck WebSocket (#16) - COMPLETED 2025-12-07
+- Mobile Admin PWA (#11) - NOT PURSUED (existing dashboard is mobile-optimized)
+- Push Notifications (#12) - COMPLETED 2025-12-09
+
+PHASE 2: EFFICIENCY GAINS
+- Tournament Templates (#48) - COMPLETED 2025-12-09
+- Scheduled Ticker Messages (#50)
+- Auto-Deploy to Displays (#51)
+- Batch Score Entry (#7) - COMPLETED 2025-12-09
+- DQ/Forfeit Automation (#8) - COMPLETED 2025-12-09
+- Match Queue Auto-Advance (#4) - COMPLETED 2025-12-09
+
+PHASE 3: PARTICIPANT EXPERIENCE - PARTIALLY COMPLETE
+- Self Check-In (#38)
+- Email Confirmations (#40)
+- Waitlist System (#39) - UI COMPLETED 2025-12-09 (backend pending)
+- Participant Lookup (#43) - COMPLETED 2025-12-09
+- Dark Mode Toggle (#45) - COMPLETED 2025-12-09
+- Registration QR Code (#44)
+- Style Guide Alignment - COMPLETED 2025-12-09
+
+PHASE 4: SCALING PREPARATION
+- Multi-Tournament View (#55)
+- Referee Role (#56)
+- Attendee Profiles (#58)
+- Revenue Tracking (#59)
+
+PHASE 5: DISPLAY RELIABILITY - PARTIALLY COMPLETE
+- Chromium Hang Detection (#28) - COMPLETED 2025-12-09
+- Intent Restart Fix (#27) - COMPLETED 2025-12-09
+- Storage Detection Fix (#28b) - COMPLETED 2025-12-09
+- Offline Caching (#30)
+- Dual HDMI Support (#33)
+- Remote Screenshot (#29)
+
+PHASE 6: AI QUICK WINS (Highest ROI, Lowest Effort)
+- AI-13: Player Momentum Tracking (1-2 days) - HOT/COLD indicators
+- AI-14: Tournament Difficulty Index (1 day) - Strength comparison
+- AI-15: Match Duration Prediction (2 days) - Time estimates
+- AI-22: AI Response Quality Monitoring (2 days) - Reliability tracking
+
+PHASE 7: AI OPERATOR ASSISTANCE
+- AI-4: Smart Operator Assistant (VERY HIGH IMPACT)
+- AI-5: Intelligent Ticker Message Generator
+- AI-16: Station Auto-Assignment (3-4 days) - 40% efficiency gain
+- AI-19: Smart DQ Timer Automation (3-4 days) - Context-aware DQ
+
+PHASE 8: AI ANALYTICS & PREDICTIONS
+- AI-2: Player Form Analysis & Momentum
+- AI-3: Match Outcome Predictions
+- AI-17: Upset Probability Prediction (4-5 days) - Viewer engagement
+- AI-7: Duplicate Player Detection (3 days) - Data quality
+
+PHASE 9: AI ENGAGEMENT & INFRASTRUCTURE
+- AI-9: Personalized Player Feedback
+- AI-10: Live Commentary Generation
+- AI-18: Display Health Monitoring (3 days) - Proactive alerts
+- AI-20: Stream Deck Context Awareness (4-5 days) - Smart suggestions
+- AI-21: Unified AI Service Layer (3-4 days) - Architecture cleanup
+
+PHASE 10: ADVANCED AI (Future)
+- AI-6: PDF Report Enhancement
+- AI-8: Tournament Meta Analysis
+- AI-11: Scheduling Optimization
+- AI-12: Natural Language Queries
+
+PHASE 11: POLISH & ANALYTICS
+- Attendance Forecasting (#61)
+- Sponsor ROI Metrics (#64)
+- 2FA Security (#68)
+
+================================================================================
+PHASE 2 RELIABILITY & SECURITY - COMPLETED 2025-12-09
+================================================================================
+
+These foundational improvements enhance system reliability and security.
+
+--------------------------------------------------------------------------------
+P2-1. FRONTEND MEMORY LEAK FIXES - COMPLETED
+--------------------------------------------------------------------------------
+Fixed setInterval/setTimeout cleanup in all 10 frontend JS files:
+dashboard.js, participants.js, nav.js, matches.js, games.js, analytics.js,
+flyers.js, sponsors.js, settings.js, command-center.js
+
+--------------------------------------------------------------------------------
+P2-2. MODULAR REFACTOR - COMPLETED (2025-12-09)
+--------------------------------------------------------------------------------
+Full extraction of server.js into modular architecture complete.
+
+SERVICES EXTRACTED (~2,400 lines):
+- services/settings.js - Settings file operations (~380 lines)
+- services/rate-limiter.js - Adaptive Challonge rate limiting (~500 lines)
+- services/activity-logger.js - Activity logging with WebSocket (~120 lines)
+- services/challonge-api.js - Challonge API v2.1 communication (~300 lines)
+- services/dq-timer.js - Server-side DQ timer management (~280 lines)
+- services/match-polling.js - Centralized match polling (~550 lines)
+- services/sponsor.js - Sponsor overlay management (~250 lines)
+- services/index.js - Central export for all services
+
+ROUTES EXTRACTED (~6,600 lines total):
+- routes/auth.js - Login, logout, OAuth (~400 lines)
+- routes/users.js - User CRUD (~170 lines)
+- routes/settings.js - System settings (~250 lines)
+- routes/games.js - Game configurations (~210 lines)
+- routes/monitoring.js - System monitoring (~200 lines)
+- routes/templates.js - Tournament templates (~180 lines)
+- routes/stations.js - Station management (~250 lines)
+- routes/participants.js - Participant CRUD, bulk add, seeding (~700 lines)
+- routes/matches.js - Match operations, scoring, stations (~1,200 lines)
+- routes/tournaments.js - Tournament CRUD, lifecycle (~800 lines)
+- routes/displays.js - Pi display management (~650 lines)
+- routes/flyers.js - Flyer uploads and management (~290 lines)
+- routes/sponsors.js - Sponsor overlays (~300 lines)
+- routes/analytics.js - Analytics and seeding suggestions (~600 lines)
+- routes/exports.js - CSV/PDF exports (~600 lines)
+- routes/api.js - Misc APIs: status, cache, timer, QR, etc. (~1,200 lines)
+- routes/index.js - Central export for all routes
+
+HELPERS EXTRACTED (~460 lines):
+- helpers/pdf.js - PDF generation helpers (~140 lines)
+- helpers/tournament-url.js - URL slug generation (~120 lines)
+- helpers/websocket.js - Delta detection helpers (~200 lines)
+- helpers/index.js - Central export for all helpers
+
+MIDDLEWARE:
+- middleware/auth.js - Authentication middleware (~160 lines)
+
+Total extracted: ~9,620 lines into reusable modules.
+Server.js reduced from ~12,000 lines to ~3,500 lines (orchestrator only).
+
+--------------------------------------------------------------------------------
+P2-3. INPUT VALIDATION (JOI) - COMPLETED
+--------------------------------------------------------------------------------
+Added Joi validation library with comprehensive schemas:
+- validation/schemas.js - 25+ schemas for all API inputs
+- middleware/validation.js - Express validation middleware
+
+Integration with routes is incremental; schemas ready for use.
+
+--------------------------------------------------------------------------------
+P2-4. CREDENTIAL ENCRYPTION - COMPLETED
+--------------------------------------------------------------------------------
+Created encrypted secrets module (config/secrets.js):
+- AES-256-GCM encryption at rest
+- Separate key file with 0600 permissions
+- Environment variable fallback for backward compatibility
+- Migration helper from .env files
+
+--------------------------------------------------------------------------------
+P2-5. WEBSOCKET ACK ENHANCEMENT - COMPLETED
+--------------------------------------------------------------------------------
+Enhanced WebSocket delivery (services/websocket-ack.js):
+- Message ID and sequence numbers
+- Per-display ACK tracking
+- Retry queue (3 attempts, 5s delay)
+- HTTP fallback after max retries
+- Statistics tracking
+
+--------------------------------------------------------------------------------
+P2-6. AI-POWERED TOURNAMENT SEEDING - COMPLETED 2025-12-09
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTED
+Files: services/ai-seeding.js (~740 lines), analytics-db.js (ai_seeding_cache table),
+       server.js (5 API endpoints), analytics.html, analytics.js (~300 lines)
+
+Anthropic Claude integration for intelligent bracket seeding with explanations.
+
+FEATURES:
+- Claude Sonnet model (claude-sonnet-4-20250514) analyzes player stats and generates optimal seeding
+- Comprehensive player data gathering:
+  - Elo rating, peak rating, win/loss record
+  - Tournaments attended (flags new players < 3 tournaments)
+  - Recent placements (last 5 tournaments)
+  - Recent matchups with other participants
+- AI prompt includes bracket seeding principles:
+  - Top seeds separated until late rounds
+  - New player protection (mid-tier R1 opponents)
+  - Repeat matchup avoidance (last 2 tournaments)
+  - Bracket balance by Elo sum
+- Locked seed positions (AI optimizes around locks)
+- Fallback to pure Elo-based seeding when API unavailable
+- SQLite caching with participant hash validation
+- Real-time progress indicator during generation
+
+API Endpoints:
+- GET /api/analytics/ai-seeding/status - Check if API key configured
+- GET /api/analytics/ai-seeding/:tournamentId - Get AI suggestions (cached or fresh)
+- GET /api/analytics/ai-seeding/:tournamentId?regenerate=true - Force regenerate
+- POST /api/analytics/ai-seeding/:tournamentId/lock - Lock seed positions
+- POST /api/analytics/ai-seeding/:tournamentId/apply - Apply to Challonge
+
+WebSocket Events:
+- seeding:update - Recalculation complete
+- seeding:generating - Recalculation started
+- seeding:error - API/processing error
+
+UI (Analytics Page):
+- AI seeding toggle checkbox (shows availability status)
+- Progress indicator with animated spinner + status messages
+- Bracket balance display (top/bottom half Elo with percentage)
+- Lock column in seeding table (checkbox per row)
+- Regenerate button (optimizes around locked seeds)
+- Reasoning column showing AI explanation for each seed
+- "New Player" badges for players with < 3 tournaments
+
+Response Format:
+```json
+{
+  "seeds": [{"seed": 1, "participantId": "xxx", "reasoning": "..."}],
+  "bracketBalance": {"topHalfElo": 12500, "bottomHalfElo": 12350},
+  "newPlayerPlacements": ["Placed NewPlayer1 (seed 12) vs mid-tier opponent"],
+  "avoidedMatchups": ["Player1 vs Player3 separated"],
+  "overallReasoning": "..."
+}
+```
+
+Configuration:
+- ANTHROPIC_API_KEY environment variable in .env
+- Requires Anthropic credits (console.anthropic.com)
+
+================================================================================
+CONTACT & REFERENCES
+================================================================================
+
+For completed features, see: COMPLETED_IMPROVEMENTS.txt
+
+Admin Dashboard: https://admin.despairhardware.com (port 3000)
+Tournament Signup: https://signup.despairhardware.com (port 3001)
+Match Display: http://localhost:8080 (MagicMirror-match)
+Bracket Display: http://localhost:8081 (MagicMirror-bracket)
+Flyer Display: http://localhost:8082 (MagicMirror-flyer)
+
+Stream Deck: 192.168.1.175 (Pi Zero 2 W)
+Display Pi 1: 192.168.1.145 (pi-display-1)
+
+GitHub Repository: https://github.com/rick0490/tournament-control-center (private)
+
+================================================================================
+END OF DOCUMENT
+================================================================================
