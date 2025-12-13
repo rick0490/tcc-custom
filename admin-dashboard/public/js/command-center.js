@@ -24,8 +24,7 @@ let currentStations = [];
 let systemStatus = {
 	matchModule: { online: false },
 	bracketModule: { online: false },
-	flyerModule: { online: false },
-	rateLimit: {}
+	flyerModule: { online: false }
 };
 let selectedMatchIndex = -1;
 let selectedMatch = null;
@@ -46,6 +45,7 @@ const POLL_INTERVAL = 15000; // 15 seconds fallback
 // =============================================================================
 
 document.addEventListener('DOMContentLoaded', async () => {
+	FrontendDebug.log('CommandCenter', 'Initializing Command Center...');
 	// Navigation is initialized in HTML
 	initWebSocket();
 	initKeyboardShortcuts();
@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 	// Start system status polling (always needed)
 	systemStatusInterval = setInterval(refreshSystemStatus, 30000);
+	FrontendDebug.log('CommandCenter', 'Initialization complete');
 });
 
 /**
@@ -91,11 +92,9 @@ async function loadInitialData() {
 			showNoTournamentState();
 		}
 
-		// Load rate limit status
-		await refreshRateLimitStatus();
 		renderSystemStatus();
 	} catch (error) {
-		console.error('Failed to load initial data:', error);
+		FrontendDebug.error('CommandCenter', 'Failed to load initial data', error);
 		showAlert('Failed to load tournament data', 'error');
 		showNoTournamentState();
 	}
@@ -116,34 +115,29 @@ async function loadTournamentData() {
 		if (matchesRes.ok) {
 			const matchesData = await matchesRes.json();
 			if (matchesData.success) {
-				// Map to consistent format - API uses camelCase, WebSocket uses snake_case
+				// Map to consistent internal format (API uses camelCase)
 				currentMatches = (matchesData.matches || []).map(m => {
-					// Handle both camelCase (API) and snake_case (WebSocket) field names
-					const p1Id = m.player1Id ?? m.player1_id;
-					const p2Id = m.player2Id ?? m.player2_id;
-					const p1Name = m.player1Name ?? m.player1_name ?? 'TBD';
-					const p2Name = m.player2Name ?? m.player2_name ?? 'TBD';
-					const underwayAt = m.underwayAt ?? m.underway_at;
-					const stationId = m.stationId ?? m.station_id;
-					const suggestedPlayOrder = m.suggestedPlayOrder ?? m.suggested_play_order;
-					const scores = m.scores_csv ?? m.scores ?? '';
+					const scores = m.scoresCsv || m.scores || '';
 
 					return {
 						id: m.id,
 						state: m.state,
 						round: m.round,
 						roundLabel: m.roundLabel || m.identifier || `R${m.round}`,
-						player1: { id: p1Id, name: p1Name },
-						player2: { id: p2Id, name: p2Name },
+						player1: { id: m.player1Id, name: m.player1Name || 'TBD' },
+						player2: { id: m.player2Id, name: m.player2Name || 'TBD' },
 						player1Score: scores?.split('-')?.[0] ?? null,
 						player2Score: scores?.split('-')?.[1] ?? null,
-						underwayAt: underwayAt,
-						stationId: stationId,
-						suggestedPlayOrder: suggestedPlayOrder
+						underwayAt: m.underwayAt,
+						stationId: m.stationId,
+						stationName: m.stationName,
+						suggestedPlayOrder: m.suggestedPlayOrder
 					};
 				});
-				// Get tournament name if available
-				if (matchesData.tournament?.name) {
+				// Get tournament name if available (API returns it in metadata)
+				if (matchesData.metadata?.tournamentName) {
+					currentTournament.name = matchesData.metadata.tournamentName;
+				} else if (matchesData.tournament?.name) {
 					currentTournament.name = matchesData.tournament.name;
 				}
 			}
@@ -161,7 +155,7 @@ async function loadTournamentData() {
 		updateTournamentIndicator();
 		updateLastUpdated();
 	} catch (error) {
-		console.error('Failed to load tournament data:', error);
+		FrontendDebug.error('CommandCenter', 'Failed to load tournament data', error);
 	}
 }
 
@@ -174,7 +168,7 @@ async function loadTournamentData() {
  */
 function initWebSocket() {
 	if (typeof io === 'undefined') {
-		console.warn('Socket.IO not loaded, using polling fallback');
+		FrontendDebug.warn('CommandCenter', 'Socket.IO not loaded, using polling fallback');
 		startPollingFallback();
 		return;
 	}
@@ -218,26 +212,70 @@ function initWebSocket() {
 			updateTournamentIndicator();
 		}
 
-		if (data.matches && currentTournament) {
-			// Map WebSocket format to our format
-			currentMatches = data.matches.map(m => {
-				return {
-					id: m.id,
-					state: m.state,
-					round: m.round,
-					roundLabel: m.roundLabel || `R${m.round}`,
-					player1: { id: m.player1_id, name: m.player1_name || 'TBD' },
-					player2: { id: m.player2_id, name: m.player2_name || 'TBD' },
-					player1Score: m.scores?.split('-')?.[0] ?? null,
-					player2Score: m.scores?.split('-')?.[1] ?? null,
-					underwayAt: m.underway_at,
-					stationId: m.station_id,
-					suggestedPlayOrder: m.suggested_play_order
-				};
-			});
+		// Handle single-match updates (from underway, score, winner actions)
+		// Note: transformMatch() uses camelCase (player1Id, underwayAt, stationId)
+		if (data.match && currentMatches.length > 0) {
+			const m = data.match;
+			const matchIndex = currentMatches.findIndex(match => match.id === m.id);
+
+			const updatedMatch = {
+				id: m.id,
+				state: m.state,
+				round: m.round,
+				roundLabel: m.identifier || `R${m.round}`,
+				player1: { id: m.player1Id, name: m.player1Name || 'TBD' },
+				player2: { id: m.player2Id, name: m.player2Name || 'TBD' },
+				player1Score: m.player1Score ?? null,
+				player2Score: m.player2Score ?? null,
+				underwayAt: m.underwayAt,
+				stationId: m.stationId,
+				stationName: m.stationName,
+				suggestedPlayOrder: m.suggestedPlayOrder
+			};
+
+			if (matchIndex >= 0) {
+				currentMatches[matchIndex] = updatedMatch;
+			} else {
+				// New match (e.g., from bracket progression)
+				currentMatches.push(updatedMatch);
+			}
+
 			lastDataUpdate = new Date();
 			renderCurrentMatches();
 			renderMatchQueue();
+			renderSystemStatus();  // Update progress bar with completed count
+			updateMatchCounts();
+			updateLastUpdated();
+			updateMatchHistoryBadge();
+
+			// Handle match completion for single-match updates
+			if (data.action === 'winner' || data.action === 'completed') {
+				handleMatchCompletion(data);
+			}
+			return;
+		}
+
+		if (data.matches && currentTournament) {
+			// Map WebSocket format to our format (full array update)
+			// Backend consistently uses camelCase for all WebSocket data
+			currentMatches = data.matches.map(m => ({
+				id: m.id,
+				state: m.state,
+				round: m.round,
+				roundLabel: m.identifier || `R${m.round}`,
+				player1: { id: m.player1Id, name: m.player1Name || 'TBD' },
+				player2: { id: m.player2Id, name: m.player2Name || 'TBD' },
+				player1Score: m.player1Score ?? null,
+				player2Score: m.player2Score ?? null,
+				underwayAt: m.underwayAt,
+				stationId: m.stationId,
+				stationName: m.stationName,
+				suggestedPlayOrder: m.suggestedPlayOrder
+			}));
+			lastDataUpdate = new Date();
+			renderCurrentMatches();
+			renderMatchQueue();
+			renderSystemStatus();  // Update progress bar with completed count
 			updateMatchCounts();
 			updateLastUpdated();
 			updateMatchHistoryBadge();
@@ -447,7 +485,7 @@ function handleKeyboardShortcut(e) {
 		// S: Start selected match
 		case 's':
 			e.preventDefault();
-			if (selectedMatch && selectedMatch.state === 'open' && !selectedMatch.underwayAt) {
+			if (selectedMatch && selectedMatch.state === 'open') {
 				startMatch(selectedMatch.id);
 			}
 			break;
@@ -511,11 +549,11 @@ function handleKeyboardShortcut(e) {
  */
 function getSelectableMatches() {
 	const underwayMatches = currentMatches.filter(m =>
-		m.state === 'open' && m.underwayAt
+		m.state === 'underway'
 	).sort((a, b) => (a.suggestedPlayOrder || 0) - (b.suggestedPlayOrder || 0));
 
 	const openMatches = currentMatches.filter(m =>
-		m.state === 'open' && !m.underwayAt
+		m.state === 'open'
 	).sort((a, b) => (a.suggestedPlayOrder || 0) - (b.suggestedPlayOrder || 0));
 
 	return [...underwayMatches, ...openMatches];
@@ -578,7 +616,7 @@ function selectMatchById(matchId) {
 }
 
 /**
- * Quick win - declare winner with 2-0 score
+ * Quick win - declare winner (no score tracking)
  */
 async function quickWin(playerNum) {
 	if (!selectedMatch || !currentTournament) return;
@@ -598,10 +636,7 @@ async function quickWin(playerNum) {
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					winnerId,
-					scores: playerNum === 1 ? '2-0' : '0-2'
-				})
+				body: JSON.stringify({ winnerId })
 			}
 		);
 
@@ -610,13 +645,15 @@ async function quickWin(playerNum) {
 			const winnerName = playerNum === 1 ? selectedMatch.player1?.name : selectedMatch.player2?.name;
 			showAlert(`Winner: ${winnerName}`, 'success', 2000);
 			deselectMatch();
-			// WebSocket will update, but also refresh
-			await loadTournamentData();
+			// Only fetch if WebSocket is disconnected (otherwise WS pushes update)
+			if (!isConnected) {
+				await loadTournamentData();
+			}
 		} else {
 			showAlert(data.error || 'Failed to declare winner', 'error');
 		}
 	} catch (error) {
-		console.error('Quick win error:', error);
+		FrontendDebug.error('CommandCenter', 'Quick win error', error);
 		showAlert('Failed to declare winner', 'error');
 	}
 }
@@ -636,12 +673,15 @@ async function startMatch(matchId) {
 		const data = await response.json();
 		if (data.success) {
 			showAlert('Match started', 'success', 2000);
-			await loadTournamentData();
+			// Only fetch if WebSocket is disconnected (otherwise WS pushes update)
+			if (!isConnected) {
+				await loadTournamentData();
+			}
 		} else {
 			showAlert(data.error || 'Failed to start match', 'error');
 		}
 	} catch (error) {
-		console.error('Start match error:', error);
+		FrontendDebug.error('CommandCenter', 'Start match error', error);
 		showAlert('Failed to start match', 'error');
 	}
 }
@@ -670,7 +710,7 @@ function renderCurrentMatches() {
 	if (!container) return;
 
 	const underwayMatches = currentMatches.filter(m =>
-		m.state === 'open' && m.underwayAt
+		m.state === 'underway'
 	).sort((a, b) => (a.suggestedPlayOrder || 0) - (b.suggestedPlayOrder || 0));
 
 	if (underwayMatches.length === 0) {
@@ -699,7 +739,7 @@ function renderMatchQueue() {
 	if (!container) return;
 
 	const openMatches = currentMatches.filter(m =>
-		m.state === 'open' && !m.underwayAt
+		m.state === 'open'
 	).sort((a, b) => (a.suggestedPlayOrder || 0) - (b.suggestedPlayOrder || 0))
 	.slice(0, 10); // Show next 10
 
@@ -724,7 +764,8 @@ function renderMatchQueue() {
  * Render a match card
  */
 function renderMatchCard(match, index, isUnderway) {
-	const station = currentStations.find(s => s.id === match.stationId);
+	// Get station name from match data or lookup from stations list
+	const stationName = match.stationName || currentStations.find(s => s.id === match.stationId)?.name;
 	const elapsed = match.underwayAt ? formatElapsedTime(match.underwayAt) : '';
 	const isSelected = selectedMatch?.id === match.id;
 	const keyHint = index >= 0 && index < 5 ? `<span class="cc-key-hint">${index + 1}</span>` : '';
@@ -735,13 +776,18 @@ function renderMatchCard(match, index, isUnderway) {
 	const p1Score = match.player1Score ?? '-';
 	const p2Score = match.player2Score ?? '-';
 
+	// TV badge for underway matches with station assignment
+	const tvBadge = isUnderway && stationName
+		? `<span class="cc-tv-badge">${escapeHtml(stationName)}</span>`
+		: '';
+
 	return `
 		<div class="cc-match-card ${isSelected ? 'selected' : ''} ${isUnderway ? 'underway' : ''}"
 			 data-match-id="${match.id}"
 			 onclick="selectMatchById('${match.id}')">
 			<div class="cc-match-header">
 				<span class="cc-match-round">${match.roundLabel || 'R' + match.round}</span>
-				${station ? `<span class="cc-match-station">${escapeHtml(station.name || station.id)}</span>` : ''}
+				${tvBadge}
 				${elapsed ? `<span class="cc-match-elapsed">${elapsed}</span>` : ''}
 				${keyHint}
 			</div>
@@ -776,7 +822,6 @@ function renderSystemStatus() {
 	const container = document.getElementById('systemStatusContainer');
 	if (!container) return;
 
-	const rateLimit = systemStatus.rateLimit || {};
 	const completedCount = getCompletedCount();
 	const totalCount = currentMatches.length;
 	const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
@@ -798,19 +843,6 @@ function renderSystemStatus() {
 					<div class="cc-status-item">
 						<span class="status-indicator ${systemStatus.flyerModule.online ? 'online' : 'offline'}"></span>
 						<span>Flyer</span>
-					</div>
-				</div>
-			</div>
-
-			<!-- API Status -->
-			<div class="cc-status-section">
-				<h4 class="cc-status-label">Challonge API</h4>
-				<div class="cc-status-items">
-					<div class="cc-status-item">
-						<span class="cc-status-mode cc-mode-${(rateLimit.currentMode || 'idle').toLowerCase()}">${rateLimit.currentMode || 'IDLE'}</span>
-					</div>
-					<div class="cc-status-item">
-						<span class="text-gray-400 text-xs">${rateLimit.effectiveRate || 0}/min</span>
 					</div>
 				</div>
 			</div>
@@ -1015,7 +1047,7 @@ function copyTournamentId(event) {
 	navigator.clipboard.writeText(tournamentId).then(() => {
 		showAlert('Tournament ID copied!', 'success', 2000);
 	}).catch(err => {
-		console.error('Failed to copy:', err);
+		FrontendDebug.error('CommandCenter', 'Failed to copy ID', err);
 		showAlert('Failed to copy ID', 'error');
 	});
 }
@@ -1024,8 +1056,8 @@ function copyTournamentId(event) {
  * Update match count badges
  */
 function updateMatchCounts() {
-	const underwayCount = currentMatches.filter(m => m.state === 'open' && m.underwayAt).length;
-	const openCount = currentMatches.filter(m => m.state === 'open' && !m.underwayAt).length;
+	const underwayCount = currentMatches.filter(m => m.state === 'underway').length;
+	const openCount = currentMatches.filter(m => m.state === 'open').length;
 
 	const currentEl = document.getElementById('currentMatchCount');
 	const queueEl = document.getElementById('queueMatchCount');
@@ -1079,7 +1111,6 @@ async function refreshAll() {
 	try {
 		await loadTournamentData();
 		await refreshSystemStatus();
-		await refreshRateLimitStatus();
 		renderSystemStatus();
 	} finally {
 		// Reset loading state
@@ -1110,26 +1141,7 @@ async function refreshSystemStatus() {
 			};
 		}
 	} catch (error) {
-		console.error('Failed to refresh system status:', error);
-	}
-}
-
-/**
- * Refresh rate limit status
- */
-async function refreshRateLimitStatus() {
-	try {
-		const response = await fetch('/api/rate-limit/status');
-		const data = await response.json();
-
-		if (data.success) {
-			systemStatus.rateLimit = {
-				currentMode: data.currentMode,
-				effectiveRate: data.effectiveRate
-			};
-		}
-	} catch (error) {
-		console.error('Failed to refresh rate limit status:', error);
+		FrontendDebug.error('CommandCenter', 'Failed to refresh system status', error);
 	}
 }
 
@@ -1169,15 +1181,15 @@ function openScoreModal(match) {
 		<div class="space-y-6">
 			<!-- Quick Winners -->
 			<div class="grid grid-cols-2 gap-4">
-				<button onclick="declareWinnerFromModal(1, '2-0')"
+				<button onclick="declareWinnerFromModal(1)"
 						class="p-4 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-medium transition">
 					<div class="text-lg truncate">${escapeHtml(p1Name)}</div>
-					<div class="text-sm opacity-75">Wins 2-0</div>
+					<div class="text-sm opacity-75">Winner</div>
 				</button>
-				<button onclick="declareWinnerFromModal(2, '0-2')"
+				<button onclick="declareWinnerFromModal(2)"
 						class="p-4 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-medium transition">
 					<div class="text-lg truncate">${escapeHtml(p2Name)}</div>
-					<div class="text-sm opacity-75">Wins 0-2</div>
+					<div class="text-sm opacity-75">Winner</div>
 				</button>
 			</div>
 
@@ -1238,32 +1250,39 @@ function adjustModalScore(player, delta) {
 	input.value = newValue;
 }
 
-async function declareWinnerFromModal(playerNum, scores) {
+async function declareWinnerFromModal(playerNum) {
 	if (!selectedMatch || !currentTournament) return;
 
 	const winnerId = playerNum === 1 ? selectedMatch.player1?.id : selectedMatch.player2?.id;
+	const matchId = selectedMatch.id;
+	const tournamentId = currentTournament.id;
 
 	if (!winnerId) {
 		showAlert('Cannot determine winner - player ID missing', 'error');
 		return;
 	}
 
+	// Close modal immediately for responsive UX
+	closeScoreModal();
+	deselectMatch();
+
 	try {
 		const response = await csrfFetch(
-			`/api/matches/${currentTournament.id}/${selectedMatch.id}/winner`,
+			`/api/matches/${tournamentId}/${matchId}/winner`,
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ winnerId, scores })
+				body: JSON.stringify({ winnerId })
 			}
 		);
 
 		const data = await response.json();
 		if (data.success) {
 			showAlert('Winner declared', 'success', 2000);
-			closeScoreModal();
-			deselectMatch();
-			await loadTournamentData();
+			// Only fetch if WebSocket is disconnected (otherwise WS pushes update)
+			if (!isConnected) {
+				await loadTournamentData();
+			}
 		} else {
 			showAlert(data.error || 'Failed to declare winner', 'error');
 		}
@@ -1285,15 +1304,21 @@ async function submitCustomScore() {
 
 	const winnerId = score1 > score2 ? selectedMatch.player1?.id : selectedMatch.player2?.id;
 	const scores = `${score1}-${score2}`;
+	const matchId = selectedMatch.id;
+	const tournamentId = currentTournament.id;
 
 	if (!winnerId) {
 		showAlert('Cannot determine winner - player ID missing', 'error');
 		return;
 	}
 
+	// Close modal immediately for responsive UX
+	closeScoreModal();
+	deselectMatch();
+
 	try {
 		const response = await csrfFetch(
-			`/api/matches/${currentTournament.id}/${selectedMatch.id}/winner`,
+			`/api/matches/${tournamentId}/${matchId}/winner`,
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -1304,9 +1329,10 @@ async function submitCustomScore() {
 		const data = await response.json();
 		if (data.success) {
 			showAlert('Score submitted', 'success', 2000);
-			closeScoreModal();
-			deselectMatch();
-			await loadTournamentData();
+			// Only fetch if WebSocket is disconnected (otherwise WS pushes update)
+			if (!isConnected) {
+				await loadTournamentData();
+			}
 		} else {
 			showAlert(data.error || 'Failed to submit score', 'error');
 		}
@@ -1320,15 +1346,21 @@ async function forfeitFromModal(loserNum) {
 
 	const winnerId = loserNum === 1 ? selectedMatch.player2?.id : selectedMatch.player1?.id;
 	const loserId = loserNum === 1 ? selectedMatch.player1?.id : selectedMatch.player2?.id;
+	const matchId = selectedMatch.id;
+	const tournamentId = currentTournament.id;
 
 	if (!winnerId || !loserId) {
 		showAlert('Cannot determine players - IDs missing', 'error');
 		return;
 	}
 
+	// Close modal immediately for responsive UX
+	closeScoreModal();
+	deselectMatch();
+
 	try {
 		const response = await csrfFetch(
-			`/api/matches/${currentTournament.id}/${selectedMatch.id}/dq`,
+			`/api/matches/${tournamentId}/${matchId}/dq`,
 			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -1339,9 +1371,10 @@ async function forfeitFromModal(loserNum) {
 		const data = await response.json();
 		if (data.success) {
 			showAlert('Player DQ\'d', 'success', 2000);
-			closeScoreModal();
-			deselectMatch();
-			await loadTournamentData();
+			// Only fetch if WebSocket is disconnected (otherwise WS pushes update)
+			if (!isConnected) {
+				await loadTournamentData();
+			}
 		} else {
 			showAlert(data.error || 'Failed to DQ player', 'error');
 		}
@@ -1416,7 +1449,7 @@ function populateDQMatchDropdown() {
 
 	// Get underway matches
 	const underwayMatches = currentMatches.filter(m =>
-		m.state === 'open' && m.underwayAt
+		m.state === 'underway'
 	);
 
 	select.innerHTML = '<option value="">Select match...</option>' +
@@ -1530,7 +1563,7 @@ async function loadActiveTimers() {
 			section.classList.add('hidden');
 		}
 	} catch (error) {
-		console.error('Failed to load active timers:', error);
+		FrontendDebug.error('CommandCenter', 'Failed to load active timers', error);
 	}
 }
 
@@ -1621,7 +1654,7 @@ async function hideQR() {
 // =============================================================================
 
 /**
- * Finalize the current tournament on Challonge
+ * Finalize the current tournament
  */
 async function finalizeTournament() {
 	if (!currentTournament?.id) {
@@ -1630,7 +1663,7 @@ async function finalizeTournament() {
 	}
 
 	const tournamentName = currentTournament.name || currentTournament.id;
-	if (!confirm(`Finalize tournament "${tournamentName}"?\n\nThis will mark it as complete on Challonge.`)) {
+	if (!confirm(`Finalize tournament "${tournamentName}"?\n\nThis will mark it as complete.`)) {
 		return;
 	}
 
@@ -1656,7 +1689,7 @@ async function finalizeTournament() {
 			showAlert(`Failed to finalize: ${data.error}`, 'error');
 		}
 	} catch (error) {
-		console.error('Finalize tournament error:', error);
+		FrontendDebug.error('CommandCenter', 'Finalize tournament error', error);
 		showAlert('Failed to finalize tournament', 'error');
 	} finally {
 		if (btn) {
@@ -1831,7 +1864,7 @@ async function activateEmergencyMode() {
 			showAlert(data.message || 'Failed to activate emergency mode', 'error');
 		}
 	} catch (error) {
-		console.error('Emergency mode activation failed:', error);
+		FrontendDebug.error('CommandCenter', 'Emergency mode activation failed', error);
 		showAlert('Failed to activate emergency mode', 'error');
 	}
 }
@@ -1863,7 +1896,7 @@ async function deactivateEmergencyMode() {
 			showAlert(data.message || 'Failed to deactivate emergency mode', 'error');
 		}
 	} catch (error) {
-		console.error('Emergency mode deactivation failed:', error);
+		FrontendDebug.error('CommandCenter', 'Emergency mode deactivation failed', error);
 		showAlert('Failed to deactivate emergency mode', 'error');
 	}
 }
@@ -1921,7 +1954,7 @@ async function loadEmergencyStatus() {
 			}
 		}
 	} catch (error) {
-		console.error('Failed to load emergency status:', error);
+		FrontendDebug.error('CommandCenter', 'Failed to load emergency status', error);
 	}
 }
 
@@ -2074,7 +2107,7 @@ async function undoLastMatch() {
 			showAlert(data.message || 'Failed to undo match', 'error');
 		}
 	} catch (error) {
-		console.error('Undo match failed:', error);
+		FrontendDebug.error('CommandCenter', 'Undo match failed', error);
 		showAlert('Failed to undo match', 'error');
 	}
 }
