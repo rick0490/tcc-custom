@@ -3,7 +3,7 @@ TOURNAMENT CONTROL CENTER - FUTURE IMPROVEMENTS & FEATURE ROADMAP
 ================================================================================
 
 Generated: 2025-11-23
-Updated: 2025-12-10 (Phase C: Comprehensive AI Feature Expansion - AI-13 through AI-21)
+Updated: 2025-12-11 (Added verbose debugging infrastructure - see COMPLETED_IMPROVEMENTS.txt)
 System: Six-service tournament control platform with admin dashboard,
         signup PWA, three MagicMirror displays, and Stream Deck controller
 
@@ -1174,14 +1174,31 @@ IMPLEMENTATION:
 - Variable substitution engine
 
 --------------------------------------------------------------------------------
-51. AUTO-DEPLOY TO DISPLAYS
+51. AUTO-DEPLOY TO DISPLAYS - COMPLETED 2025-12-13
 --------------------------------------------------------------------------------
 FEATURES:
-- When tournament created, auto-configure all displays
-- Match display: Tournament ID set automatically
-- Bracket display: Bracket URL set automatically
-- Flyer display: Game-matched flyer set automatically
+- When tournament started, auto-configure all displays
+- Match display: Tournament ID set automatically (via deploy)
+- Bracket display: Bracket URL set automatically (via deploy)
+- Flyer display: Game-matched flyer set automatically (on start)
 - "One-click setup" for tournament day
+
+IMPLEMENTATION (2025-12-13):
+- Added findMatchingFlyer() helper function in routes/tournaments.js
+  - Searches user's flyer directory for files matching game name
+  - Case-insensitive partial matching with game abbreviation support
+  - Supports SSBU, Melee, MKW, MK8DX, SF6, Tekken 8, GGST, MK1, GBVSR
+  - Falls back to first-letter abbreviation (e.g., "Super Smash Bros" -> "ssb")
+- Modified POST /:tournamentId/start endpoint in routes/tournaments.js:
+  - After tournament starts successfully, calls findMatchingFlyer(game_name, user_id)
+  - If match found, emits 'flyer:activated' WebSocket event to user's displays
+  - Returns autoDeployedFlyer in response for frontend awareness
+- Triggers on "Start Tournament" button click
+- Flyer displays immediately update via WebSocket
+
+FILES MODIFIED:
+- admin-dashboard/routes/tournaments.js (findMatchingFlyer function + start endpoint)
+- FUTURE_IMPROVEMENTS.txt (documentation)
 
 --------------------------------------------------------------------------------
 52. COPY/CLONE TOURNAMENT SETTINGS
@@ -2261,7 +2278,7 @@ PHASE 1: TOURNAMENT DAY CRITICAL (Do First)
 PHASE 2: EFFICIENCY GAINS
 - Tournament Templates (#48) - COMPLETED 2025-12-09
 - Scheduled Ticker Messages (#50)
-- Auto-Deploy to Displays (#51)
+- Auto-Deploy to Displays (#51) - COMPLETED 2025-12-13
 - Batch Score Entry (#7) - COMPLETED 2025-12-09
 - DQ/Forfeit Automation (#8) - COMPLETED 2025-12-09
 - Match Queue Auto-Advance (#4) - COMPLETED 2025-12-09
@@ -2490,6 +2507,582 @@ Stream Deck: 192.168.1.175 (Pi Zero 2 W)
 Display Pi 1: 192.168.1.145 (pi-display-1)
 
 GitHub Repository: https://github.com/rick0490/tournament-control-center (private)
+
+================================================================================
+TIER 12: NEW IMPROVEMENT SUGGESTIONS (2025-12-13)
+================================================================================
+
+These 30 suggestions were generated from comprehensive codebase analysis,
+integrating modern tools, visual/UI updates, and quality-of-life improvements.
+
+================================================================================
+CATEGORY A: NEW TOOLS & INTEGRATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+NEW-1. DISCORD BOT INTEGRATION
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: Medium (3-4 days)
+
+FEATURES:
+- Automated match announcements to Discord channel
+- Player @mentions when matches are called
+- Results posting with bracket graphics
+- Commands: !bracket, !standings, !nextmatch @player
+- Uses discord.js library
+
+INTEGRATION POINTS:
+- Tournament lifecycle events (start, complete)
+- Match polling (match:complete events)
+- Ticker messages (cross-post to Discord)
+
+FILES TO CREATE:
+- admin-dashboard/services/discord-bot.js
+- admin-dashboard/routes/discord.js
+
+--------------------------------------------------------------------------------
+NEW-2. TWITCH/YOUTUBE STREAM INTEGRATION
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Display "LIVE ON TWITCH" badge when stream active
+- Stream viewer count on admin dashboard
+- Auto-switch bracket display to show stream during finals
+- Stream URL in ticker rotation
+- Uses Twitch Helix API / YouTube Data API
+
+CONFIGURATION:
+- Twitch Client ID and OAuth token
+- YouTube API key
+- Stream channel name/ID
+
+--------------------------------------------------------------------------------
+NEW-3. START.GG SYNC BRIDGE
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: High (5-6 days)
+
+FEATURES:
+- Import tournaments from start.gg
+- Sync participants bidirectionally
+- Export results to external platforms
+- Unified tournament presence across platforms
+- OAuth integration with start.gg
+
+NOTE: Extends beyond current local-only model for broader reach.
+Requires start.gg API access (developer account).
+
+--------------------------------------------------------------------------------
+NEW-4. STRIPE PAYMENT INTEGRATION
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: Medium (3-4 days)
+
+FEATURES:
+- Entry fee collection via signup PWA
+- Automatic payment tracking per participant
+- Refund handling for no-shows
+- Revenue reporting integration
+- Stripe Elements for secure card entry
+
+MONETIZATION TIE-IN: Direct revenue capture (3-5% transaction fee)
+
+FILES TO CREATE:
+- admin-dashboard/services/stripe-payments.js
+- admin-dashboard/routes/payments.js
+- tournament-signup/public/js/payment.js
+
+ENVIRONMENT VARIABLES:
+- STRIPE_SECRET_KEY
+- STRIPE_PUBLISHABLE_KEY
+- STRIPE_WEBHOOK_SECRET
+
+--------------------------------------------------------------------------------
+NEW-5. EMAIL SERVICE INTEGRATION (SENDGRID/RESEND)
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1-2 days)
+
+FEATURES:
+- Tournament confirmation emails
+- 24-hour reminder emails
+- Results & Elo update emails
+- Check-in deadline reminders
+- HTML email templates with branding
+
+REPLACES: Current nodemailer placeholder (Item #40)
+
+FILES TO CREATE:
+- admin-dashboard/services/email-service.js
+- admin-dashboard/templates/email/*.html
+
+--------------------------------------------------------------------------------
+NEW-6. CALENDAR INTEGRATION (GOOGLE/APPLE/OUTLOOK)
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Low (1 day)
+
+FEATURES:
+- "Add to Calendar" button on signup
+- ICS file generation endpoint
+- Google Calendar API for auto-sync
+- Recurring event support
+
+ENHANCES: Item #60 (Event Calendar Integration)
+
+FILES TO MODIFY:
+- tournament-signup/server.js (ICS endpoint)
+- tournament-signup/public/index.html (calendar buttons)
+
+--------------------------------------------------------------------------------
+NEW-7. IMAGE OPTIMIZATION PIPELINE EXTENSION
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (partial implementation exists)
+
+CURRENT STATE:
+- Flyer auto-resize to 1920x1080 max (COMPLETED)
+- Sharp library already integrated
+
+ENHANCEMENTS:
+- Sponsor logo optimization (max 500x500)
+- WebP conversion for bandwidth savings
+- Thumbnail generation for galleries
+- Lazy loading for image-heavy pages
+
+FILES TO MODIFY:
+- admin-dashboard/routes/sponsors.js (add optimization)
+- admin-dashboard/routes/flyers.js (add WebP option)
+
+--------------------------------------------------------------------------------
+NEW-8. REAL-TIME ANALYTICS DASHBOARD (CHART.JS)
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Live tournament progress visualization
+- Match duration trend charts
+- Player Elo history graphs
+- Attendance over time line chart
+- Export charts as images for social media
+
+LIBRARY: Chart.js (lightweight, no dependencies)
+
+FILES TO CREATE:
+- admin-dashboard/public/js/charts.js
+- Integrate into analytics.html
+
+--------------------------------------------------------------------------------
+NEW-9. BARCODE/TICKET SCANNER INTEGRATION
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Generate unique barcodes per registration
+- Camera-based scanning for check-in
+- Print-at-home tickets with QR codes
+- Integrates with participant check-in system
+
+LIBRARY: html5-qrcode or quagga2
+
+FILES TO CREATE:
+- admin-dashboard/public/js/scanner.js
+- admin-dashboard/routes/checkin-scanner.js
+
+--------------------------------------------------------------------------------
+NEW-10. AI FEATURE EXPANSION (ANTHROPIC SDK)
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (infrastructure exists)
+
+CURRENT STATE:
+- AI seeding (COMPLETED)
+- Tournament narratives (COMPLETED)
+
+NEW AI FEATURES:
+- Smart ticker suggestions based on match context
+- Auto-generated match previews for displays
+- Player analysis summaries
+- Opponent research reports
+
+EXTENDS: AI-5, AI-10 in existing roadmap
+
+================================================================================
+CATEGORY B: VISUAL/UI UPDATES
+================================================================================
+
+--------------------------------------------------------------------------------
+NEW-11. GLASSMORPHISM UI REFRESH
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Frosted glass effect on modals and cards
+- Backdrop blur for overlays
+- Gradient backgrounds with noise texture
+- Modern, premium aesthetic
+
+APPLIED TO:
+- Command Center quadrants
+- All modals
+- Sidebar navigation
+
+CSS IMPLEMENTATION:
+```css
+.glass-card {
+  background: rgba(31, 41, 55, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+```
+
+--------------------------------------------------------------------------------
+NEW-12. ANIMATED MATCH TRANSITIONS (GSAP)
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Smooth card transitions when matches update
+- Winner celebration micro-animations
+- Score change animations (number roll)
+- Match state color transitions
+
+TV DISPLAYS ONLY: Performance considerations
+
+LIBRARY: GSAP (GreenSock) or CSS animations
+
+--------------------------------------------------------------------------------
+NEW-13. CUSTOM BRANDING THEME BUILDER
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: Medium (3-4 days)
+
+FEATURES:
+- Per-user color scheme customization
+- Logo upload for branded displays
+- Custom fonts selection (from safe list)
+- Preview before applying
+- Export/import theme configurations
+
+MONETIZATION TIE-IN: Premium feature for paid subscription tiers
+
+FILES TO CREATE:
+- admin-dashboard/services/theme-builder.js
+- admin-dashboard/public/theme-editor.html
+
+--------------------------------------------------------------------------------
+NEW-14. ACCESSIBILITY IMPROVEMENTS (WCAG 2.1 AA)
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Color contrast fixes (some grays fail AA)
+- Focus visible indicators on all interactive elements
+- Screen reader announcements for live updates
+- Keyboard navigation improvements
+- Reduced motion preferences support
+- High contrast mode toggle
+
+ADDRESSES: Item #82 in existing roadmap
+
+TESTING: axe-core or WAVE browser extensions
+
+--------------------------------------------------------------------------------
+NEW-15. RESPONSIVE DASHBOARD GRID LAYOUTS
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1-2 days)
+
+FEATURES:
+- CSS Grid for dashboard overview
+- Drag-and-drop widget reordering
+- Collapsible sections with localStorage memory
+- Optimal layouts per screen size
+
+FOCUS: iPad Pro (M4) landscape optimization
+
+--------------------------------------------------------------------------------
+NEW-16. TOURNAMENT PROGRESS VISUALIZATION
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1-2 days)
+
+FEATURES:
+- Visual bracket progress bar
+- "Currently in: Round 3 of 5" indicator
+- Animated bracket fill as matches complete
+- Time estimate to completion
+
+ENHANCES: Command Center system status panel
+
+--------------------------------------------------------------------------------
+NEW-17. PLAYER AVATAR SYSTEM
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Upload player photos/avatars
+- Display on match cards and brackets
+- Auto-generate initials-based avatars (fallback)
+- Character icons for fighting games
+- Gravatar fallback via email hash
+
+ENHANCES: Item #41 (Character Selection)
+
+FILES TO CREATE:
+- admin-dashboard/services/avatar-service.js
+- admin-dashboard/routes/avatars.js
+
+--------------------------------------------------------------------------------
+NEW-18. DARK MODE IMPROVEMENTS
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1 day)
+
+CURRENT STATE: Dark/light toggle implemented
+
+ENHANCEMENTS:
+- True OLED black option (#000000 background)
+- Automatic scheduling (sunset/sunrise based on location)
+- Per-display theme override
+- Reduced blue light mode for night events
+
+--------------------------------------------------------------------------------
+NEW-19. LOADING STATE SKELETONS
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Low (1 day)
+
+FEATURES:
+- Skeleton loading states for all data panels
+- Shimmer animations during fetch
+- Perceived performance improvement
+- Consistent loading UX across all pages
+
+CSS IMPLEMENTATION:
+```css
+.skeleton {
+  background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+```
+
+--------------------------------------------------------------------------------
+NEW-20. COMPACT VIEW MODE
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1-2 days)
+
+FEATURES:
+- Denser information display option
+- Smaller fonts, reduced padding
+- More matches visible without scrolling
+- Toggle per page with localStorage memory
+
+USE CASE: Large tournaments (64+ participants)
+
+================================================================================
+CATEGORY C: QUALITY OF LIFE UPDATES
+================================================================================
+
+--------------------------------------------------------------------------------
+NEW-21. UNDO/REDO SYSTEM FOR MATCH ACTIONS
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Undo last score entry (5-action history stack)
+- Redo capability
+- Visual indicator of undoable actions
+- Confirmation for destructive undos
+
+ADDRESSES: Part of Item #6 (Panic Mode) - Emergency Controls
+
+IMPLEMENTATION:
+- Store action history in memory per session
+- Backend endpoint to reverse match state
+- POST /api/matches/:id/undo
+
+--------------------------------------------------------------------------------
+NEW-22. KEYBOARD SHORTCUT EXPANSION
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1 day)
+
+CURRENT STATE: Command Center has page-specific shortcuts
+
+NEW GLOBAL SHORTCUTS (work on any page):
+- Ctrl+K: Quick command palette
+- Ctrl+/: Show all shortcuts
+- G M: Go to Matches
+- G T: Go to Tournament
+- G P: Go to Participants
+- G D: Go to Dashboard
+- G A: Go to Analytics
+
+EXTENDS: Item #2 (Keyboard Shortcuts)
+
+--------------------------------------------------------------------------------
+NEW-23. COMMAND PALETTE (SPOTLIGHT SEARCH)
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- Ctrl+K opens command palette overlay
+- Search across: pages, actions, participants, matches
+- Quick actions: "Start next match", "Send ticker", "Refresh data"
+- Recent actions history
+- Fuzzy search matching
+
+INSPIRED BY: VS Code, Linear, Notion
+
+FILES TO CREATE:
+- admin-dashboard/public/js/command-palette.js
+- CSS in style.css
+
+--------------------------------------------------------------------------------
+NEW-24. BULK OPERATIONS FOR PARTICIPANTS
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1-2 days)
+
+FEATURES:
+- Multi-select participants (checkbox column)
+- Bulk check-in (select all unchecked, one-click check-in)
+- Bulk delete selected
+- Bulk export selected to CSV
+- Bulk seed assignment (auto-sequence from selection order)
+
+ENHANCES: Item #9 (Participant Check-in Improvements)
+
+--------------------------------------------------------------------------------
+NEW-25. QUICK SETTINGS PANEL
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Low (1 day)
+
+FEATURES:
+- Floating settings gear icon (bottom-right)
+- Quick toggles: Dark mode, compact view, sound notifications
+- DQ timer duration quick-change slider
+- Auto-refresh interval adjustment
+- No page navigation required
+
+--------------------------------------------------------------------------------
+NEW-26. SESSION HANDOFF BETWEEN DEVICES
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Medium (2-3 days)
+
+FEATURES:
+- QR code to transfer session to mobile device
+- Secure token-based handoff (expires in 5 minutes)
+- Active sessions view in settings
+- Remote logout capability
+
+USE CASE: Switch from iPad to phone seamlessly during tournament
+
+FILES TO CREATE:
+- admin-dashboard/routes/session-handoff.js
+- admin-dashboard/public/js/session-handoff.js
+
+--------------------------------------------------------------------------------
+NEW-27. OFFLINE MODE IMPROVEMENTS
+--------------------------------------------------------------------------------
+PRIORITY: High | EFFORT: Medium (3-4 days)
+
+CURRENT STATE:
+- Item #30 (Pi offline caching) pending
+- Item #47 (Signup background sync) pending
+
+ENHANCEMENTS:
+- Full tournament data cached in IndexedDB
+- Queue actions when offline (scored matches, check-ins)
+- Auto-sync when reconnected
+- Conflict resolution for concurrent edits
+- Visual "OFFLINE MODE" banner indicator
+
+EXTENDS: Items #30, #47
+
+--------------------------------------------------------------------------------
+NEW-28. SMART NOTIFICATIONS SYSTEM
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1-2 days)
+
+CURRENT STATE: Push notifications implemented (#12)
+
+ENHANCEMENTS:
+- Notification preferences per category (granular control)
+- Quiet hours configuration
+- Desktop notification center (history view)
+- Clear all / mark all read
+- Notification grouping (batch similar notifications)
+
+--------------------------------------------------------------------------------
+NEW-29. PERFORMANCE MONITORING DASHBOARD
+--------------------------------------------------------------------------------
+PRIORITY: Low | EFFORT: Low (1 day)
+
+FEATURES:
+- API response times chart (last 100 requests)
+- Database query performance metrics
+- WebSocket latency tracking
+- Memory usage trends
+- Display health overview (all Pis)
+
+ENHANCES: System monitoring in settings page
+
+--------------------------------------------------------------------------------
+NEW-30. TOURNAMENT HISTORY QUICK ACCESS
+--------------------------------------------------------------------------------
+PRIORITY: Medium | EFFORT: Low (1 day)
+
+FEATURES:
+- "Recent Tournaments" dropdown in header/navbar
+- Quick jump to past tournament analytics
+- Pin favorite/frequent tournaments
+- Search tournaments by date, name, game
+- Last 5 tournaments always accessible
+
+ENHANCES: Analytics page navigation
+
+================================================================================
+RECONCILIATION NOTES
+================================================================================
+
+ITEMS NOW COVERED BY NEW SUGGESTIONS:
+- #6 Panic Mode → NEW-21 (Undo/Redo System) - Partial coverage
+- #60 Calendar Integration → NEW-6 - Fully covered
+- #82 Accessibility → NEW-14 - Fully covered
+- #30/#47 Offline → NEW-27 - Extended
+- #41 Character Selection → NEW-17 (Player Avatar System) - Extended
+
+SUGGESTED MERGES:
+- AI-4, AI-5, AI-10 → "AI Assistant Suite" feature group
+- M10, M11, M12 (Monetization) → "Sponsor Engagement Package"
+- #38-47 (Signup improvements) → "Participant Experience 2.0" milestone
+
+PRIORITY ELEVATIONS (Move to Tier 1):
+- NEW-21 Undo/Redo System - Critical for live event recovery
+- NEW-27 Offline Mode - Network reliability is critical per constraints
+
+PRIORITY DEMOTIONS (Move to Tier 4+):
+- AI-8 Tournament Meta Analysis - Requires character tracking infrastructure
+- AI-12 Natural Language Queries - Nice-to-have, not tournament-day critical
+
+================================================================================
+UPDATED ROADMAP ADDITIONS
+================================================================================
+
+Add to PHASE 2 (Efficiency Gains):
+- NEW-1: Discord Bot Integration
+
+Add to PHASE 3 (Participant Experience):
+- NEW-4: Stripe Payment Integration
+
+Add to PHASE 6 (AI Quick Wins):
+- NEW-23: Command Palette
+
+Add to PHASE 7 (AI Operator Assistance):
+- NEW-21: Undo/Redo System
+- NEW-26: Session Handoff
+
+Add to PHASE 8 (AI Analytics):
+- NEW-8: Real-time Analytics Dashboard
+
+NEW PHASE 12: UI/UX Polish
+- NEW-11: Glassmorphism UI Refresh
+- NEW-12: Animated Match Transitions
+- NEW-13: Custom Branding Theme Builder
+- NEW-14: Accessibility Improvements
+- NEW-19: Loading State Skeletons
+- NEW-20: Compact View Mode
 
 ================================================================================
 END OF DOCUMENT

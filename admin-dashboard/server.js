@@ -3540,12 +3540,17 @@ app.post('/api/tournament/setup', async (req, res) => {
 		}
 
 		// Broadcast tournament deployed event so dashboard updates immediately
+		// Include full tournament object for bracket-display to render without HTTP fetch
 		if (io) {
 			io.emit('tournament:deployed', {
 				tournamentId: tournamentId,
 				tournament: {
-					id: tournamentId,
+					id: tournament.id,
+					url_slug: tournament.url_slug,
 					name: tournament.name,
+					game_name: tournament.game_name,
+					tournament_type: tournament.tournament_type,
+					state: tournament.state,
 					bracketUrl: bracketUrl
 				}
 			});

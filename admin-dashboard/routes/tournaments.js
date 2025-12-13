@@ -8,6 +8,8 @@
 
 const express = require('express');
 const router = express.Router();
+const fs = require('fs').promises;
+const path = require('path');
 const { createLogger } = require('../services/debug-logger');
 const { getTenantFilter, validateTenantAccess } = require('../middleware/tenant');
 
@@ -49,6 +51,82 @@ function broadcastTournament(eventType, tournament, extra = {}) {
         io.emit(eventType, { tournament, ...extra });
         // Also emit generic update for backward compatibility
         io.emit('tournament:update', { tournamentId: tournament?.id, action: eventType, ...extra });
+    }
+}
+
+/**
+ * Find a flyer matching the game name for auto-deploy
+ * Searches user's flyer directory for filenames containing the game name
+ * @param {string} gameName - Game name to match against
+ * @param {number} userId - User ID for multi-tenant flyer directory
+ * @returns {Promise<string|null>} Matching flyer filename or null
+ */
+async function findMatchingFlyer(gameName, userId) {
+    if (!gameName || !userId) return null;
+
+    const ALLOWED_FLYER_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.mp4'];
+    const userFlyersPath = path.join(process.env.FLYERS_PATH, String(userId));
+
+    try {
+        // Check if directory exists
+        await fs.access(userFlyersPath);
+
+        // Read all files in user's flyer directory
+        const files = await fs.readdir(userFlyersPath);
+
+        // Normalize game name for matching (lowercase, remove special chars)
+        const normalizedGame = gameName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        // Common game abbreviations for better matching
+        const gameAbbreviations = {
+            'supersmashbrosultimate': ['ssbu', 'smashultimate', 'ultimate'],
+            'supersmashbrosmelee': ['melee', 'ssbm'],
+            'mariokartworld': ['mkw', 'mariokart'],
+            'mariokart8deluxe': ['mk8dx', 'mk8', 'mariokart8'],
+            'streetfighter6': ['sf6', 'streetfighter'],
+            'tekken8': ['t8', 'tekken'],
+            'guiltygearstrive': ['ggst', 'guiltygear'],
+            'mortalkombat1': ['mk1', 'mortalkombat'],
+            'granblueversusrising': ['gbvsr', 'granblue']
+        };
+
+        // Build list of search terms
+        const searchTerms = [normalizedGame];
+        if (gameAbbreviations[normalizedGame]) {
+            searchTerms.push(...gameAbbreviations[normalizedGame]);
+        }
+        // Also add first letters of each word as abbreviation (e.g., "Super Smash Bros Ultimate" -> "ssbu")
+        const words = gameName.toLowerCase().split(/\s+/);
+        if (words.length > 1) {
+            searchTerms.push(words.map(w => w[0]).join(''));
+        }
+
+        // Find matching flyer (prioritize exact matches, then partial)
+        let bestMatch = null;
+
+        for (const file of files) {
+            const ext = path.extname(file).toLowerCase();
+            if (!ALLOWED_FLYER_EXTENSIONS.includes(ext)) continue;
+
+            const normalizedFilename = file.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+            for (const term of searchTerms) {
+                if (normalizedFilename.includes(term)) {
+                    bestMatch = file;
+                    // If we found an exact-ish match with the full game name, return immediately
+                    if (normalizedFilename.includes(normalizedGame)) {
+                        return file;
+                    }
+                    break;
+                }
+            }
+        }
+
+        return bestMatch;
+    } catch (error) {
+        // Directory doesn't exist or other error - no matching flyer
+        logger.log('findMatchingFlyer:notFound', { gameName, userId, error: error.message });
+        return null;
     }
 }
 
@@ -517,6 +595,36 @@ router.post('/:tournamentId/start', async (req, res) => {
             logger.log('start:autoAssigned', { count: autoAssigned.length, assignments: autoAssigned });
         }
 
+        // Auto-deploy: Find and activate matching flyer based on game name
+        let autoDeployedFlyer = null;
+        if (tournament.user_id && tournament.game_name) {
+            try {
+                const matchingFlyer = await findMatchingFlyer(tournament.game_name, tournament.user_id);
+                if (matchingFlyer) {
+                    // Emit WebSocket event to activate the flyer on user's displays
+                    if (io) {
+                        io.to(`user:${tournament.user_id}:flyer`).emit('flyer:activated', {
+                            flyer: matchingFlyer,
+                            userId: tournament.user_id,
+                            timestamp: new Date().toISOString(),
+                            autoDeployed: true
+                        });
+                        logger.log('start:autoDeployFlyer', {
+                            flyer: matchingFlyer,
+                            gameName: tournament.game_name,
+                            userId: tournament.user_id
+                        });
+                        autoDeployedFlyer = matchingFlyer;
+                    }
+                } else {
+                    logger.log('start:noMatchingFlyer', { gameName: tournament.game_name, userId: tournament.user_id });
+                }
+            } catch (flyerErr) {
+                logger.warn('start:autoDeployFlyerFailed', { error: flyerErr.message });
+                // Don't fail the start - auto-deploy is optional enhancement
+            }
+        }
+
         res.json({
             success: true,
             tournament: transformTournament(updatedTournament),
@@ -524,7 +632,8 @@ router.post('/:tournamentId/start', async (req, res) => {
                 type: bracket.type,
                 matchCount: matchIds.length,
                 stats: bracket.stats
-            }
+            },
+            autoDeployedFlyer: autoDeployedFlyer || undefined
         });
     } catch (error) {
         logger.error('start', error, { tournamentId: req.params.tournamentId });
