@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code when working with the admin dashboard.
 
+## Coding Standards
+
+**IMPORTANT:** Before writing any code, review the [Coding Style Guide](../CODING_STYLE.md) which defines:
+- Naming conventions by layer (frontend camelCase, database snake_case)
+- API request/response transformation patterns
+- Field name mapping reference
+- Common pitfalls to avoid
+
 ## Overview
 
 Express.js web dashboard for controlling tournament displays. Features modular page-based architecture with collapsible sidebar navigation.
@@ -27,6 +35,7 @@ Express.js web dashboard for controlling tournament displays. Features modular p
 | Games | games.html | games.js | Manage game configurations (rules, prizes) |
 | Analytics | analytics.html | analytics.js | Historical data, Elo rankings, seeding suggestions |
 | Settings | settings.html | settings.js | Users, password, system settings |
+| Platform Admin | platform-admin.html | platform-admin.js | **Superadmin only**: User management, invite keys, tournament browser, audit log, database tools, announcements, platform settings |
 | Login | login.html | (inline) | Authentication |
 
 ### Shared Utilities (utils.js)
@@ -57,6 +66,15 @@ updateLastUpdatedDisplay(elementId)                  // Refresh display
 getCsrfToken()                      // Read token from XSRF-TOKEN cookie
 csrfFetch(url, options)             // Fetch wrapper with auto CSRF headers
 refreshCsrfToken()                  // Refresh token from server
+
+// WebSocket (real-time updates)
+WS_EVENTS                           // Event type constants (see below)
+WebSocketManager.init()             // Initialize Socket.IO connection
+WebSocketManager.subscribe(event, handler)      // Subscribe to single event
+WebSocketManager.subscribeMany({event: handler}) // Subscribe to multiple events
+WebSocketManager.onConnection(type, handler)    // Handle connect/disconnect
+WebSocketManager.getStatus()        // Get connection status
+WebSocketManager.disconnect()       // Disconnect from server
 ```
 
 **CSRF Protection:**
@@ -189,13 +207,15 @@ Use CSS variables instead of hardcoded colors:
 
 ### Frontend Patterns
 
-- **Polling:** 10-15 second intervals with Page Visibility API (pauses when tab hidden)
+- **WebSocket:** Real-time updates via Socket.IO with adaptive polling fallback (see WebSocket section below)
+- **Polling:** Adaptive intervals based on WebSocket connection state (slower when connected, faster when disconnected)
 - **Alerts:** Global notifications via `showAlert(message, type)` from utils.js
 - **Toasts:** Section-specific via `showToast(message, type)`
 - **State:** Global variables per page (e.g., `currentStatus`, `selectedTournament`)
 - **Cache busting:** Version query strings (`?v=N`)
 - **Shared utilities:** Common functions in `utils.js` (escapeHtml, showAlert, formatDate, etc.)
 - **Last Updated Timestamps:** Relative time indicators on all data panels (see below)
+- **Debug Logging:** Color-coded console output via `FrontendDebug` utility (see Debugging section below)
 
 ### Last Updated Timestamps
 
@@ -233,6 +253,89 @@ setLastUpdated('elementId', new Date('2025-01-01'));  // Custom timestamp
 - Auto-update: Display refreshes every 10 seconds to keep relative time current
 - Color-coded freshness: Visual indicator of data staleness
 - Responsive: Hidden on mobile (sm:inline-flex) to save space
+
+### WebSocket Real-Time Updates
+
+All admin pages use WebSocket (Socket.IO) for real-time updates with adaptive polling fallback.
+
+**Event Types (WS_EVENTS constants in utils.js):**
+
+| Category | Events | Description |
+|----------|--------|-------------|
+| Tournament | `tournament:created`, `tournament:updated`, `tournament:deleted`, `tournament:started`, `tournament:reset`, `tournament:completed` | Tournament lifecycle events |
+| Match | `match:updated`, `match:completed`, `match:underway` | Match state changes |
+| Participant | `participant:added`, `participant:updated`, `participant:deleted`, `participant:checkin` | Participant mutations |
+| Display | `display:registered`, `display:heartbeat` | Pi display events |
+| Flyer | `flyer:uploaded`, `flyer:deleted`, `flyer:activated` | Flyer management |
+
+**Page Integration:**
+
+| Page | Events Subscribed | Polling (WS Connected) | Polling (Disconnected) |
+|------|-------------------|------------------------|------------------------|
+| Dashboard | All events | 30s/45s/45s | 10s/15s/15s |
+| Tournament | Tournament events | 60s | 30s |
+| Matches | Match events | 30s | 10s |
+| Participants | Participant events | 60s | 30s |
+| Displays | Display events | 30s/60s | 10s/15s |
+| Flyers | Flyer events | 45s | 15s |
+
+**Usage Pattern:**
+```javascript
+// In page initialization (DOMContentLoaded)
+function initWebSocket() {
+    if (!WebSocketManager.init()) {
+        console.warn('[Page] WebSocket not available, using polling');
+        return;
+    }
+
+    // Subscribe to relevant events
+    WebSocketManager.subscribeMany({
+        [WS_EVENTS.TOURNAMENT_UPDATED]: handleTournamentUpdate,
+        [WS_EVENTS.MATCH_COMPLETED]: handleMatchComplete,
+        'matches:update': handleMatchesUpdate  // Generic event
+    });
+
+    // Adjust polling based on connection state
+    WebSocketManager.onConnection('connect', () => {
+        wsConnected = true;
+        stopPolling();
+        startPolling(60000);  // Slower polling when WS connected
+    });
+
+    WebSocketManager.onConnection('disconnect', () => {
+        wsConnected = false;
+        stopPolling();
+        startPolling(15000);  // Faster polling when disconnected
+    });
+}
+
+// Event handler refreshes relevant data
+function handleTournamentUpdate(data) {
+    console.log('[WS] Tournament update:', data);
+    loadTournaments();  // Refresh data from server
+}
+```
+
+**Backend Broadcasting (routes/*.js):**
+```javascript
+// In route files, broadcast after successful mutations
+function broadcastTournament(eventType, tournament, extra = {}) {
+    if (io) {
+        io.emit(eventType, { tournament, ...extra });
+        io.emit('tournament:update', { tournamentId: tournament?.id, action: eventType });
+    }
+}
+
+// Example: After creating tournament
+broadcastTournament(WS_EVENTS.TOURNAMENT_CREATED, newTournament);
+```
+
+**Backend Route Files with WebSocket:**
+- `routes/tournaments.js` - Tournament events via `broadcastTournament()`
+- `routes/participants.js` - Participant events via `broadcastParticipant()`
+- `routes/flyers.js` - Flyer events via `broadcastFlyer()`
+- `routes/matches.js` - Match events via `broadcastMatchUpdate()`
+- `server.js` - Display events for registration/heartbeat
 
 ### Refresh Button Loading States
 
@@ -292,10 +395,10 @@ npm run dev
 
 # Production
 npm start
-sudo systemctl restart tournament-admin
+sudo systemctl restart control-center-admin
 
 # View logs
-sudo journalctl -u tournament-admin -f
+sudo journalctl -u control-center-admin -f
 
 # Testing
 npm test              # Run all tests
@@ -367,8 +470,8 @@ Playwright config in `playwright.config.ts`:
 |----------|-------|---------|
 | Authentication | 12 | Login, logout, session management, account lockout |
 | CSRF Protection | 13 | Token generation, validation, exempt routes, error messages |
-| Status API | 6 | System status, rate limit status, WebSocket status |
-| Rate Limiter | 14 | Mode switching, dev mode, delay calculations |
+| Status API | 6 | System status, database status, WebSocket status |
+| Database | 14 | Tournament CRUD, match operations, participant management |
 | Validation | 28 | Input validation, data transformations |
 
 ### Writing New Tests
@@ -406,30 +509,22 @@ describe('My API', () => {
 
 ## Server Structure (server.js)
 
-~10000 lines organized as:
+~7000 lines organized as:
 
 1. **Imports & Config** (1-280)
-2. **Rate Limiting System** (280-1410)
-   - Rate mode constants `RATE_MODES` (~353)
-   - Rate limiter queue state `challongeRateLimiter` (~360)
-   - Adaptive rate state `adaptiveRateState` (~367)
-   - Dev mode state `devModeState` (~385)
-   - `getAdaptiveRateLimitSettings()` with defaults
-   - `updateRateMode()` - mode transitions
-   - `checkTournamentsAndUpdateMode()` - stale filtering
-   - `startAdaptiveRateScheduler()` - 8-hour checks
-   - Match polling state and functions
-   - `getMinRequestDelay()` - delay calculation (~1169)
-   - `executeRateLimitedRequest()` - queue processor (~1180)
-   - `rateLimitedAxios` wrapper (~1412)
-3. **Challonge API v2.1 Helpers** (1244-1410) - All API calls use v2.1
-   - `getChallongeV2Headers()` - OAuth/legacy header generation (~1244)
-   - `challongeV2Request()` - rate-limited v2.1 API wrapper (~1289)
-4. **Auth Helpers & Middleware** (1410-1800)
-5. **Public Routes** (1800-1970)
-6. **Auth Routes** (1970-2590)
-7. **Rate Limit & Cache API Routes** (2590-3140)
-8. **Protected Routes** (3140+)
+2. **Database Services** (280-600)
+   - Tournament DB service (`services/tournament-db.js`)
+   - Match DB service (`services/match-db.js`)
+   - Participant DB service (`services/participant-db.js`)
+   - Bracket engine (`services/bracket-engine/`)
+3. **Match Polling System** (600-900)
+   - Local database polling (5-second interval)
+   - WebSocket broadcast on changes
+4. **Auth Helpers & Middleware** (900-1300)
+5. **Public Routes** (1300-1500)
+6. **Auth Routes** (1500-2100)
+7. **Cache API Routes** (2100-2400)
+8. **Protected Routes** (2400+)
    - Status & Tournament Setup
    - Bracket Control Proxy
    - Tournament Creation
@@ -444,71 +539,9 @@ describe('My API', () => {
    - System Monitoring (9 endpoints)
    - Analytics (13 endpoints, ~9000+)
 
-### Challonge API Rate Limiter
+### Match Polling
 
-All Challonge API calls use the `rateLimitedAxios` wrapper to prevent Cloudflare rate limiting. The system features **adaptive rate limiting** that adjusts based on tournament schedule.
-
-**Key State Objects (server.js lines 116-150):**
-```javascript
-// Rate mode constants
-const RATE_MODES = {
-    IDLE: { name: 'IDLE', description: 'No upcoming tournaments' },
-    UPCOMING: { name: 'UPCOMING', description: 'Tournament starting soon' },
-    ACTIVE: { name: 'ACTIVE', description: 'Tournament underway' }
-};
-
-// Rate limiter queue state
-const challongeRateLimiter = {
-    lastRequestTime: 0,
-    requestQueue: [],
-    isProcessing: false
-};
-
-// Adaptive rate state
-const adaptiveRateState = {
-    currentMode: RATE_MODES.IDLE,
-    effectiveRate: 1,
-    manualOverride: null,  // null for auto, or RATE_MODES.X to force
-    upcomingTournament: null,
-    activeTournament: null,
-    lastCheck: null,
-    nextCheck: null
-};
-
-// Dev mode state (3-hour bypass)
-const devModeState = {
-    active: false,
-    activatedAt: null,
-    expiresAt: null,
-    timeoutId: null
-};
-const DEV_MODE_DURATION_MS = 3 * 60 * 60 * 1000;  // 3 hours
-```
-
-**Request Delay Calculation (line 777):**
-```javascript
-function getMinRequestDelay() {
-    if (isDevModeActive()) return 0;  // No delay in dev mode
-    const requestsPerMinute = getChallongeRateLimit();
-    return Math.ceil(60000 / requestsPerMinute);  // e.g., 12 req/min = 5000ms
-}
-```
-
-**Rate-Limited Axios Wrapper (line 901):**
-```javascript
-const rateLimitedAxios = {
-    get: (...args) => executeRateLimitedRequest(() => axios.get(...args)),
-    post: (...args) => executeRateLimitedRequest(() => axios.post(...args)),
-    put: (...args) => executeRateLimitedRequest(() => axios.put(...args)),
-    delete: (...args) => executeRateLimitedRequest(() => axios.delete(...args)),
-    patch: (...args) => executeRateLimitedRequest(() => axios.patch(...args))
-};
-// All 50+ Challonge API calls use rateLimitedAxios
-```
-
-### Centralized Match Polling
-
-The admin dashboard handles all Challonge API polling for match data and pushes updates to MagicMirror-match. This ensures all API calls go through the rate limiter.
+The admin dashboard polls the local database for match data and pushes updates to MagicMirror-match via WebSocket.
 
 ```javascript
 // Match polling state (server.js)
@@ -516,47 +549,26 @@ const matchPollingState = {
     intervalId: null,
     isPolling: false,
     lastPollTime: null,
-    pollIntervalMs: 15000,      // 15 seconds (ACTIVE mode)
-    devModePollIntervalMs: 5000  // 5 seconds (dev mode)
+    pollIntervalMs: 5000  // 5 seconds (faster with local DB)
 };
 
 // Key functions
-shouldPollMatches()      // Returns true if ACTIVE mode or dev mode
-getMatchPollInterval()   // Returns 5000 (dev) or 15000 (normal)
-fetchAndPushMatches()    // Fetches from Challonge, pushes to MagicMirror
+fetchAndPushMatches()    // Fetches from local DB, pushes to MagicMirror
 startMatchPolling()      // Starts interval timer
 stopMatchPolling()       // Stops interval timer
-updateMatchPolling()     // Starts/stops based on current mode
 ```
 
-**Polling behavior by rate mode:**
-| Mode | Match Polling | Interval |
-|------|--------------|----------|
-| IDLE | OFF | - |
-| UPCOMING | OFF | - |
-| ACTIVE | ON | 15 seconds |
-| Dev Mode | ON | 5 seconds |
+**Polling behavior:**
+- Poll interval: 5 seconds (faster since no API rate limits)
+- Polling starts when tournament is underway
+- Polling stops when tournament completes
 
-**Immediate Updates (~4 second latency):**
+**Immediate Updates:**
 Match actions trigger immediate `fetchAndPushMatches()` for faster TV updates:
 - Mark underway (`/api/matches/:tournamentId/:matchId/underway`)
 - Declare winner (`/api/matches/:tournamentId/:matchId/winner`)
 - Assign station (`/api/matches/:tournamentId/:matchId/station`)
 - Unassign station (station set to null)
-
-**Integration points:**
-- `updateRateMode()` calls `updateMatchPolling()` when mode changes
-- `enableDevMode()` triggers `updateMatchPolling()` to start fast polling
-- `disableDevMode()` triggers `updateMatchPolling()` to stop or slow down
-- Server startup checks if ACTIVE mode and starts polling if needed
-
-**Auto-trigger on tournament lifecycle:**
-Tournament lifecycle endpoints automatically trigger `checkTournamentsAndUpdateMode()` 500ms after success:
-- `POST /api/tournament/:id/start` - Switch to ACTIVE mode, start polling
-- `POST /api/tournament/:id/reset` - May switch to IDLE/UPCOMING
-- `POST /api/tournament/:id/complete` - May switch to IDLE if no other active tournaments
-
-This eliminates the 2-hour wait between scheduled checks when starting a tournament.
 
 ### Real-Time WebSocket (Socket.IO)
 
@@ -618,317 +630,49 @@ GET /api/websocket/status
 }
 ```
 
-**Rate Modes:**
-| Mode | Code Default | Recommended | Trigger |
-|------|--------------|-------------|---------|
-| IDLE | 1 req/min | 12 req/min | No tournaments within upcoming window |
-| UPCOMING | 5 req/min | 20 req/min | Tournament starting within 48 hours |
-| ACTIVE | 15 req/min | 30 req/min | Tournament currently underway (non-stale) |
+### Local Database Operations
 
-**Code Defaults (server.js line 232):**
-```javascript
-// getAdaptiveRateLimitSettings() defaults:
-{
-    enabled: false,
-    idleRate: 1,
-    upcomingRate: 5,
-    activeRate: 15,
-    checkIntervalHours: 8,
-    upcomingWindowHours: 48,
-    manualRateLimit: 15
-}
-```
+TCC-Custom uses local SQLite database instead of external APIs. All tournament data is stored locally for full offline operation.
 
-**Features:**
-- **Queue-based processing:** Single request at a time with calculated delay
-- **Auto-retry:** 5-second backoff on 429/403 Cloudflare errors, single retry
-- **Adaptive scheduling:** Checks tournaments every 8 hours
-- **Stale tournament filtering:** Tournaments underway 7+ days are ignored (line 348)
-- **Manual override:** Force IDLE/UPCOMING/ACTIVE via API
-- **Development mode:** 3-hour bypass with 0ms delay (auto-expires)
-- **Manual cap:** Rate limit setting caps all modes (1-60 req/min)
-- **Settings cache cleared:** Updates take effect immediately
+**Database Services:**
+| Service | File | Purpose |
+|---------|------|---------|
+| tournament-db | `services/tournament-db.js` | Tournament CRUD operations |
+| match-db | `services/match-db.js` | Match operations + bracket progression |
+| participant-db | `services/participant-db.js` | Participant management |
+
+**Bracket Engine:**
+| Algorithm | File | Description |
+|-----------|------|-------------|
+| Single Elimination | `services/bracket-engine/single-elimination.js` | Standard seeding, BYE distribution |
+| Double Elimination | `services/bracket-engine/double-elimination.js` | Winners + losers brackets, BYE handling for odd counts |
+| Round Robin | `services/bracket-engine/round-robin.js` | Circle method scheduling |
+| Swiss | `services/bracket-engine/swiss.js` | Score-based pairing |
+
+**Double Elimination BYE Handling:**
+The losers bracket supports any participant count (3, 5, 6, 7, 9, 11, etc.) by creating BYE placeholder matches when an odd number of losers enter any round. This ensures proper bracket progression:
+- W1 losers with odd count → BYE match created in L1
+- Dropdown rounds with odd counts → BYE auto-advance matches
+- BYE matches have `is_bye: true` and auto-advance the player
+
+**Match Progression:**
+When a match is scored via `match-db.setWinner()`:
+1. Find matches where this match is a prerequisite
+2. Assign winner to appropriate player slot
+3. For double elimination, assign loser to losers bracket match
+4. When both players assigned, set match state to 'open'
+5. Broadcast update via WebSocket
+
+**Polling Configuration:**
+- Poll interval: 5 seconds (fast since no external API limits)
+- Direct database queries
+- WebSocket broadcast on changes
 
 **Debug Logging:**
 ```
-[Rate Limiter] Waiting 5000ms before next request (queue: 3, rate: 12 req/min)
-[Rate Limiter] Processing request (queue: 2, no delay needed)
-[Adaptive Rate] Mode changed: IDLE -> ACTIVE (Name), effective rate: 30 req/min
-[Adaptive Rate] Skipping stale tournament: Name (started 9 days ago)
-```
-
-**Recommended Settings:** (Cloudflare limit ~60 req/min)
-- IDLE: 12 req/min (tournament page makes ~7 API calls)
-- UPCOMING: 20 req/min
-- ACTIVE: 30 req/min
-- Cap: 30-50 req/min
-
-### Challonge API v2.1 Migration (Completed 2025-12-06)
-
-**IMPORTANT: DO NOT USE Challonge API v1. All operations use v2.1 exclusively.**
-
-All Challonge API calls use v2.1 with OAuth 2.0 authentication.
-
-**OAuth 2.0 Authentication (Completed 2025-12-05):**
-The dashboard uses OAuth 2.0 for Challonge API authentication. Connect your Challonge account via Settings > Challonge Account.
-
-**CRITICAL: Authorization-Type Header Required**
-Challonge requires the `Authorization-Type` header to distinguish between OAuth and legacy authentication:
-- `Authorization-Type: v2` - Required for OAuth Bearer tokens
-- `Authorization-Type: v1` - Required for legacy API keys
-
-**v2.1 Helper Functions (server.js):**
-```javascript
-// Get v2.1 headers with OAuth Bearer token (async)
-async function getChallongeV2Headers() {
-    // Try OAuth first if connected
-    if (isChallongeConnected()) {
-        try {
-            const accessToken = await ensureValidToken();
-            return {
-                'Authorization': `Bearer ${accessToken}`,
-                'Authorization-Type': 'v2',  // REQUIRED for OAuth
-                'Content-Type': 'application/vnd.api+json',
-                'Accept': 'application/json'
-            };
-        } catch (error) {
-            // Fall through to legacy key
-        }
-    }
-    // Fall back to legacy API key
-    const apiKey = getChallongeApiKey();
-    return {
-        'Authorization': apiKey,
-        'Authorization-Type': 'v1',  // REQUIRED for legacy keys
-        'Content-Type': 'application/vnd.api+json',
-        'Accept': 'application/json'
-    };
-}
-
-// Rate-limited v2.1 request helper with 401 fallback
-async function challongeV2Request(method, endpoint, data = null) {
-    return executeRateLimitedRequest(async () => {
-        const url = `https://api.challonge.com/v2.1${endpoint}`;
-
-        // Try OAuth first if connected
-        if (isChallongeConnected()) {
-            try {
-                const oauthHeaders = await getChallongeV2Headers();
-                const config = { method, url, headers: oauthHeaders, timeout: 15000 };
-                if (data) config.data = data;
-                return await axios(config);
-            } catch (error) {
-                if (error.response?.status === 401) {
-                    // OAuth token rejected - clear and try legacy key
-                    analyticsDb.deleteOAuthTokens('challonge');
-                } else {
-                    throw error;
-                }
-            }
-        }
-
-        // Fall back to legacy API key
-        const legacyHeaders = { /* legacy headers */ };
-        const config = { method, url, headers: legacyHeaders, timeout: 15000 };
-        if (data) config.data = data;
-        return axios(config);
-    });
-}
-```
-
-**OAuth Token Management:**
-- Tokens stored encrypted in SQLite (analytics.db, oauth_tokens table)
-- Encryption: AES-256-GCM with unique IV per token
-- Automatic refresh 5 minutes before expiration
-- `ensureValidToken()` middleware handles auto-refresh
-- **401 Fallback:** If OAuth token rejected, automatically deletes invalid token and retries with legacy API key
-
-**OAuth Endpoints:**
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/auth/challonge` | GET | Redirect to Challonge authorization |
-| `/auth/challonge/callback` | GET | OAuth callback handler |
-| `/api/oauth/status` | GET | Get connection status (username, expiry, scopes) |
-| `/api/oauth/disconnect` | POST | Revoke and delete tokens |
-| `/api/oauth/refresh` | POST | Manual token refresh |
-
-**All Endpoints Use v2.1:**
-| Category | Endpoints |
-|----------|-----------|
-| Tournaments | List, get, create, update, delete, start, reset, finalize, test-connection |
-| Participants | List, add, update, delete, bulk add, randomize, check-in, undo check-in, clear |
-| Matches | Mark underway, unmark underway, update score, declare winner, reopen, DQ/forfeit, clear scores, get single match |
-| Analytics | Archive status, archive tournament, upcoming tournaments, seeding suggestions, apply seeding |
-| Rate Limiter | Tournament check for adaptive mode scheduling |
-
-**v2.1 Match State Changes:**
-Use `PUT /tournaments/{id}/matches/{matchId}/change_state.json`:
-```javascript
-// Mark match as underway
-await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}/change_state.json`, {
-    data: {
-        type: 'MatchState',
-        attributes: { state: 'mark_as_underway' }
-    }
-});
-
-// Unmark underway
-attributes: { state: 'unmark_as_underway' }
-
-// Reopen completed match
-attributes: { state: 'reopen' }
-```
-
-**v2.1 Match Score/Winner Updates:**
-Use `PUT /tournaments/{id}/matches/{matchId}.json`:
-```javascript
-// Declare winner with scores
-await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}.json`, {
-    data: {
-        type: 'Match',
-        attributes: {
-            match: [
-                { participant_id: String(player1Id), score_set: '2', rank: 1, advancing: true },
-                { participant_id: String(player2Id), score_set: '1', rank: 2, advancing: false }
-            ]
-        }
-    }
-});
-
-// Update scores only (no winner)
-attributes: {
-    match: [
-        { participant_id: String(player1Id), score_set: '2' },
-        { participant_id: String(player2Id), score_set: '1' }
-    ]
-}
-
-// Clear scores
-attributes: {
-    match: [
-        { participant_id: String(player1Id), score_set: '' },
-        { participant_id: String(player2Id), score_set: '' }
-    ]
-}
-```
-
-**v2.1 Response Format (JSON:API):**
-```javascript
-// v1 response format
-response.data.tournament.name
-
-// v2.1 response format (JSON:API)
-response.data.data.attributes.name
-
-// v2.1 timestamps
-response.data.data.attributes.timestamps.started_at
-```
-
-**v2.1 Request Format (for mutations):**
-```javascript
-// Tournament lifecycle actions
-challongeV2Request('POST', `/tournaments/${id}/process.json`, {
-    data: {
-        type: 'TournamentProcess',
-        attributes: { action: 'start' }  // or 'finalize', 'reset'
-    }
-});
-
-// Participant actions
-challongeV2Request('POST', `/tournaments/${id}/participants/${participantId}/process.json`, {
-    data: {
-        type: 'ParticipantProcess',
-        attributes: { action: 'check_in' }  // or 'undo_check_in'
-    }
-});
-```
-
-**v2.1 Field Name Differences (Tournament Update):**
-| v1 Field | v2.1 Field | Notes |
-|----------|------------|-------|
-| `start_at` | `starts_at` | Note the 's' |
-| `check_in_duration` | `registration_options.check_in_duration` | Nested |
-| `signup_cap` | `registration_options.signup_cap` | Nested |
-| `open_signup` | `registration_options.open_signup` | Nested |
-| `hide_seeds` | `seeding_options.hide_seeds` | Nested |
-| `sequential_pairings` | `seeding_options.sequential_pairings` | Nested |
-| `accept_attachments` | `match_options.accept_attachments` | Nested |
-| `hold_third_place_match` | `match_options.consolation_matches_target_rank` | 3 = enabled, omit to disable |
-| `grand_finals_modifier` | `double_elimination_options.grand_finals_modifier` | Nested |
-| `notify_users_when_matches_open` | `notifications.upon_matches_open` | Nested + renamed |
-| `notify_users_when_the_tournament_ends` | `notifications.upon_tournament_ends` | Nested + renamed |
-
-**v2.1 Nested Structure (Tournament Update):**
-```javascript
-// PUT /api/tournament/:tournamentId sends this to Challonge:
-{
-  data: {
-    type: 'tournaments',
-    attributes: {
-      name: 'Tournament Name',
-      starts_at: '2025-12-25T20:00:00.000Z',  // Note: starts_at not start_at
-      private: false,
-      hide_forum: false,
-      show_rounds: false,
-      quick_advance: true,
-      // Nested option objects
-      registration_options: {
-        check_in_duration: 30,
-        signup_cap: 16,
-        open_signup: false
-      },
-      seeding_options: {
-        hide_seeds: false,
-        sequential_pairings: false
-      },
-      match_options: {
-        accept_attachments: false,
-        consolation_matches_target_rank: 3  // 3 = third place match enabled (single elim)
-      },
-      double_elimination_options: {
-        grand_finals_modifier: 'single'  // or 'skip', null for default
-      },
-      notifications: {
-        upon_matches_open: true,
-        upon_tournament_ends: true
-      }
-    }
-  }
-}
-```
-
-**v2.1 Format-Specific Options:**
-| Format | Option Object | Fields |
-|--------|---------------|--------|
-| Single Elim | `match_options` | `consolation_matches_target_rank` (3 = 3rd place match) |
-| Double Elim | `double_elimination_options` | `grand_finals_modifier` ('single', 'skip', null) |
-| Group Stage | `group_stage_options` | `stage_type`, `group_size`, `participant_count_to_advance`, `ranked_by` |
-
-**Important v2.1 Constraints:**
-- `consolation_matches_target_rank` must be >= 3 when set, or omit field entirely to disable
-- Cannot send `null` for `consolation_matches_target_rank` - v2.1 rejects it
-- `grand_finals_modifier` accepts 'single', 'skip', or null (default double match)
-
-**v2.1 Response Nested Options (Reading Tournament Data):**
-```javascript
-const attrs = response.data.data.attributes;
-const regOpts = attrs.registration_options || {};
-const seedOpts = attrs.seeding_options || {};
-const matchOpts = attrs.match_options || {};
-const doubleElimOpts = attrs.double_elimination_options || {};
-const notifyOpts = attrs.notifications || {};
-
-// Access fields from nested objects
-const startAt = attrs.timestamps?.starts_at || attrs.starts_at;
-const checkInDuration = regOpts.check_in_duration;
-const signupCap = regOpts.signup_cap;
-const hideSeeds = seedOpts.hide_seeds;
-const acceptAttachments = matchOpts.accept_attachments;
-// v2.1 uses consolation_matches_target_rank >= 3 for third place match
-const holdThirdPlaceMatch = matchOpts.consolation_matches_target_rank != null && matchOpts.consolation_matches_target_rank >= 3;
-// v2.1 uses double_elimination_options for grand_finals_modifier
-const grandFinalsModifier = doubleElimOpts.grand_finals_modifier || '';
-const notifyMatchOpen = notifyOpts.upon_matches_open;
+[Match Polling] Found 3 open matches for tournament 1
+[Match Polling] Broadcasting match update to 2 connected displays
+[Bracket Engine] Generated 15 matches for single elimination (16 participants)
 ```
 
 ## API Reference
@@ -959,10 +703,34 @@ All POST/PUT/DELETE/PATCH requests require CSRF token validation (except exempt 
 ### Status & Configuration
 ```
 GET  /api/status              - All module status + state files
-POST /api/tournament/setup    - Deploy to all displays
-POST /api/test-connection     - Validate Challonge API
-GET  /api/tournaments         - List from Challonge (?days=30)
+POST /api/tournament/setup    - Deploy to all displays (writes state file)
+POST /api/test-connection     - Validate database connection
+GET  /api/tournaments         - List from local database (?days=30)
 ```
+
+**Tournament Setup Details:**
+The `/api/tournament/setup` endpoint:
+1. Sends tournament config to match module (`$MATCH_API_URL/api/tournament/update`)
+2. Sends bracket URL to bracket module (`$BRACKET_API_URL/api/bracket/update`)
+3. Broadcasts `tournament:deployed` WebSocket event
+4. Writes `tournament-state.json` file for deployment checklist verification
+
+**State file written to:** `$MATCH_STATE_FILE` or default `/root/tcc-custom/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json`
+
+**State file format:**
+```json
+{
+  "tournamentId": "url_slug",      // URL slug (matches frontend expectations)
+  "tournamentDbId": 123,           // Numeric database ID
+  "tournamentName": "Tournament Name",
+  "gameName": "Game Name",
+  "bracketUrl": "http://...",
+  "deployedAt": "ISO8601",
+  "lastUpdated": "ISO8601"
+}
+```
+
+**Important:** The `tournamentId` must be the URL slug (not numeric ID) for the pre-flight checklist to correctly show "Deployed" status.
 
 ### Match Management
 ```
@@ -972,7 +740,7 @@ GET  /api/matches/:tournamentId/stats                    - Get match statistics 
 POST /api/matches/:tournamentId/:matchId/underway        - Mark in progress (sets underway_at)
 POST /api/matches/:tournamentId/:matchId/unmark-underway - Stop match (return to open)
 POST /api/matches/:tournamentId/:matchId/score           - Update score
-POST /api/matches/:tournamentId/:matchId/winner          - Declare winner (scores required)
+POST /api/matches/:tournamentId/:matchId/winner          - Declare winner (scores optional)
 POST /api/matches/:tournamentId/:matchId/reopen          - Reopen match
 POST /api/matches/:tournamentId/:matchId/dq              - DQ/Forfeit (body: {winnerId, loserId})
 POST /api/matches/:tournamentId/:matchId/station         - Assign station (body: {stationId} or null to unassign)
@@ -1021,12 +789,43 @@ POST /api/matches/:tournamentId/batch-scores
 }
 ```
 
-**Challonge API v1 Quirks:**
-- Match state does NOT change to 'underway' - Challonge keeps `state: 'open'` but sets `underway_at` timestamp
-- Use `underwayAt` field to detect in-progress matches: `state === 'open' && underwayAt != null`
-- Declaring a winner REQUIRES scores (422 error without them) - use format like "1-0" or "2-1"
-- Station assignments: v1 API does NOT return station_id - fetched from v2.1 stations endpoint
-- Assigning stations: Uses v2.1 PUT to station endpoint with `match_id`, NOT match endpoint
+**Match State Lifecycle:**
+Match states follow: `pending → open → underway → complete`
+
+| State | Description |
+|-------|-------------|
+| pending | Match waiting for players to be assigned |
+| open | Both players assigned, match ready to start |
+| underway | Match in progress (`underway_at` timestamp set) |
+| complete | Match finished (`completed_at` timestamp set) |
+
+**Timestamp Behavior:**
+| Transition | underway_at | completed_at |
+|------------|-------------|--------------|
+| open → underway | SET to NOW() | unchanged |
+| underway → open (unmark) | SET to NULL | unchanged |
+| underway → complete | **KEPT** (for analytics) | SET to NOW() |
+| complete → open (reopen) | SET to NULL | SET to NULL |
+
+- Winner advances automatically via bracket progression logic
+- Match duration can be calculated as `completed_at - underway_at`
+
+**Winner Declaration (scores optional):**
+```javascript
+// Winner-only declaration (no score tracking)
+POST /api/matches/:tournamentId/:matchId/winner
+{ winnerId: 123 }
+// Stores: winner_id=123, player1_score=NULL, player2_score=NULL
+
+// With scores (optional)
+POST /api/matches/:tournamentId/:matchId/winner
+{ winnerId: 123, player1Score: 2, player2Score: 1 }
+// Stores: winner_id=123, player1_score=2, player2_score=1
+```
+
+**Score Display in Exports:**
+- NULL scores display as "W" (winner-only)
+- Actual scores display as "2-1" format
 
 ### Station Management
 ```
@@ -1059,7 +858,7 @@ DELETE /api/tournament/:tournamentId           - Delete tournament permanently
 | Schedule | startAt | ISO date | Start date/time |
 | Schedule | checkInDuration | number | Check-in duration in minutes |
 | Registration | signupCap | number | Maximum participants |
-| Registration | openSignup | boolean | Allow public signup via Challonge |
+| Registration | openSignup | boolean | Allow public signup |
 | Single Elim | holdThirdPlaceMatch | boolean | Third place match |
 | Single Elim | sequentialPairings | boolean | Seeds 1v2, 3v4 instead of 1v16, 2v15 |
 | Single Elim | showRounds | boolean | Show round labels |
@@ -1084,7 +883,7 @@ DELETE /api/tournament/:tournamentId           - Delete tournament permanently
 
 ### Tournament Creation
 ```
-POST /api/tournaments/create  - Create new tournament on Challonge
+POST /api/tournaments/create  - Create new tournament
 ```
 
 **Creation Wizard (3 Steps):**
@@ -1134,7 +933,7 @@ POST /api/tournaments/create  - Create new tournament on Challonge
 | sequentialPairings | boolean | Sequential pairings (seeds 1v2, 3v4 instead of 1v16, 2v15) |
 | showRounds | boolean | Show round labels in bracket |
 | autoAssign | boolean | Auto-assign matches to stations |
-| openSignup | boolean | Allow public signup via Challonge |
+| openSignup | boolean | Allow public signup |
 | privateTournament | boolean | Hide from public listings |
 | hideForum | boolean | Disable discussion forum tab |
 | acceptAttachments | boolean | Allow match attachments |
@@ -1202,7 +1001,22 @@ POST   /api/flyer/update              - Update display flyer
 - JPG/JPEG images
 - MP4 videos (H.264 recommended)
 
-**Upload response includes:** `{success, message, filename, type}` where type is "image" or "video"
+**Automatic Image Optimization:**
+Large images are automatically optimized on upload to improve display performance:
+
+| Setting | Value |
+|---------|-------|
+| Max dimensions | 1920x1080 (fits inside, maintains aspect ratio) |
+| JPEG quality | 85% |
+| PNG compression | Level 9 |
+| Auto-orient | Yes (based on EXIF data) |
+
+- Images larger than 1920x1080 are resized to fit within those dimensions
+- All images are compressed for optimal file size
+- Videos (.mp4) are not processed - uploaded as-is
+- If optimization fails, the original file is saved as fallback
+
+**Upload response includes:** `{success, message, filename, type, optimized}` where type is "image" or "video" and optimized indicates if resizing occurred
 
 ### Sponsor Management
 ```
@@ -1264,21 +1078,27 @@ POST   /api/participants/:tournamentId/:participantId/undo-check-in - Undo check
 DELETE /api/participants/:tournamentId/clear                        - Clear all participants
 ```
 
+**Tournament ID Parameter:**
+The `:tournamentId` parameter accepts either:
+- Numeric database ID (e.g., `3`)
+- URL slug string (e.g., `local_tour_dec25_vete`)
+
+All routes use `tournamentDb.getById(id) || tournamentDb.getBySlug(id)` pattern for lookup. When passing to `participantDb` functions, always use the resolved `tournament.id` (numeric) to satisfy foreign key constraints.
+
 **Participant Create/Update Fields:**
 | Field | Type | Description |
 |-------|------|-------------|
-| name | string | Display name (required if no email/username) |
-| email | string | Email - searches Challonge account or sends invite |
-| challongeUsername | string | Link to existing Challonge account |
+| name | string | Display name (required) |
+| email | string | Contact email |
 | seed | number | Seeding position (1 to participant count) |
 | instagram | string | Instagram handle (stored in misc field) |
-| misc | string | Multi-purpose field (max 255 chars, API-only) |
+| misc | string | Multi-purpose field (max 255 chars) |
 
 **Participant Response Fields:**
 | Field | Description |
 |-------|-------------|
 | id, name, seed, misc | Basic info |
-| email, challongeUsername | Contact/account info |
+| email | Contact info |
 | checkedIn, checkedInAt, canCheckIn | Check-in status |
 | active, onWaitingList, invitationPending | Status flags |
 | finalRank, groupId | Tournament placement |
@@ -1384,14 +1204,13 @@ POST /api/bracket/reset             - Reset view to default zoom (1.0x) - WORKS
 POST /api/bracket/control           - Generic control (body: {action, parameters})
 ```
 
-**Challonge iframe Limitations:**
-Only `setZoomScale` works via postMessage API. The following do NOT work:
-- `scrollToMatchIdentifier` - Challonge iframe ignores this
-- `zoomToMatchIdentifier` - Challonge iframe ignores this
-- `filterRounds` - Not supported
-- `loadTheme` - Not supported
+**Bracket Display Modes:**
+TCC-Custom uses native canvas rendering by default. The bracket display supports zoom/pan controls for navigation.
 
-The Focus on Match UI has been removed from the displays page due to these limitations.
+**Note:** If using iframe mode (legacy), these postMessage API features are limited:
+- `scrollToMatchIdentifier` - Not supported in iframe
+- `zoomToMatchIdentifier` - Not supported in iframe
+- `filterRounds` - Not supported in iframe
 
 ### Ticker Messages
 ```
@@ -1532,7 +1351,7 @@ POST   /api/monitoring/stop                   - Stop monitoring session
 GET    /api/monitoring/report                 - Generate report from session data
 GET    /api/monitoring/quick-check            - One-time instant system check
 GET    /api/monitoring/logs                   - Get recent service logs
-                                                Query: ?service=tournament-admin&lines=50
+                                                Query: ?service=control-center-admin&lines=50
 GET    /api/monitoring/reports                - List saved reports
 GET    /api/monitoring/reports/:filename      - View saved report
 DELETE /api/monitoring/reports/:filename      - Delete saved report
@@ -1543,7 +1362,7 @@ DELETE /api/monitoring/reports/:filename      - Delete saved report
 {
   "timestamp": "2025-11-28T...",
   "services": [
-    {"name": "tournament-admin", "status": "running", "uptime": "2d 5h"}
+    {"name": "control-center-admin", "status": "running", "uptime": "2d 5h"}
   ],
   "apis": [
     {"name": "Match Module", "status": "ok", "responseTime": 5}
@@ -1571,17 +1390,6 @@ DELETE /api/monitoring/reports/:filename      - Delete saved report
 3. `GET /api/monitoring/status` shows progress
 4. `GET /api/monitoring/report` generates Claude-readable report
 5. `POST /api/monitoring/stop` to end early
-
-### Rate Limit Management (Admin Only)
-```
-GET  /api/rate-limit/status           - Get current rate status, mode, and settings
-POST /api/rate-limit/check            - Trigger immediate tournament check
-POST /api/rate-limit/mode             - Set manual mode override
-                                        Body: {mode: "IDLE"|"UPCOMING"|"ACTIVE"|"auto"}
-                                        "auto" clears override, returns to automatic
-POST /api/rate-limit/dev-mode/enable  - Enable dev mode (3-hour bypass)
-POST /api/rate-limit/dev-mode/disable - Disable dev mode
-```
 
 ### Activity Feed
 ```
@@ -1658,7 +1466,7 @@ GET  /api/analytics/archive/status                     - Archived vs unarchived 
 POST /api/analytics/archive/:tournamentId              - Archive completed tournament
 GET  /api/analytics/upcoming-tournaments               - Pending tournaments (for seeding dropdown)
 GET  /api/analytics/seeding-suggestions/:tournamentId  - Elo-based seeding suggestions
-POST /api/analytics/apply-seeding/:tournamentId        - Apply seeds to Challonge
+POST /api/analytics/apply-seeding/:tournamentId        - Apply seeds to tournament
 ```
 
 **AI Seeding Endpoints:**
@@ -1667,7 +1475,7 @@ GET  /api/analytics/ai-seeding/status                  - Check if AI seeding ava
 GET  /api/analytics/ai-seeding/:tournamentId           - Get AI seeding suggestions (cached or fresh)
 GET  /api/analytics/ai-seeding/:tournamentId?regenerate=true - Force regenerate suggestions
 POST /api/analytics/ai-seeding/:tournamentId/lock      - Lock seed positions
-POST /api/analytics/ai-seeding/:tournamentId/apply     - Apply AI seeds to Challonge
+POST /api/analytics/ai-seeding/:tournamentId/apply     - Apply AI seeds to tournament
 ```
 
 **Tournament Narrative Endpoints:**
@@ -1764,7 +1572,7 @@ GET  /api/export/:tournamentId/report/pdf     - Export full report as PDF
 
 **Query Parameters:**
 - `source=archive` - Fetch from SQLite analytics database (tournamentId is database ID)
-- `source=live` - Fetch from Challonge API (tournamentId is URL slug)
+- `source=live` - Fetch from local tournament database (tournamentId is URL slug)
 
 **CSV Standings Format:** Rank, Name, Seed
 **CSV Matches Format:** Round, Match, Player 1, Player 2, Score, Winner
@@ -1841,24 +1649,104 @@ POST /api/templates
 - **Tournament Creation Success:** "Save as Template" button opens save modal
 - **Settings Page:** Template management section with list, edit, and delete
 
-**Rate Limit Status Response:**
+### Platform Admin (Superadmin Only)
+
+All `/api/admin/*` routes require superadmin authentication via `requireSuperadmin` middleware.
+
+**User Management:**
+```
+GET    /api/admin/users                    - List all users with subscription info
+GET    /api/admin/users/:id                - Get user details
+PUT    /api/admin/users/:id/subscription   - Update user subscription
+PUT    /api/admin/users/:id/status         - Enable/disable user
+POST   /api/admin/impersonate/:userId      - Start impersonation session
+POST   /api/admin/stop-impersonation       - Stop impersonation
+```
+
+**Invite Keys:**
+```
+GET    /api/admin/invite-keys              - List all invite keys
+POST   /api/admin/invite-keys              - Create new invite key
+DELETE /api/admin/invite-keys/:id          - Deactivate key
+PUT    /api/admin/invite-keys/:id/reactivate - Reactivate deactivated key
+GET    /api/admin/invite-keys/:id/usage    - Get key usage history
+```
+
+**Tournament Browser:**
+```
+GET    /api/admin/tournaments              - List all tournaments (all tenants)
+                                             Query: ?state=&game=&userId=&search=&limit=50&offset=0
+GET    /api/admin/tournaments/:id/details  - Get tournament with participants
+GET    /api/admin/participants/search      - Search participants across all tournaments
+                                             Query: ?name=&email=&limit=50
+```
+
+**Audit Log:**
+```
+GET    /api/admin/activity-log             - Platform-wide activity log
+                                             Query: ?userId=&action=&from=&to=&search=&limit=100&offset=0
+GET    /api/admin/activity-log/export      - Export activity log as CSV
+                                             Query: ?format=csv&from=&to=
+```
+
+**Database Tools:**
+```
+GET    /api/admin/database/status          - Get database status (size, tables, modified)
+POST   /api/admin/database/backup          - Create backup
+                                             Body: { database: 'all' | 'tournaments' | 'players' | 'system' }
+GET    /api/admin/database/backups         - List all backups
+GET    /api/admin/database/backups/:filename - Download backup file
+DELETE /api/admin/database/backups/:filename - Delete backup
+POST   /api/admin/database/clear-cache     - Clear cache database
+POST   /api/admin/database/vacuum          - Vacuum all databases
+```
+
+**Announcements:**
+```
+GET    /api/admin/announcements            - List all announcements
+POST   /api/admin/announcements            - Create announcement
+                                             Body: { message, type: 'info'|'warning'|'alert', expiresAt? }
+PUT    /api/admin/announcements/:id        - Update announcement
+DELETE /api/admin/announcements/:id        - Delete announcement
+GET    /api/admin/announcements/active     - Get active announcements only
+```
+
+**Public Announcement Route (for banner display):**
+```
+GET    /api/announcements/active           - Get active announcements (all authenticated users)
+                                             Returns: { success, announcements: [{id, message, type, created_at, expires_at}] }
+```
+
+**Platform Settings:**
+```
+GET    /api/admin/platform-settings        - Get platform settings
+PUT    /api/admin/platform-settings        - Update platform settings
+                                             Body: { allowSignups, requireInviteKey, trialDuration, maintenanceMode, ... }
+```
+
+**Announcement Object:**
 ```json
 {
-  "adaptiveEnabled": true,
-  "currentMode": "IDLE",
-  "modeDescription": "No upcoming tournaments",
-  "effectiveRate": 12,
-  "manualRateLimit": 30,
-  "manualOverride": null,
-  "settings": { "idleRate": 12, "upcomingRate": 20, "activeRate": 30 },
-  "lastCheck": "2025-11-27T04:48:41.000Z",
-  "nextCheck": "2025-11-27T12:48:41.000Z",
-  "devModeActive": false,
-  "matchPolling": {
-    "active": false,
-    "intervalMs": 15000,
-    "lastPollTime": null
-  }
+  "id": 1,
+  "message": "System maintenance scheduled for tonight",
+  "type": "warning",
+  "is_active": 1,
+  "expires_at": "2025-12-12T00:00:00.000Z",
+  "created_by": 1,
+  "created_at": "2025-12-11T20:00:00.000Z"
+}
+```
+
+**Database Status Response:**
+```json
+{
+  "success": true,
+  "databases": [
+    { "name": "tournaments.db", "size": 1048576, "tables": 5, "lastModified": "2025-12-11T..." },
+    { "name": "players.db", "size": 524288, "tables": 8, "lastModified": "2025-12-11T..." },
+    { "name": "system.db", "size": 262144, "tables": 12, "lastModified": "2025-12-11T..." },
+    { "name": "cache.db", "size": 131072, "tables": 5, "lastModified": "2025-12-11T..." }
+  ]
 }
 ```
 
@@ -1869,7 +1757,7 @@ POST /api/templates
 **Purpose:** Quick glanceable overview and rapid tournament controls
 
 **Sections:**
-- System Status Bar (4 cards: Match, Bracket, Flyer modules + API Rate status)
+- System Status Bar (4 cards: Match, Bracket, Flyer modules + Database status)
 - Active Tournament (name, game, stats, quick actions)
 - Enhanced Stats Row (check-in count, current round, in-progress, remaining, time estimate)
 - Live Activity Feed (real-time event stream with filtering, search, sound notifications)
@@ -1966,12 +1854,12 @@ toggleActivitySound()   // Toggle sound notifications
 **Key Functions:**
 ```javascript
 // Tournament management
-loadTournaments()       // Load from Challonge
+loadTournaments()       // Load from local database
 selectTournament(id)    // Select for configuration
 submitConfiguration()   // Deploy to displays
-startTournament()       // Start via Challonge API
-resetTournament()       // Reset via Challonge API
-deleteTournament()      // Delete via Challonge API
+startTournament()       // Start tournament (generates bracket)
+resetTournament()       // Reset tournament
+deleteTournament()      // Delete tournament
 
 // Creation wizard
 openCreateWizard()           // Open tournament creation wizard
@@ -1982,7 +1870,7 @@ resetWizardForm()            // Reset all wizard fields to defaults
 updateFormatSelection()      // Show/hide format-specific options (incl. group stage for elim)
 setupWizardEventListeners()  // Initialize wizard event handlers
 toggleWizardGroupStageOptions() // Show/hide group stage options based on checkbox
-createTournament()           // Create new tournament via Challonge API (v2.1)
+createTournament()           // Create new tournament in local database
 
 // Edit modal
 openEditModal(id)              // Open edit modal with tournament data
@@ -2018,7 +1906,7 @@ handleRankedByChange()         // Show/hide custom points for round robin
 - **Display & Privacy:** hide seeds, private tournament, hide forum
 - **Match Settings:** accept attachments, quick advance
 - **Notifications:** notify on match open, notify on tournament end
-- **Read-only:** tournament format (cannot change after creation), Challonge URL link
+- **Read-only:** tournament format (cannot change after creation), tournament URL slug
 
 **Pre-Flight Checklist:**
 Automated verification shown when a pending tournament is selected:
@@ -2031,7 +1919,7 @@ Automated verification shown when a pending tournament is selected:
 | Participants | GET /api/participants | Count > 0 | 0 participants | API error |
 | Flyer Set | GET /api/status | Flyer configured | - | No flyer |
 | Stations Configured | GET /api/stations | Stations exist | 0 stations | API error |
-| Challonge API | GET /api/test-connection | Connected | - | Connection failed |
+| Database | GET /api/test-connection | Connected | - | Connection failed |
 
 **Checklist Functions:**
 ```javascript
@@ -2042,7 +1930,7 @@ checkTournamentDeployed()    // Verify state file exists
 checkParticipants()          // Get participant count
 checkFlyer()                 // Verify flyer configured
 checkStations()              // Check station configuration
-checkChallongeApi()          // Test API connectivity
+checkDatabaseConnection()    // Test database connectivity
 updateChecklistItem(id, status, badge)  // Update UI
 updateChecklistSummary()     // Update ready count
 updateChecklistVisibility()  // Show/hide based on tournament state
@@ -2062,7 +1950,7 @@ updateChecklistVisibility()  // Show/hide based on tournament state
 **Key Functions:**
 ```javascript
 // Match functions
-loadMatches()                    // Load from Challonge (includes station mapping)
+loadMatches()                    // Load from local database (includes station mapping)
 markMatchUnderway(matchId)       // Mark in progress
 openScoreModal(match)            // Show score entry
 submitScore(matchId, scores)     // Update score
@@ -2293,7 +2181,7 @@ setDisplayScale(id, scale)   // Set scale slider to preset value
 applyDisplayScale(id)        // Apply scale via CDP (real-time) or config
 ```
 
-**Note:** Focus on Match controls have been removed - Challonge iframe doesn't support scrollToMatchIdentifier.
+**Note:** Focus on Match controls have been removed - iframe mode doesn't support scrollToMatchIdentifier (native mode uses zoom/pan).
 
 **Registered Display Card Layout:**
 Each display shows:
@@ -2343,7 +2231,7 @@ Commands work across different networks using a command queue:
 - Zoom slider (0.3x to 3.0x) with preset buttons (0.5x, 1.0x, 2.0x) and Apply Zoom
 - Slider value updates in real-time as slider is moved
 - Reset View button (resets to 1.0x default zoom)
-- Note: Focus on Match controls removed due to Challonge iframe limitations
+- Note: Focus on Match controls removed (use native zoom/pan in bracket display)
 
 **Advanced Section (Display Scaling):**
 Collapsible section in each display card for scale control (default collapsed):
@@ -2364,7 +2252,7 @@ Collapsible section in each display card for scale control (default collapsed):
 
 ### Participants (participants.html, participants.js)
 
-**Purpose:** Full participant management with Challonge API integration
+**Purpose:** Full participant management with local database
 
 **Features:**
 - Participant table with seed, name, status, contact info, misc
@@ -2384,9 +2272,8 @@ Collapsible section in each display card for scale control (default collapsed):
 **Participant Fields:**
 | Field | Description |
 |-------|-------------|
-| name | Display name (required if no email/username) |
-| email | Searches for Challonge account or sends invite |
-| challongeUsername | Links to existing Challonge account |
+| name | Display name (required) |
+| email | Contact email |
 | seed | Seeding position |
 | instagram | Instagram handle (stored in misc) |
 | misc | Multi-purpose field (max 255 chars) |
@@ -2394,7 +2281,7 @@ Collapsible section in each display card for scale control (default collapsed):
 **Key Functions:**
 ```javascript
 // CRUD operations
-loadParticipants()           // Fetch from Challonge API
+loadParticipants()           // Fetch from local database
 addParticipant(event)        // Add single participant
 saveParticipantEdit(event)   // Update participant
 deleteParticipant(id, name)  // Delete participant
@@ -2427,8 +2314,7 @@ exportToCSV()                // Download participant list
 **Sections:**
 - User Management (table with add/edit/delete)
 - Change Password (current + new)
-- System Settings (admin only, 8 tabs):
-  - Challonge Account (OAuth connection, rate limit)
+- System Settings (admin only, 7 tabs):
   - System Defaults
   - Security
   - Notifications
@@ -2436,34 +2322,6 @@ exportToCSV()                // Download participant list
   - Data Retention
   - Activity Log
   - System Monitoring
-
-**Challonge Account Tab:**
-- **OAuth Connection Section:**
-  - Connect/Disconnect Challonge account button
-  - Connection status (connected username, token expiry)
-  - Refresh Token button (manual token refresh)
-- **Rate Limiting Section:**
-  - Rate Limit Cap (`min=1, max=60`) - maximum for all modes
-  - Adaptive Rate Limiting:
-    - Enable/disable adaptive mode
-    - IDLE rate (`min=1, max=60`, recommended 12)
-    - UPCOMING rate (`min=1, max=60`, recommended 20)
-    - ACTIVE rate (`min=1, max=60`, recommended 30)
-    - Check interval (`min=1, max=24` hours, default 8)
-    - Upcoming window (`min=1, max=168` hours, default 48)
-  - Current Status display (mode, effective rate, next check time)
-  - Development Mode toggle (3-hour rate limit bypass, auto-expires)
-- Stale tournament filtering: 7+ day old underway tournaments ignored
-
-**HTML Input Ranges (settings.js):**
-| Input | Min | Max | Default |
-|-------|-----|-----|---------|
-| Rate limit cap | 1 | 60 | 15 |
-| IDLE rate | 1 | 60 | 1 (code) / 12 (recommended) |
-| UPCOMING rate | 1 | 60 | 5 (code) / 20 (recommended) |
-| ACTIVE rate | 1 | 60 | 15 (code) / 30 (recommended) |
-| Check interval | 1 | 24 | 8 hours |
-| Upcoming window | 1 | 168 | 48 hours |
 
 **System Monitoring Tab:**
 - Quick Check button - instant one-time system diagnostic
@@ -2521,11 +2379,11 @@ deleteSavedReport()         // Delete saved report file
 - Seeding table with:
   - Lock checkbox (lock seed positions)
   - Suggested seed (based on Elo or AI)
-  - Current seed (from Challonge)
+  - Current seed (from tournament)
   - Player name with "New Player" badge for < 3 tournaments
   - Elo rating
   - Reasoning column (AI mode only)
-- Apply Suggested Seeding button (bulk updates via Challonge API)
+- Apply Suggested Seeding button (bulk updates to tournament)
 - Regenerate button (AI mode - optimizes around locked seeds)
 - Page Visibility API (pauses polling when tab hidden)
 
@@ -2586,7 +2444,7 @@ loadUpcomingTournaments()    // Load pending tournaments
 loadSeedingSuggestions()     // Fetch Elo-based or AI suggestions
 startSeedingPolling()        // Start 30s polling interval
 stopSeedingPolling()         // Stop polling
-applySeedingSuggestions()    // Apply seeds to Challonge
+applySeedingSuggestions()    // Apply seeds to tournament
 
 // AI Seeding
 checkAISeedingStatus()       // Check if AI seeding available
@@ -2623,19 +2481,154 @@ closePlayerProfile()         // Close modal
 - Levenshtein distance for fuzzy matching (threshold: 2)
 - Manual alias support via player_aliases table
 
+### Platform Admin (platform-admin.html, platform-admin.js)
+
+**Purpose:** Superadmin-only god-mode tools for managing users, tournaments, data, and system operations across all tenants.
+
+**Access:** Only visible to superadmin users (admin role + userId 1, or configured via platform settings)
+
+**Tab-Based Layout (7 Tabs):**
+
+| Tab | Purpose |
+|-----|---------|
+| Users | Manage all users, enable/disable, subscription control, impersonation |
+| Invite Keys | Create/manage invite keys (single, multi, unlimited), view usage |
+| Tournaments | Browse all tournaments across all tenants, search/filter |
+| Audit Log | Platform-wide activity log with advanced filtering, CSV export |
+| Database | View status, create/download backups, vacuum, clear cache |
+| Announcements | Create system-wide announcements (banner on all pages) |
+| Settings | Maintenance mode, signup control, trial settings |
+
+**Tab 1: User Management**
+- User table: ID, Username, Role, Status, Subscription, Last Login, Actions
+- Status badges: Active (green), Disabled (red), Trial (yellow), Expired (gray)
+- Actions: View details, Impersonate, Enable/Disable, Manage Subscription
+- Impersonation logs reason and tracks history
+
+**Tab 2: Invite Keys**
+- Stats bar: Total keys, Active keys, Total registrations
+- Create form: Name, Type (single/multi/unlimited), Uses allowed, Expiration
+- Keys table: Key code (masked), Name, Type, Uses, Status, Created by, Actions
+- Copy key with visual feedback
+- Usage history modal per key
+
+**Tab 3: Tournament Browser**
+- Search bar with filters: Owner, Game, State, Date range
+- Tournament cards: Name, Owner, Game, State, Participant count, Created
+- Click to expand: Full details, participant list preview
+- "View as Owner" button (uses impersonation)
+
+**Tab 4: Audit Log**
+- Filter bar: User, Action type, Date range, Search
+- Activity table: Timestamp, User, Action, Target, Details
+- Expandable rows for full detail JSON
+- Export to CSV button
+- Pagination with load more
+
+**Tab 5: Database Tools**
+- Database status cards: tournaments.db, players.db, system.db, cache.db
+  - Size, table count, last modified
+- Backup section:
+  - "Backup All" button
+  - Individual database backup buttons
+  - Backup history list with download links
+- Maintenance: Clear Cache, Vacuum All, Delete backup buttons
+
+**Tab 6: Announcements**
+- Create form: Message, Type (info/warning/alert), Expiration
+- Active announcements list with Edit/Delete buttons
+- Announcement history
+- Announcements display as color-coded banners on all pages:
+  - Alert: Red banner
+  - Warning: Yellow banner
+  - Info: Blue banner
+- Users can dismiss banners (localStorage persistence)
+
+**Tab 7: Platform Settings**
+- Signups: Allow signups toggle, Require invite key toggle
+- Trial: Trial duration (days), Auto-expire toggle
+- Maintenance: Maintenance mode toggle, Maintenance message
+- Feature flags toggles
+
+**Key Functions (platform-admin.js):**
+```javascript
+// Tab navigation
+switchTab(tabId)                    // Switch between tabs
+initTabs()                          // Initialize tab event listeners
+
+// User Management
+loadUsers()                         // Load all users
+updateUserStatus(id, enabled)       // Enable/disable user
+updateSubscription(id, data)        // Update user subscription
+startImpersonation(userId)          // Start impersonating user
+stopImpersonation()                 // Stop impersonation
+
+// Invite Keys
+loadInviteKeys()                    // Load all invite keys
+createInviteKey(data)               // Create new key
+deactivateKey(id)                   // Deactivate key
+reactivateKey(id)                   // Reactivate key
+viewKeyUsage(id)                    // Show usage history
+
+// Tournament Browser
+loadTournaments(filters)            // Load with filters
+viewTournamentDetails(id)           // Show tournament details
+viewAsOwner(userId, tournamentId)   // Impersonate and navigate
+
+// Audit Log
+loadActivityLog(filters)            // Load filtered log
+exportActivityLog()                 // Export to CSV
+
+// Database Tools
+loadDatabaseStatus()                // Get database stats
+createBackup(database)              // Create backup
+downloadBackup(filename)            // Download backup file
+deleteBackup(filename)              // Delete backup
+clearCache()                        // Clear cache database
+vacuumDatabases()                   // Vacuum all databases
+
+// Announcements
+loadAnnouncements()                 // Load all announcements
+createAnnouncement(data)            // Create announcement
+updateAnnouncement(id, data)        // Update announcement
+deleteAnnouncement(id)              // Delete announcement
+
+// Platform Settings
+loadPlatformSettings()              // Load settings
+savePlatformSettings(data)          // Save settings
+```
+
+**Superadmin Detection:**
+```javascript
+// In middleware/auth.js and server.js
+function isSuperadmin(req) {
+    if (!req.session || !req.session.userId) return false;
+    // Legacy: admin with userId 1 is superadmin
+    return req.session.role === 'admin' && req.session.userId === 1;
+}
+```
+
+**Platform Announcements Banner (nav.js):**
+- Fetches active announcements on page load
+- Displays highest priority announcement (alert > warning > info)
+- Color-coded banners at top of page
+- Dismissible with localStorage tracking
+- Re-fetches every 5 minutes
+- Stacks properly with session warning banner
+
 ## Data Files
 
 ```
 users.json           - User accounts with bcrypt hashes
 auth-data.json       - Failed login tracking, lockouts
-system-settings.json - All system settings (including challonge.rateLimit)
+system-settings.json - All system settings
 activity-log.json    - Admin action audit trail
 analytics.db         - SQLite database for historical analytics + API cache
 ```
 
 ## Cache Database (cache-db.js)
 
-SQLite-based caching module for Challonge API responses. Reduces redundant API calls, improves dashboard loading times, and provides offline resilience via stale-while-revalidate pattern.
+SQLite-based caching module for tournament data. Improves dashboard loading times and provides offline resilience via stale-while-revalidate pattern.
 
 **Cache Tables (stored in analytics.db):**
 ```sql
@@ -2729,18 +2722,18 @@ Cache tab in Settings page provides:
 
 ## Analytics Database (analytics-db.js)
 
-SQLite database module for historical tournament data.
+SQLite database module for historical tournament data and analytics.
 
 **Database Schema:**
 ```sql
-players (id, canonical_name, display_name, email, challonge_username, instagram, created_at)
+players (id, canonical_name, display_name, email, instagram, created_at)
 player_aliases (id, player_id FK, alias, normalized_alias UNIQUE)
 games (id, name UNIQUE, short_code, created_at)
-tournaments (id, challonge_id, challonge_url UNIQUE, name, game_id FK, tournament_type,
+tournaments (id, url_slug UNIQUE, name, game_id FK, tournament_type,
              participant_count, started_at, completed_at, archived_at)
-tournament_participants (id, tournament_id FK, player_id FK, challonge_participant_id,
+tournament_participants (id, tournament_id FK, player_id FK,
                          seed, final_rank, UNIQUE(tournament_id, player_id))
-matches (id, tournament_id FK, challonge_match_id, round, player1_id FK, player2_id FK,
+matches (id, tournament_id FK, round, player1_id FK, player2_id FK,
          winner_id FK, loser_id FK, player1_score, player2_score, scores_csv, completed_at)
 player_ratings (id, player_id FK, game_id FK, elo_rating DEFAULT 1200, peak_rating,
                 matches_played, wins, losses, last_active, UNIQUE(player_id, game_id))
@@ -2761,7 +2754,7 @@ analyticsDb.normalizePlayerName(name)      // Normalize for matching
 analyticsDb.findPlayerByName(name)         // Find with fuzzy matching
 analyticsDb.getOrCreatePlayer(name, data)  // Get or create player
 analyticsDb.getOrCreateGame(name)          // Get or create game
-analyticsDb.archiveTournament(id, apiKey)  // Archive from Challonge
+analyticsDb.archiveTournament(id)          // Archive tournament to analytics
 analyticsDb.calculateEloChange(winner, loser, k) // Elo calculation
 analyticsDb.updateEloRatings(tournamentId) // Update ratings after archive
 analyticsDb.getPlayerRankings(gameId)      // Get leaderboard
@@ -2777,23 +2770,13 @@ analyticsDb.deleteNarrativeCache(tournamentId)  // Clear narrative cache
 **system-settings.json structure:**
 ```json
 {
-  "challonge": {
-    "apiKey": "your-api-key",
-    "rateLimit": 30,
-    "adaptiveRateLimit": {
-      "enabled": true,
-      "idleRate": 12,
-      "upcomingRate": 20,
-      "activeRate": 30,
-      "checkIntervalHours": 8,
-      "upcomingWindowHours": 48
-    }
-  },
   "systemDefaults": { ... },
   "security": { ... },
   "notifications": { ... },
   "display": { ... },
-  "dataRetention": { ... }
+  "dataRetention": { ... },
+  "matchQueue": { ... },
+  "dqTimer": { ... }
 }
 ```
 
@@ -2894,21 +2877,32 @@ SWIPE_THRESHOLD = 50;      // Minimum horizontal distance
 SWIPE_VERTICAL_LIMIT = 100; // Max vertical (prevents scroll interference)
 ```
 
+## Font System
+
+See [CODING_STYLE.md](../CODING_STYLE.md#font-system) for complete font documentation.
+
+### Quick Reference
+
+| Font | Variable | Usage |
+|------|----------|-------|
+| Inter | `--font-primary` | Body text, UI elements |
+| Oswald | `--font-display` | Headings (display only) |
+| JetBrains Mono | `--font-mono` | Timers, scores, code |
+
+Google Fonts are loaded in all HTML files via `<link>` tags in `<head>`.
+
 ## Environment Variables
 
 ```env
 PORT=3000
 SESSION_SECRET=change-in-production
-DEFAULT_CHALLONGE_KEY=your_api_key
 
 MATCH_API_URL=http://localhost:2052
 BRACKET_API_URL=http://localhost:2053
-FLYER_API_URL=http://localhost:2054
 
-FLYERS_PATH=/root/tournament-control-center/MagicMirror-bracket/flyers
+FLYERS_PATH=/root/tcc-custom/admin-dashboard/flyers
 MATCH_STATE_FILE=/root/.../tournament-state.json
 BRACKET_STATE_FILE=/root/.../tournament-state.json
-FLYER_STATE_FILE=/root/.../flyer-state.json
 ```
 
 ## File Structure
@@ -2933,16 +2927,24 @@ admin-dashboard/
 ├── uploads/               # Temp upload dir
 ├── constants/             # Application constants
 │   └── index.js           # RATE_MODES, ACTIVITY_TYPES, PDF_COLORS
-├── services/              # Business logic services (extracted from server.js)
+├── services/              # Business logic services
 │   ├── index.js           # Central export for all services
 │   ├── container.js       # AppContext singleton for shared state
 │   ├── websocket-ack.js   # Enhanced WebSocket delivery with retry
 │   ├── settings.js        # Settings file operations (~380 lines)
-│   ├── rate-limiter.js    # Adaptive Challonge rate limiting (~500 lines)
+│   ├── tournament-db.js   # Tournament CRUD operations
+│   ├── match-db.js        # Match operations + bracket progression
+│   ├── participant-db.js  # Participant management
+│   ├── bracket-engine/    # Custom bracket generation algorithms
+│   │   ├── index.js       # Format dispatcher
+│   │   ├── single-elimination.js
+│   │   ├── double-elimination.js
+│   │   ├── round-robin.js
+│   │   └── swiss.js
+│   ├── bracket-renderer.js # Visualization data generator
 │   ├── activity-logger.js # Activity logging with WebSocket broadcasting (~120 lines)
-│   ├── challonge-api.js   # Challonge API v2.1 communication (~300 lines)
 │   ├── dq-timer.js        # Server-side DQ timer management (~280 lines)
-│   ├── match-polling.js   # Centralized match polling (~550 lines)
+│   ├── match-polling.js   # Local database match polling (~300 lines)
 │   ├── sponsor.js         # Sponsor overlay management (~250 lines)
 │   ├── ai-seeding.js      # AI-powered seeding with Anthropic Claude (~740 lines)
 │   └── tournament-narrator.js  # AI-powered tournament recap narratives (~550 lines)
@@ -2959,7 +2961,7 @@ admin-dashboard/
 │   ├── matches.js         # Match operations, scoring, stations (~1,200 lines)
 │   ├── tournaments.js     # Tournament CRUD, lifecycle (~800 lines)
 │   ├── displays.js        # Pi display management (~650 lines)
-│   ├── flyers.js          # Flyer uploads and management (~290 lines)
+│   ├── flyers.js          # Flyer list/delete/preview (upload route with auto-optimization is in server.js)
 │   ├── sponsors.js        # Sponsor overlays (~300 lines)
 │   ├── analytics.js       # Analytics and seeding suggestions (~600 lines)
 │   ├── exports.js         # CSV/PDF exports (~600 lines)
@@ -3044,7 +3046,7 @@ Increment version in HTML:
 **Location:** `public/sw.js` - Provides offline support and caching
 
 **Version Management:**
-- Cache names include version: `tournament-admin-v2`, `tournament-static-v2`, `tournament-dynamic-v2`
+- Cache names include version: `control-center-admin-v2`, `tournament-static-v2`, `tournament-dynamic-v2`
 - Registration in `pwa.js` line 16: `/sw.js?v=2`
 - Query string bypasses CDN caching issues
 
@@ -3088,7 +3090,7 @@ connectSrc: [
     "https://cdn.socket.io",
     "https://cdn.tailwindcss.com"
 ],
-frameSrc: ["https://challonge.com", "https://*.challonge.com"]
+frameSrc: ["'self'"]  // Native bracket rendering (iframe mode removed)
 ```
 
 **Adding New CDN:**
@@ -3105,15 +3107,160 @@ curl -sI "http://localhost:3000/" | grep -i content-security
 curl -sI "https://admin.despairhardware.com/" | grep -i content-security
 ```
 
+## Debugging Infrastructure
+
+Comprehensive verbose debugging throughout the admin dashboard, controlled via environment variables and browser settings.
+
+### Backend Debug Logger (services/debug-logger.js)
+
+Centralized logging utility for all backend services:
+
+```javascript
+const { log, logError } = require('./services/debug-logger');
+
+// General logging
+log('tournament-db', 'create', { name: 'Weekly', format: 'double_elimination' });
+
+// Error logging (always logged, regardless of DEBUG_MODE)
+logError('match-db', 'setWinner', error, { matchId: 123 });
+```
+
+**Enabling Debug Mode:**
+```bash
+# In .env file
+DEBUG_MODE=true
+
+# Or environment variable
+DEBUG_MODE=true npm start
+```
+
+**Log Format:**
+```
+[2025-12-11T10:30:45.123Z] [tournament-db:create] { name: "Weekly", format: "double_elimination" }
+```
+
+**Backend Service Prefixes:**
+| Service | Prefix | File |
+|---------|--------|------|
+| Tournament DB | `tournament-db` | services/tournament-db.js |
+| Match DB | `match-db` | services/match-db.js |
+| Participant DB | `participant-db` | services/participant-db.js |
+| Station DB | `station-db` | services/station-db.js |
+| Bracket Engine | `bracket-engine` | services/bracket-engine/*.js |
+| Match Polling | `match-polling` | services/match-polling.js |
+| HTTP Requests | `http` | server.js middleware |
+| WebSocket | `websocket` | server.js |
+
+### Frontend Debug Utility (FrontendDebug in utils.js)
+
+Color-coded browser console logging for frontend JavaScript:
+
+```javascript
+// Enable via browser console
+localStorage.setItem('debug_mode', 'true');
+location.reload();
+
+// Or via URL parameter
+?debug=true
+
+// Disable
+localStorage.removeItem('debug_mode');
+```
+
+**Methods:**
+| Method | Color | Usage |
+|--------|-------|-------|
+| `FrontendDebug.log(service, msg, data)` | Green | General logging |
+| `FrontendDebug.warn(service, msg, data)` | Orange | Warnings |
+| `FrontendDebug.error(service, msg, error)` | Red | Errors |
+| `FrontendDebug.api(service, msg, data)` | Blue | API calls |
+| `FrontendDebug.ws(service, msg, data)` | Purple | WebSocket events |
+| `FrontendDebug.action(service, msg, data)` | Cyan | User actions |
+
+**Frontend Service Prefixes:**
+| Page | Prefix |
+|------|--------|
+| Dashboard | `Dashboard` |
+| Tournament | `Tournament` |
+| Matches | `Matches` |
+| Participants | `Participants` |
+| Displays | `Displays` |
+| Flyers | `Flyers` |
+| Sponsors | `Sponsors` |
+| Analytics | `Analytics` |
+| Settings | `Settings` |
+| Command Center | `CommandCenter` |
+| Utils/WebSocket | `Utils` |
+
+**Example Usage in Frontend Code:**
+```javascript
+FrontendDebug.log('Dashboard', 'Status refresh', { modules: data.modules.length });
+FrontendDebug.api('Tournament', 'Fetching tournaments');
+FrontendDebug.ws('Matches', 'Update received', { action: data.action });
+FrontendDebug.error('Settings', 'Failed to save', error);
+```
+
+### Request Logging Middleware
+
+When `DEBUG_MODE=true`, all HTTP requests are logged:
+
+```
+[2025-12-11T10:30:45.123Z] [http:request] POST /api/tournaments/create { requestId: "a7x2b3k9", body: {...} }
+[2025-12-11T10:30:45.234Z] [http:response] POST /api/tournaments/create { requestId: "a7x2b3k9", status: 200, duration: "111ms" }
+```
+
+### Debug Commands
+
+```bash
+# View all debug logs
+sudo journalctl -u control-center-admin -f
+
+# Filter by service prefix
+sudo journalctl -u control-center-admin -f | grep "tournament-db"
+sudo journalctl -u control-center-admin -f | grep "bracket-engine"
+sudo journalctl -u control-center-admin -f | grep "match-polling"
+
+# View HTTP request logs
+sudo journalctl -u control-center-admin -f | grep "http:"
+
+# View WebSocket logs
+sudo journalctl -u control-center-admin -f | grep "websocket"
+```
+
+### What Gets Logged
+
+**Database Operations:**
+- Tournament: create, getById, getBySlug, list, update, updateState, delete
+- Match: create, bulkCreate, setWinner, advanceWinner, setStation
+- Participant: create, bulkCreate, update, checkIn, delete
+- Station: create, getByTournament, delete
+
+**Bracket Engine:**
+- Format selection with participant count
+- Seeding assignments with BYE handling
+- Round generation with match counts
+- Prerequisite match linking
+- Grand finals configuration (double elim)
+
+**Match Polling:**
+- Poll cycle start/end with duration
+- Match state change detection
+- WebSocket broadcast events
+
+**Routes:**
+- API request parameters
+- Operation results and affected rows
+- Error details with context
+
 ## Troubleshooting
 
 ### Page Not Loading
 ```bash
 # Check service
-sudo systemctl status tournament-admin
+sudo systemctl status control-center-admin
 
 # Check logs
-sudo journalctl -u tournament-admin -n 50
+sudo journalctl -u control-center-admin -n 50
 ```
 
 ### Authentication Issues
@@ -3129,9 +3276,9 @@ node -e "require('bcrypt').hash('newpass', 10).then(console.log)"
 ### Module Status Offline
 ```bash
 # Test APIs directly
-curl http://localhost:2052/api/tournament/status
-curl http://localhost:2053/api/tournament/status
-curl http://localhost:2054/api/tournament/status
+curl http://localhost:2052/api/tournament/status  # Match Display
+curl http://localhost:2053/api/tournament/status  # Bracket Display
+curl http://localhost:2054/api/flyer/status       # Flyer Display
 ```
 
 ### Flyer Thumbnails Not Showing
@@ -3139,58 +3286,24 @@ curl http://localhost:2054/api/tournament/status
 - Verify preview endpoint: `curl http://localhost:3000/api/flyers/preview/filename.png`
 - Hard refresh (Ctrl+Shift+R) or increment JS version
 
-### Challonge API Rate Limit Errors (429/403)
-If you see Cloudflare rate limit errors:
-1. Go to Settings > Challonge API
-2. Set manual mode override to IDLE for minimal API usage
-3. Or lower the rate limit cap to 20-30 requests per minute
-4. Save settings (takes effect immediately)
-5. Note: Stale tournaments (7+ days underway) are automatically ignored
-
-**Check current rate status:**
-```bash
-# View adaptive rate state in logs
-sudo journalctl -u tournament-admin | grep "Adaptive Rate"
-
-# Check settings file
-cat system-settings.json | jq '.challonge'
-```
-
-**Force IDLE mode via code (server.js adaptiveRateState ~line 136):**
-```javascript
-manualOverride: RATE_MODES.IDLE  // Set to null for automatic mode
-```
-
-**Key rate limiting functions:**
-- `getChallongeRateLimit()` - Returns effective rate (line 253)
-- `getMinRequestDelay()` - Calculates delay in ms (line 777)
-- `checkTournamentsAndUpdateMode()` - Tournament check with stale filtering (line 312)
-
 ## Raspberry Pi Display Hardware
 
 ### Current Configuration (Raspberry Pi 5 4GB)
 
 **Hardware:** Raspberry Pi 5 (4GB RAM), 500GB NVMe SSD
-- IP Address: 192.168.1.145
 - Hostname: pi-display-1
-- Display ID: 2ccf676f5c14
 - Browser: Chromium (kiosk mode)
 
 **Software Stack:**
 - OS: Raspberry Pi OS Lite (Bookworm 64-bit)
 - Window Manager: Openbox (minimal)
 - Browser: Chromium in kiosk mode
-- Display URL: Configured via admin dashboard
+- Display URL: Configured during setup (multi-tenant pattern: `/u/:userId/match`)
 
 **Configuration:**
 - GPU memory: 256MB
 - zram swap: 50% compressed
 - Temperature: 45-50C under load
-
-**Pre-configured WiFi Networks (auto-connect by priority):**
-1. Neils Bahr - Guest (priority 30) - Primary venue
-2. WeaponizedData_5G (priority 20) - Secondary
-3. HTXPokemonCollectors-VZW (priority 10) - Tertiary
 
 ### Setup Script (setup-pi.sh)
 
@@ -3198,31 +3311,48 @@ manualOverride: RATE_MODES.IDLE  // Set to null for automatic mode
 
 **Usage:**
 ```bash
-curl -sSL https://admin.despairhardware.com/setup-pi.sh | sudo bash
+curl -sSL https://your-admin-url.com/setup-pi.sh | sudo bash
 ```
+
+**Interactive Configuration:**
+The setup script prompts for configuration during installation:
+
+| Prompt | Required | Description |
+|--------|----------|-------------|
+| Admin Dashboard URL | Yes | Base URL with validation and connectivity test |
+| User ID | Yes | Numeric tenant ID for multi-tenant displays |
+| WiFi Networks | No | Add multiple networks with priorities (can skip) |
 
 **9-Step Setup Process:**
 1. Updates system packages
 2. Installs X server, Chromium, NetworkManager, xdotool, dependencies
 3. Configures console auto-login
-4. Creates kiosk configuration files
+4. Creates kiosk configuration files (with userId for multi-tenant)
 5. Creates kiosk.sh and display-manager.sh scripts
 6. Creates kiosk-manager.service (systemd)
 7. Applies Pi 5 optimizations (zram, GPU memory, disable unused services)
 8. Sets hostname (uses existing or auto-generates from MAC)
-9. Adds WiFi networks (3 networks with priority-based auto-connect)
+9. Configures WiFi networks (from interactive prompts)
 
 **Features:**
+- **Multi-tenant support:** Uses `/u/:userId/match` URL pattern
 - Chromium browser with hardware acceleration and kiosk mode
-- Display manager service with 30-second heartbeats
+- Display manager service with 30-second heartbeats (includes userId)
 - Config polling every 10 seconds for fast view switching
 - View transitions without reboot (browser-only restart)
-- Current view derived from URL (match/bracket/flyer)
+- Current view derived from URL (supports multi-tenant pattern detection)
 - System metrics reporting (CPU temp, memory, WiFi quality/signal)
-- Multiple WiFi networks pre-configured (3 networks with priorities)
+- **Dynamic WiFi configuration:** Networks added during setup (not hardcoded)
 - **Hang detection watchdog:** Checks Chromium responsiveness every 30s; force-kills after 90s unresponsive
 - **Intent restart validation:** URL changes write epoch timestamp; validated within 10s grace window
 - **Storage-aware performance:** Detects NVMe vs SD card and adjusts settings accordingly
+
+**Port Detection (TCC-Custom):**
+| Port | Display Type | URL Pattern |
+|------|--------------|-------------|
+| 2052 | Match | `/u/:userId/match` or `:2052` |
+| 2053/8081 | Bracket | `:2053` or `:8081` |
+| 2054 | Flyer | `/u/:userId/flyer` or `:2054` |
 
 **Storage Detection (Performance Tuning):**
 | Storage | CPU Governor | Raster Threads | GPU Compositing | Cache Size |
@@ -3235,14 +3365,39 @@ curl -sSL https://admin.despairhardware.com/setup-pi.sh | sudo bash
 |------|---------|
 | `~/kiosk.sh` | Chromium kiosk launcher with watchdog |
 | `~/display-manager.sh` | Heartbeat and config manager |
-| `~/.config/kiosk/config.json` | Current URL configuration |
+| `~/.config/kiosk/config.json` | URL, userId, adminUrl, scale factor |
 | `~/.config/kiosk/state.json` | Display ID and registration state |
 | `~/.config/kiosk/intent_restart` | URL change intent file (epoch timestamp) |
 | `~/.config/kiosk/manager.log` | Manager logs |
 
+**config.json Structure (Multi-Tenant):**
+```json
+{
+    "url": "https://admin.example.com/u/1/match",
+    "adminUrl": "https://admin.example.com",
+    "userId": 1,
+    "heartbeatInterval": 30,
+    "configCheckInterval": 60,
+    "displayScaleFactor": 1.0,
+    "lastUpdated": "2025-12-13T..."
+}
+```
+
 ### Admin Dashboard Display Registration
 
 Displays register via `/api/displays/register` and send heartbeats to `/api/displays/:id/heartbeat`.
+
+**Registration Payload (includes userId):**
+```json
+{
+  "hostname": "pi-display-1",
+  "mac": "2c:cf:67:6f:5c:14",
+  "ip": "192.168.1.145",
+  "externalIp": "...",
+  "currentView": "match",
+  "userId": 1
+}
+```
 
 **Display entry in displays.json:**
 ```json
@@ -3253,7 +3408,8 @@ Displays register via `/api/displays/register` and send heartbeats to `/api/disp
   "currentView": "match",
   "assignedView": "match",
   "status": "online",
-  "lastHeartbeat": "2025-12-09T..."
+  "userId": 1,
+  "lastHeartbeat": "2025-12-13T..."
 }
 ```
 
@@ -3285,21 +3441,20 @@ systemMonitor.getServiceLogs(service, lines)     // Get service logs
 ```javascript
 const CONFIG = {
     services: [
-        { name: 'tournament-admin', port: 3000, description: 'Admin Dashboard' },
+        { name: 'control-center-admin', port: 3000, description: 'Admin Dashboard' },
         { name: 'tournament-signup', port: 3001, description: 'Tournament Signup' },
-        { name: 'magic-mirror-match', port: 2052, description: 'Match Display API' },
-        { name: 'magic-mirror-bracket', port: 2053, description: 'Bracket Display API' },
-        { name: 'magic-mirror-flyer', port: 2054, description: 'Flyer Display API' }
+        { name: 'match-display', port: 2052, description: 'Match Display' },
+        { name: 'flyer-display', port: 2054, description: 'Flyer Display' },
+        { name: 'magic-mirror-bracket', port: 2053, description: 'Bracket Display API' }
     ],
     apiEndpoints: [
-        { name: 'Match Module Status', url: 'http://localhost:2052/api/tournament/status' },
-        { name: 'Bracket Module Status', url: 'http://localhost:2053/api/bracket/status' },
-        { name: 'Flyer Module Status', url: 'http://localhost:2054/api/flyer/status' }
+        { name: 'Match Display Status', url: 'http://localhost:2052/api/health' },
+        { name: 'Flyer Display Status', url: 'http://localhost:2054/api/health' },
+        { name: 'Bracket Module Status', url: 'http://localhost:2053/api/bracket/status' }
     ],
     networkTargets: [
         { name: 'Google DNS', host: '8.8.8.8' },
-        { name: 'Cloudflare DNS', host: '1.1.1.1' },
-        { name: 'Challonge', host: 'api.challonge.com' }
+        { name: 'Cloudflare DNS', host: '1.1.1.1' }
     ],
     sampleIntervalMs: 30000,  // 30 seconds between samples
     reportsDir: './monitoring-reports'
@@ -3349,7 +3504,7 @@ Single-page tournament control dashboard for solo operators. Consolidates critic
 +---------------------------+---------------------------+
 |   Q3: SYSTEM STATUS       |   Q4: QUICK ACTIONS       |
 |   - 3 display modules     |   - Ticker presets        |
-|   - API health/rate limit |   - DQ timer button       |
+|   - Database status       |   - DQ timer button       |
 |   - Tournament progress   |   - QR code show/hide     |
 |                           |   - Refresh button        |
 +---------------------------+---------------------------+
@@ -3376,7 +3531,7 @@ Single-page tournament control dashboard for solo operators. Consolidates critic
 - **Quick scoring:** W/L keys for 2-0 wins, Enter for custom scores
 - **Score modal:** Quick winner buttons (2-0), custom score entry, DQ options
 - **Ticker modal:** Preset messages + custom input
-- **System status:** Display modules, API rate limit mode, tournament progress bar
+- **System status:** Display modules, database status, tournament progress bar
 - **Mobile responsive:** Single column on tablets/phones, touch-optimized
 - **NEXT UP indicator:** Floating card pulses when match completes, shows next match players, one-click start
 - **Auto-advance toggle:** Enable/disable automatic next match highlighting

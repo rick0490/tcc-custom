@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flyer Display</title>
+
+    <!-- Google Fonts - Display optimized for 30ft viewing -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="/css/flyer-display.css">
+
+    <!-- Config data attributes -->
+    <script>
+        window.FLYER_CONFIG = {
+            userId: '<%= userId %>',
+            adminUrl: '<%= adminUrl %>',
+            adminWsUrl: '<%= adminWsUrl %>',
+            debugMode: <%= debugMode %>
+        };
+    </script>
+</head>
+<body data-user-id="<%= userId %>"
+      data-admin-url="<%= adminUrl %>"
+      data-admin-ws-url="<%= adminWsUrl %>"
+      data-debug-mode="<%= debugMode %>">
+
+    <!-- Loading state -->
+    <div id="loading-container" class="loading-container">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Connecting...</div>
+    </div>
+
+    <!-- Error state -->
+    <div id="error-container" class="error-container" style="display: none;">
+        <div class="error-icon">!</div>
+        <div class="error-text">Connection Error</div>
+        <div class="error-subtext">Attempting to reconnect...</div>
+    </div>
+
+    <!-- Flyer container -->
+    <div id="flyer-container" class="flyer-container" style="display: none;">
+        <!-- Image or video element will be inserted here -->
+    </div>
+
+    <!-- Socket.IO from CDN -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <!-- Application scripts -->
+    <script src="/js/websocket-client.js"></script>
+    <script src="/js/flyer-display.js"></script>
+
+    <!-- Initialize on load -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const config = window.FLYER_CONFIG;
+
+            window.flyerDisplay = new FlyerDisplay({
+                userId: config.userId,
+                adminUrl: config.adminUrl,
+                adminWsUrl: config.adminWsUrl,
+                debugMode: config.debugMode
+            });
+        });
+    </script>
+</body>
+</html>

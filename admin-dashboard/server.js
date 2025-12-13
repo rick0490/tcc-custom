@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const axios = require('axios');
 const multer = require('multer');
+const sharp = require('sharp');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
@@ -17,6 +18,17 @@ const PDFDocument = require('pdfkit');
 const webpush = require('web-push');
 const secrets = require('./config/secrets');
 const tickerScheduler = require('./services/ticker-scheduler');
+const debugLogger = require('./services/debug-logger');
+
+// Local database routes (TCC-Custom - no Challonge dependency)
+const localRoutes = require('./routes');
+
+// Local database services (TCC-Custom)
+const participantDb = require('./services/participant-db');
+const tournamentDb = require('./services/tournament-db');
+const matchDb = require('./services/match-db');
+const stationDb = require('./services/station-db');
+const sponsorService = require('./services/sponsor');
 
 // PDF Report Color Palette
 const PDF_COLORS = {
@@ -136,8 +148,9 @@ function calculateDuration(tournament) {
 // System monitoring module
 const systemMonitor = require('./system-monitor');
 
-// Analytics database module
-const analyticsDb = require('./analytics-db');
+// Database modules
+const analyticsDb = require('./analytics-db');  // For player analytics & archiving
+const systemDb = require('./db/system-db');     // For API tokens, OAuth, push subscriptions
 
 // Cache database module for API response caching
 const cacheDb = require('./cache-db');
@@ -204,11 +217,16 @@ const getAllowedOrigins = () => {
 	if (process.env.CORS_ALLOWED_ORIGINS) {
 		return process.env.CORS_ALLOWED_ORIGINS.split(',').map(s => s.trim());
 	}
-	// Default allowed origins (production + local development)
+	// Default allowed origins (production + local development + display services)
 	return [
 		'https://admin.despairhardware.com',
+		'https://live.despairhardware.com',
 		'http://localhost:3000',
-		'http://127.0.0.1:3000'
+		'http://127.0.0.1:3000',
+		'http://localhost:3002',
+		'http://127.0.0.1:3002',
+		'http://192.168.1.28:3002',
+		/^http:\/\/192\.168\.\d+\.\d+:\d+$/  // Allow local network IPs
 	];
 };
 
@@ -277,12 +295,13 @@ function detectTvSlotChange(slotName, oldMatch, newMatch) {
 	}
 
 	// Check for winner change (most important for visual feedback)
-	if (oldMatch.winner_id !== newMatch.winner_id) {
+	// Uses camelCase since matches come from transformed payload
+	if (oldMatch.winnerId !== newMatch.winnerId) {
 		return { type: 'WINNER_DECLARED', match: newMatch };
 	}
 
 	// Check for underway change
-	if (oldMatch.underway_at !== newMatch.underway_at) {
+	if (oldMatch.underwayAt !== newMatch.underwayAt) {
 		return { type: 'UNDERWAY_CHANGE', match: newMatch };
 	}
 
@@ -339,14 +358,15 @@ function buildDeltaPayload(oldState, newPayload, stations) {
 	const tv2Name = 'TV 2';
 
 	// Find current TV matches
+	// Uses camelCase since payload contains transformed match data
 	const matches = newPayload.matches || [];
-	const tv1Match = matches.find(m => m.station_name === tv1Name && (m.state === 'open' || m.state === 'pending')) || null;
-	const tv2Match = matches.find(m => m.station_name === tv2Name && (m.state === 'open' || m.state === 'pending')) || null;
+	const tv1Match = matches.find(m => m.stationName === tv1Name && (m.state === 'open' || m.state === 'pending')) || null;
+	const tv2Match = matches.find(m => m.stationName === tv2Name && (m.state === 'open' || m.state === 'pending')) || null;
 
 	// Get up-next queue (matches without station, open state, sorted by play order)
 	const upNextMatches = matches
-		.filter(m => !m.station_name && m.state === 'open')
-		.sort((a, b) => (a.suggested_play_order || 9999) - (b.suggested_play_order || 9999))
+		.filter(m => !m.stationName && m.state === 'open')
+		.sort((a, b) => (a.suggestedPlayOrder || 9999) - (b.suggestedPlayOrder || 9999))
 		.slice(0, 5);
 
 	// Detect changes
@@ -487,6 +507,9 @@ app.set('trust proxy', true);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Debug request logging middleware (activated via DEBUG_MODE=true)
+app.use(debugLogger.requestLogger());
+
 // Prevent caching of HTML pages and service worker (avoid stale CSP/JS issues)
 app.use((req, res, next) => {
 	if (req.path.endsWith('.html') || req.path === '/' || req.path === '/sw.js') {
@@ -511,16 +534,20 @@ app.use(helmet({
 				"https://static.cloudflareinsights.com" // Cloudflare analytics
 			],
 			scriptSrcAttr: ["'unsafe-inline'"],        // Allow inline event handlers (onclick, etc.)
-			styleSrc: ["'self'", "'unsafe-inline'"],   // Needed for Tailwind CSS
-			imgSrc: ["'self'", "data:", "https:"],     // Allow data URIs and external images
+			styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],   // Needed for Tailwind CSS + Google Fonts
+			imgSrc: ["'self'", "data:", "https:", "http:"],  // Allow data URIs and external images
 			connectSrc: ["'self'", "wss:", "ws:", "https://cloudflareinsights.com", "https://static.cloudflareinsights.com", "https://cdn.socket.io", "https://cdn.tailwindcss.com"],  // WebSocket + Cloudflare + Socket.IO + Tailwind
-			fontSrc: ["'self'"],
+			fontSrc: ["'self'", "https://fonts.gstatic.com"],  // Google Fonts
 			frameSrc: ["https://challonge.com", "https://*.challonge.com"],  // Challonge iframe embed
-			objectSrc: ["'none'"]
+			objectSrc: ["'none'"],
+			// Disable upgrade-insecure-requests in development to allow HTTP
+			upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null
 		}
 	},
 	crossOriginEmbedderPolicy: false,  // Allow Challonge iframe
-	crossOriginResourcePolicy: { policy: "cross-origin" }  // Allow cross-origin resources
+	crossOriginResourcePolicy: { policy: "cross-origin" },  // Allow cross-origin resources
+	// Disable HSTS in development to allow HTTP access
+	hsts: process.env.NODE_ENV === 'production'
 }));
 
 // Load system settings to get session timeout
@@ -584,6 +611,89 @@ const csrf = require('./csrf');
 app.use(csrf.ensureToken);
 app.use(csrf.validateToken);
 
+// Tenant Context (multi-tenant isolation)
+const { attachTenantContext, allowViewAllTenants } = require('./middleware/tenant');
+app.use(attachTenantContext);
+app.use(allowViewAllTenants);
+
+// Subscription Enforcement
+const { checkMaintenanceMode, attachSubscriptionStatus, warnExpiringSubscription } = require('./middleware/subscription');
+app.use(checkMaintenanceMode);
+app.use(attachSubscriptionStatus);
+app.use(warnExpiringSubscription);
+
+// ============================================
+// LOCAL DATABASE ROUTES (TCC-Custom)
+// ============================================
+
+// Helper function to read state files (needed by routes)
+async function readStateFile(filePath) {
+	try {
+		const data = await fs.readFile(filePath, 'utf8');
+		return JSON.parse(data);
+	} catch (error) {
+		return null;
+	}
+}
+
+// Initialize routes with dependencies
+localRoutes.tournaments.init({ io });
+localRoutes.matches.init({ io });
+localRoutes.participants.init({ participantDb, tournamentDb, readStateFile, io });
+localRoutes.stations.init({ io });
+localRoutes.flyers.init({ axios, requireAuthAPI, logActivity, io });
+localRoutes.sponsors.init({ axios, io, requireAuthAPI, sponsorService, logActivity });
+
+// Mount local database routes (replaces Challonge API)
+// Mount at both singular and plural paths for frontend compatibility
+app.use('/api/tournaments', localRoutes.tournaments);
+app.use('/api/tournament', localRoutes.tournaments);  // Singular alias for frontend
+app.use('/api/matches', localRoutes.matches);
+app.use('/api/participants', localRoutes.participants);
+app.use('/api/stations', localRoutes.stations);
+app.use('/api/flyers', localRoutes.flyers);
+app.use('/api/sponsors', localRoutes.sponsors);
+
+// Signup routes (public - no auth required)
+app.use('/api/auth', localRoutes.signup);
+
+// Platform/Admin routes (superadmin only - god mode)
+app.use('/api/admin', localRoutes.platform);
+
+// Station settings aliases for frontend compatibility
+// Frontend calls /api/tournament/:id/station-settings but local routes use /api/stations/settings/:id
+app.get('/api/tournament/:tournamentId/station-settings', requireAuthAPI, (req, res) => {
+	const tournament = tournamentDb.getById(parseInt(req.params.tournamentId)) ||
+		tournamentDb.getBySlug(req.params.tournamentId);
+	if (!tournament) return res.status(404).json({ success: false, error: 'Tournament not found' });
+	const formatSettings = tournament.format_settings || {};
+	res.json({
+		success: true,
+		stationSettings: {
+			autoAssign: formatSettings.autoAssign || false,
+			onlyStartWithStations: formatSettings.onlyStartWithStations || false
+		}
+	});
+});
+app.put('/api/tournament/:tournamentId/station-settings', requireAuthAPI, (req, res) => {
+	const tournament = tournamentDb.getById(parseInt(req.params.tournamentId)) ||
+		tournamentDb.getBySlug(req.params.tournamentId);
+	if (!tournament) return res.status(404).json({ success: false, error: 'Tournament not found' });
+	const { autoAssign, onlyStartWithStations } = req.body;
+	const currentSettings = tournament.format_settings || {};
+	const newSettings = {
+		...currentSettings,
+		autoAssign: typeof autoAssign === 'boolean' ? autoAssign : currentSettings.autoAssign,
+		onlyStartWithStations: typeof onlyStartWithStations === 'boolean' ? onlyStartWithStations : currentSettings.onlyStartWithStations
+	};
+	tournamentDb.update(tournament.id, { format_settings_json: newSettings });
+	res.json({
+		success: true,
+		message: 'Station settings updated',
+		stationSettings: { autoAssign: newSettings.autoAssign || false, onlyStartWithStations: newSettings.onlyStartWithStations || false }
+	});
+});
+
 // Rate limiting
 // TEMPORARILY DISABLED - Skip function not working correctly
 // TODO: Fix skip function or apply rate limiting more selectively
@@ -635,399 +745,90 @@ function loadSystemSettings() {
 	}
 }
 
-// Check if Challonge OAuth is connected
+// ============================================
+// TCC-CUSTOM: Local Mode Stubs
+// (Challonge rate limiting removed - using local database)
+// ============================================
+
+// Stub: Always returns false since we use local database
 function isChallongeConnected() {
-	return analyticsDb.isOAuthConnected('challonge');
+	return false;
 }
 
-// Get the legacy API key from environment (fallback when OAuth not connected)
+// Stub: No legacy API key needed for local mode
 function getLegacyApiKey() {
-	return process.env.DEFAULT_CHALLONGE_KEY || null;
+	return null;
 }
 
-// Returns 'oauth-connected' if OAuth connected, otherwise the legacy API key
+// Stub: Returns null since we use local database
 function getChallongeApiKey() {
-	if (isChallongeConnected()) {
-		return 'oauth-connected';
-	}
-	return getLegacyApiKey();
+	return null;
 }
 
-// ============================================
-// CHALLONGE API RATE LIMITER (ADAPTIVE)
-// ============================================
-
-// Rate mode constants
-const RATE_MODES = {
-	IDLE: { name: 'IDLE', description: 'No upcoming tournaments' },
-	UPCOMING: { name: 'UPCOMING', description: 'Tournament starting soon' },
-	ACTIVE: { name: 'ACTIVE', description: 'Tournament underway' }
-};
-
-// Rate limiter state
-const challongeRateLimiter = {
-	lastRequestTime: 0,
-	requestQueue: [],
-	isProcessing: false
-};
-
-// Adaptive rate limiter state
-const adaptiveRateState = {
-	currentMode: RATE_MODES.IDLE,
-	effectiveRate: 1,
-	upcomingTournament: null,
-	activeTournament: null,
-	lastCheck: null,
-	nextCheck: null,
-	checkIntervalId: null,
-	manualOverride: null  // Set to null for automatic mode, or RATE_MODES.IDLE/UPCOMING/ACTIVE to force
-};
-
-// Development mode state (bypasses rate limiting for 3 hours)
-const devModeState = {
-	active: false,
-	activatedAt: null,
-	expiresAt: null,
-	timeoutId: null
-};
-
-// Dev mode duration: 3 hours in milliseconds
-const DEV_MODE_DURATION_MS = 3 * 60 * 60 * 1000;
-
-// Check if dev mode is currently active
-function isDevModeActive() {
-	if (!devModeState.active) return false;
-
-	// Check if expired
-	if (devModeState.expiresAt && Date.now() > devModeState.expiresAt) {
-		disableDevMode();
-		return false;
-	}
-
-	return true;
-}
-
-// Enable dev mode for 3 hours
-function enableDevMode() {
-	const now = Date.now();
-
-	devModeState.active = true;
-	devModeState.activatedAt = new Date(now).toISOString();
-	devModeState.expiresAt = now + DEV_MODE_DURATION_MS;
-
-	// Clear any existing timeout
-	if (devModeState.timeoutId) {
-		clearTimeout(devModeState.timeoutId);
-	}
-
-	// Set timeout to auto-disable
-	devModeState.timeoutId = setTimeout(() => {
-		disableDevMode();
-		console.log('[Dev Mode] Automatically disabled after 3 hours');
-	}, DEV_MODE_DURATION_MS);
-
-	console.log(`[Dev Mode] Enabled - expires at ${new Date(devModeState.expiresAt).toISOString()}`);
-
-	// Log activity
-	logActivity(0, 'System', 'dev_mode_enabled', {
-		expiresAt: new Date(devModeState.expiresAt).toISOString()
-	});
-
-	// Start match polling (dev mode enables faster polling)
-	setTimeout(() => {
-		if (typeof updateMatchPolling === 'function') {
-			updateMatchPolling();
-		}
-	}, 100);
-}
-
-// Disable dev mode
-function disableDevMode() {
-	if (devModeState.timeoutId) {
-		clearTimeout(devModeState.timeoutId);
-	}
-
-	const wasActive = devModeState.active;
-
-	devModeState.active = false;
-	devModeState.activatedAt = null;
-	devModeState.expiresAt = null;
-	devModeState.timeoutId = null;
-
-	if (wasActive) {
-		console.log('[Dev Mode] Disabled');
-		logActivity(0, 'System', 'dev_mode_disabled', {});
-
-		// Update match polling (may stop if not in ACTIVE mode)
-		setTimeout(() => {
-			if (typeof updateMatchPolling === 'function') {
-				updateMatchPolling();
-			}
-		}, 100);
-	}
-}
-
-// Get remaining dev mode time in ms
-function getDevModeRemainingMs() {
-	if (!isDevModeActive()) return 0;
-	return Math.max(0, devModeState.expiresAt - Date.now());
-}
-
-// Get adaptive rate limit settings
-function getAdaptiveRateLimitSettings() {
-	const settings = loadSystemSettings();
+// Stub: Rate limit status for dashboard (returns local mode info)
+function getRateLimitStatus() {
 	return {
-		enabled: settings?.challonge?.adaptiveRateLimit?.enabled ?? false,
-		idleRate: settings?.challonge?.adaptiveRateLimit?.idleRate ?? 1,
-		upcomingRate: settings?.challonge?.adaptiveRateLimit?.upcomingRate ?? 5,
-		activeRate: settings?.challonge?.adaptiveRateLimit?.activeRate ?? 15,
-		checkIntervalHours: settings?.challonge?.adaptiveRateLimit?.checkIntervalHours ?? 8,
-		upcomingWindowHours: settings?.challonge?.adaptiveRateLimit?.upcomingWindowHours ?? 48,
-		manualRateLimit: settings?.challonge?.rateLimit ?? 15
+		mode: 'local',
+		description: 'Using local SQLite database - no rate limiting needed',
+		adaptiveEnabled: false,
+		currentMode: 'LOCAL',
+		modeDescription: 'Local database mode',
+		effectiveRate: 'unlimited',
+		manualRateLimit: null,
+		manualOverride: null,
+		settings: null,
+		devModeActive: false,
+		matchPolling: {
+			active: matchPollingState.isPolling,
+			intervalMs: matchPollingState.pollIntervalMs,
+			lastPollTime: matchPollingState.lastPollTime
+		}
 	};
 }
 
-// Get rate limit settings (requests per minute) - now adaptive
-function getChallongeRateLimit() {
-	const adaptiveSettings = getAdaptiveRateLimitSettings();
+// Stub: Dev mode functions (no-ops in local mode)
+function isDevModeActive() { return false; }
+function enableDevMode() { console.log('[Local Mode] Dev mode not applicable - using local database'); }
+function disableDevMode() { console.log('[Local Mode] Dev mode not applicable - using local database'); }
+function getDevModeRemainingMs() { return 0; }
 
-	if (!adaptiveSettings.enabled) {
-		// Adaptive disabled - use manual setting
-		return adaptiveSettings.manualRateLimit;
-	}
+// Stub: Rate limiter functions (no-ops in local mode)
+function checkTournamentsAndUpdateMode() { return Promise.resolve(); }
+function startAdaptiveRateScheduler() { console.log('[Local Mode] Rate limiting not needed - using local database'); }
+function updateRateMode() {}
 
-	// Return effective rate (capped by manual setting)
-	return Math.min(adaptiveRateState.effectiveRate, adaptiveSettings.manualRateLimit);
+// Stub: State objects for backward compatibility with routes
+const RATE_MODES = {
+	IDLE: { name: 'LOCAL', description: 'Local database mode' },
+	UPCOMING: { name: 'LOCAL', description: 'Local database mode' },
+	ACTIVE: { name: 'LOCAL', description: 'Local database mode' }
+};
+const adaptiveRateState = {
+	currentMode: { name: 'LOCAL', description: 'Local database mode' },
+	effectiveRate: 'unlimited',
+	manualOverride: null
+};
+const devModeState = {
+	active: false,
+	expiresAt: null
+};
+
+// Stub: Challonge API functions (throw errors in local mode - caught by try/catch)
+async function challongeV2Request() {
+	throw new Error('Challonge API not available - using local database mode');
 }
 
-// Update rate mode based on tournament state
-function updateRateMode(mode, tournament = null) {
-	const adaptiveSettings = getAdaptiveRateLimitSettings();
-	const previousMode = adaptiveRateState.currentMode;
-
-	adaptiveRateState.currentMode = mode;
-
-	// Set effective rate based on mode
-	switch (mode.name) {
-		case 'IDLE':
-			adaptiveRateState.effectiveRate = adaptiveSettings.idleRate;
-			adaptiveRateState.upcomingTournament = null;
-			adaptiveRateState.activeTournament = null;
-			break;
-		case 'UPCOMING':
-			adaptiveRateState.effectiveRate = adaptiveSettings.upcomingRate;
-			adaptiveRateState.upcomingTournament = tournament;
-			adaptiveRateState.activeTournament = null;
-			break;
-		case 'ACTIVE':
-			adaptiveRateState.effectiveRate = adaptiveSettings.activeRate;
-			adaptiveRateState.activeTournament = tournament;
-			break;
-	}
-
-	// Cap by manual rate limit
-	adaptiveRateState.effectiveRate = Math.min(
-		adaptiveRateState.effectiveRate,
-		adaptiveSettings.manualRateLimit
-	);
-
-	// Log mode change if different
-	if (previousMode.name !== mode.name) {
-		const tournamentInfo = tournament ? ` (${tournament.name})` : '';
-		console.log(`[Adaptive Rate] Mode changed: ${previousMode.name} -> ${mode.name}${tournamentInfo}, effective rate: ${adaptiveRateState.effectiveRate} req/min`);
-
-		// Log to activity log (async, don't await)
-		logActivity(0, 'System', 'rate_mode_change', {
-			previousMode: previousMode.name,
-			newMode: mode.name,
-			effectiveRate: adaptiveRateState.effectiveRate,
-			tournament: tournament?.name || null
-		});
-
-		// Update match polling based on new mode (start/stop as needed)
-		// Use setTimeout to ensure matchPollingState is initialized
-		setTimeout(() => {
-			if (typeof updateMatchPolling === 'function') {
-				updateMatchPolling();
-			}
-		}, 100);
-	}
+async function getChallongeV2Headers() {
+	throw new Error('Challonge API not available - using local database mode');
 }
 
-// Check tournaments and update rate mode (called periodically)
-async function checkTournamentsAndUpdateMode() {
-	const adaptiveSettings = getAdaptiveRateLimitSettings();
-
-	if (!adaptiveSettings.enabled) {
-		return;
-	}
-
-	// If manual override is set, use that mode and skip tournament check
-	if (adaptiveRateState.manualOverride) {
-		console.log(`[Adaptive Rate] Manual override active: ${adaptiveRateState.manualOverride.name}`);
-		updateRateMode(adaptiveRateState.manualOverride);
-		adaptiveRateState.lastCheck = new Date().toISOString();
-		return;
-	}
-
-	// Check if we have any way to authenticate (OAuth or legacy key)
-	if (!isChallongeConnected() && !getLegacyApiKey()) {
-		console.warn('[Adaptive Rate] No Challonge credentials available, skipping tournament check');
-		return;
-	}
-
-	adaptiveRateState.lastCheck = new Date().toISOString();
-
-	try {
-		// Make a single API call to get tournaments using v2.1 (this call itself uses current rate limit)
-		console.log('[Adaptive Rate] Checking tournaments via v2.1...');
-
-		const headers = await getChallongeV2Headers();
-		const response = await axios.get('https://api.challonge.com/v2.1/tournaments.json', {
-			headers,
-			timeout: 15000
-		});
-
-		const tournamentsData = response.data?.data || [];
-		const now = new Date();
-		const upcomingWindowMs = adaptiveSettings.upcomingWindowHours * 60 * 60 * 1000;
-		const staleThresholdMs = 7 * 24 * 60 * 60 * 1000; // 7 days - ignore stale underway tournaments
-
-		// Transform v2.1 data to internal format for processing
-		const tournaments = tournamentsData.map(t => ({
-			tournament: {
-				id: parseInt(t.id),
-				name: t.attributes.name,
-				url: t.attributes.url,
-				state: t.attributes.state,
-				started_at: t.attributes.timestamps?.started_at,
-				start_at: t.attributes.timestamps?.starts_at || t.attributes.starts_at
-			}
-		}));
-
-		// Check for active (underway) tournaments first
-		// Skip stale tournaments (underway for more than 7 days - likely abandoned)
-		const activeTournament = tournaments.find(t => {
-			if (t.tournament.state !== 'underway') return false;
-
-			// Check if tournament is stale
-			const startedAt = t.tournament.started_at;
-			if (startedAt) {
-				const startDate = new Date(startedAt);
-				const age = now - startDate;
-				if (age > staleThresholdMs) {
-					console.log(`[Adaptive Rate] Skipping stale tournament: ${t.tournament.name} (started ${Math.round(age / (24 * 60 * 60 * 1000))} days ago)`);
-					return false;
-				}
-			}
-			return true;
-		});
-
-		if (activeTournament) {
-			updateRateMode(RATE_MODES.ACTIVE, {
-				name: activeTournament.tournament.name,
-				id: activeTournament.tournament.url,
-				state: activeTournament.tournament.state
-			});
-			return;
-		}
-
-		// Check for pending tournaments where start time has passed (should be ACTIVE)
-		// This handles the case where tournament started but Challonge state hasn't updated to "underway" yet
-		const startedButPending = tournaments.find(t => {
-			if (t.tournament.state !== 'pending') return false;
-			if (!t.tournament.start_at) return false;
-
-			const startAt = new Date(t.tournament.start_at);
-			const timeUntilStart = startAt - now;
-
-			// Start time has passed (negative) but within reasonable window (last 12 hours)
-			return timeUntilStart < 0 && timeUntilStart > -12 * 60 * 60 * 1000;
-		});
-
-		if (startedButPending) {
-			console.log(`[Adaptive Rate] Tournament "${startedButPending.tournament.name}" start time has passed but still pending - treating as ACTIVE`);
-			updateRateMode(RATE_MODES.ACTIVE, {
-				name: startedButPending.tournament.name,
-				id: startedButPending.tournament.url,
-				state: 'pending (started)',
-				note: 'Start time passed, awaiting Challonge state update'
-			});
-			return;
-		}
-
-		// Check for upcoming tournaments (pending with start_at within window)
-		const upcomingTournament = tournaments.find(t => {
-			if (t.tournament.state !== 'pending') return false;
-			if (!t.tournament.start_at) return false;
-
-			const startAt = new Date(t.tournament.start_at);
-			const timeUntilStart = startAt - now;
-
-			return timeUntilStart > 0 && timeUntilStart <= upcomingWindowMs;
-		});
-
-		if (upcomingTournament) {
-			const startAt = new Date(upcomingTournament.tournament.start_at);
-			const hoursUntil = Math.round((startAt - now) / (1000 * 60 * 60));
-
-			updateRateMode(RATE_MODES.UPCOMING, {
-				name: upcomingTournament.tournament.name,
-				id: upcomingTournament.tournament.url,
-				state: upcomingTournament.tournament.state,
-				startAt: upcomingTournament.tournament.start_at,
-				hoursUntil: hoursUntil
-			});
-			return;
-		}
-
-		// No active or upcoming tournaments - go to idle
-		updateRateMode(RATE_MODES.IDLE);
-
-	} catch (error) {
-		console.error('[Adaptive Rate] Error checking tournaments:', error.message);
-		// On error, don't change mode - keep current state
-	}
-
-	// Schedule next check
-	const nextCheckTime = new Date(Date.now() + adaptiveSettings.checkIntervalHours * 60 * 60 * 1000);
-	adaptiveRateState.nextCheck = nextCheckTime.toISOString();
-}
-
-// Start the adaptive rate scheduler
-function startAdaptiveRateScheduler() {
-	const adaptiveSettings = getAdaptiveRateLimitSettings();
-
-	if (!adaptiveSettings.enabled) {
-		console.log('[Adaptive Rate] Disabled - using manual rate limit');
-		return;
-	}
-
-	// Clear existing interval if any
-	if (adaptiveRateState.checkIntervalId) {
-		clearInterval(adaptiveRateState.checkIntervalId);
-	}
-
-	const intervalMs = adaptiveSettings.checkIntervalHours * 60 * 60 * 1000;
-
-	console.log(`[Adaptive Rate] Starting scheduler - checking every ${adaptiveSettings.checkIntervalHours} hours`);
-	console.log(`[Adaptive Rate] Rates - Idle: ${adaptiveSettings.idleRate}, Upcoming: ${adaptiveSettings.upcomingRate}, Active: ${adaptiveSettings.activeRate} req/min`);
-	console.log(`[Adaptive Rate] Manual cap: ${adaptiveSettings.manualRateLimit} req/min`);
-
-	// Run initial check after a short delay (let server start first)
-	setTimeout(() => {
-		checkTournamentsAndUpdateMode();
-	}, 5000);
-
-	// Schedule periodic checks
-	adaptiveRateState.checkIntervalId = setInterval(() => {
-		checkTournamentsAndUpdateMode();
-	}, intervalMs);
-
-	// Calculate next check time
-	const nextCheckTime = new Date(Date.now() + intervalMs);
-	adaptiveRateState.nextCheck = nextCheckTime.toISOString();
-}
+const rateLimitedAxios = {
+	get: async () => { throw new Error('Challonge API not available - using local database mode'); },
+	post: async () => { throw new Error('Challonge API not available - using local database mode'); },
+	put: async () => { throw new Error('Challonge API not available - using local database mode'); },
+	delete: async () => { throw new Error('Challonge API not available - using local database mode'); },
+	patch: async () => { throw new Error('Challonge API not available - using local database mode'); }
+};
 
 // ============================================
 // MATCH POLLING SCHEDULER (Centralized)
@@ -1061,7 +862,7 @@ function getDQTimerSettings() {
 }
 
 // Start a server-side DQ timer with auto-DQ capability
-function startServerDQTimer(tournamentId, matchId, tv, duration, playerId, playerName) {
+function startServerDQTimer(tournamentId, matchId, tv, duration, playerId, playerName, userId = null) {
 	const key = `${tournamentId}:${matchId}:${tv}`;
 
 	// Clear existing timer if any
@@ -1082,6 +883,7 @@ function startServerDQTimer(tournamentId, matchId, tv, duration, playerId, playe
 		playerId,
 		playerName,
 		duration,
+		userId,  // Store user who started the timer for multi-tenant broadcasts
 		startTime: new Date(),
 		expiresAt: new Date(Date.now() + duration * 1000),
 		warningTimeoutId: null,
@@ -1091,13 +893,13 @@ function startServerDQTimer(tournamentId, matchId, tv, duration, playerId, playe
 	// Set warning timeout (30 seconds before expiry)
 	if (duration > warningThreshold) {
 		timer.warningTimeoutId = setTimeout(() => {
-			io.emit('timer:dq:warning', {
+			broadcastToUser('timer:dq:warning', {
 				key,
 				tv,
 				matchId,
 				playerName,
 				secondsRemaining: warningThreshold
-			});
+			}, timer.userId);
 		}, (duration - warningThreshold) * 1000);
 	}
 
@@ -1108,8 +910,8 @@ function startServerDQTimer(tournamentId, matchId, tv, duration, playerId, playe
 
 	activeDQTimers.set(key, timer);
 
-	// Broadcast timer started
-	io.emit('timer:dq:started', {
+	// Broadcast timer started (multi-tenant)
+	broadcastToUser('timer:dq:started', {
 		key,
 		tournamentId,
 		matchId,
@@ -1119,9 +921,9 @@ function startServerDQTimer(tournamentId, matchId, tv, duration, playerId, playe
 		duration,
 		startTime: timer.startTime.toISOString(),
 		expiresAt: timer.expiresAt.toISOString()
-	});
+	}, userId);
 
-	console.log(`[DQ Timer] Started: ${key} (${playerName || 'unknown'}) - ${duration}s`);
+	console.log(`[DQ Timer] Started: ${key} (${playerName || 'unknown'}) - ${duration}s${userId ? ` for user:${userId}` : ''}`);
 	return timer;
 }
 
@@ -1162,17 +964,17 @@ async function handleDQTimerExpiry(key) {
 			});
 		} catch (error) {
 			console.error(`[DQ Timer] Auto-DQ failed:`, error.message);
-			io.emit('timer:dq:error', { key, error: error.message });
+			broadcastToUser('timer:dq:error', { key, error: error.message }, timer.userId);
 		}
 	} else {
-		// Just notify - no auto-DQ
-		io.emit('timer:dq:expired', {
+		// Just notify - no auto-DQ (multi-tenant)
+		broadcastToUser('timer:dq:expired', {
 			key,
 			tv: timer.tv,
 			matchId: timer.matchId,
 			playerName: timer.playerName,
 			action: 'notify'
-		});
+		}, timer.userId);
 	}
 
 	// Clean up
@@ -1180,17 +982,18 @@ async function handleDQTimerExpiry(key) {
 	activeDQTimers.delete(key);
 }
 
-// Perform auto-DQ on a player
+// Perform auto-DQ on a player (uses local database)
 async function performAutoDQ(timer) {
 	const { tournamentId, matchId, playerId } = timer;
 
-	// Get match details to find winner (the other player)
-	const matchResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${matchId}.json`);
-	const matchData = matchResponse.data?.data;
-	const relationships = matchData?.relationships;
+	// Get match details from local database
+	const match = matchDb.getById(matchId);
+	if (!match) {
+		throw new Error(`Match ${matchId} not found in local database`);
+	}
 
-	let player1Id = relationships?.player1?.data?.id;
-	let player2Id = relationships?.player2?.data?.id;
+	const player1Id = match.player1_id;
+	const player2Id = match.player2_id;
 
 	if (!player1Id || !player2Id) {
 		throw new Error('Could not determine player IDs');
@@ -1200,46 +1003,41 @@ async function performAutoDQ(timer) {
 	const winnerId = String(playerId) === String(player1Id) ? player2Id : player1Id;
 	const loserId = playerId;
 
-	// Use DQ endpoint to forfeit the player
-	const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}.json`, {
-		data: {
-			type: 'Match',
-			attributes: {
-				match: [
-					{ participant_id: String(winnerId), score_set: '0', rank: 1, advancing: true },
-					{ participant_id: String(loserId), score_set: '0', rank: 2, advancing: false, forfeited: true }
-				]
-			}
-		}
+	// Use local database to set winner (DQ/forfeit with 0-0 score)
+	const result = matchDb.setWinner(matchId, winnerId, {
+		player1_score: 0,
+		player2_score: 0,
+		forfeit: true
 	});
 
-	// Emit success event
-	io.emit('timer:dq:executed', {
+	// Emit success event (multi-tenant)
+	broadcastToUser('timer:dq:executed', {
 		key: timer.key,
 		tournamentId,
 		matchId,
 		winnerId,
 		loserId,
 		playerName: timer.playerName
-	});
+	}, timer.userId);
 
-	// Invalidate cache and push updates
-	cacheDb.invalidateCache('matches', tournamentId);
-	await fetchAndPushMatches(tournamentId);
+	// Push updates via WebSocket
+	await fetchAndPushMatches(tournamentId, timer.userId);
 
-	console.log(`[DQ Timer] Auto-DQ executed for ${timer.playerName} in match ${matchId}`);
+	console.log(`[DQ Timer] Auto-DQ executed for ${timer.playerName} in match ${matchId}${timer.userId ? ` for user:${timer.userId}` : ''}`);
 }
 
 // Cancel a DQ timer
-function cancelDQTimer(key) {
+function cancelDQTimer(key, userId = null) {
 	const timer = activeDQTimers.get(key);
 	if (timer) {
 		if (timer.timeoutId) clearTimeout(timer.timeoutId);
 		if (timer.warningTimeoutId) clearTimeout(timer.warningTimeoutId);
 		activeDQTimers.delete(key);
 
-		io.emit('timer:dq:cancelled', { key, tv: timer.tv });
-		console.log(`[DQ Timer] Cancelled: ${key}`);
+		// Use the timer's stored userId or the provided userId
+		const targetUserId = userId || timer.userId;
+		broadcastToUser('timer:dq:cancelled', { key, tv: timer.tv }, targetUserId);
+		console.log(`[DQ Timer] Cancelled: ${key}${targetUserId ? ` for user:${targetUserId}` : ''}`);
 		return true;
 	}
 	return false;
@@ -1358,8 +1156,8 @@ loadMatchDataCache();
 
 // Check if match polling should be active
 function shouldPollMatches() {
-	// Poll if in ACTIVE mode or dev mode is enabled
-	return adaptiveRateState.currentMode.name === 'ACTIVE' || isDevModeActive();
+	// In local mode, always allow polling (no rate limiting needed)
+	return true;
 }
 
 // Get the current poll interval based on mode
@@ -1373,18 +1171,19 @@ function getMatchPollInterval() {
 // Find the next suggested match to play (for auto-advance feature)
 function findNextSuggestedMatch(matches, assignedStations = []) {
 	// Filter open matches that are not underway and have both players
+	// Uses camelCase since this receives the simplified/transformed matches array
 	const openMatches = matches.filter(m =>
 		m.state === 'open' &&
-		!m.underway_at &&
-		m.player1_id &&
-		m.player2_id
+		!m.underwayAt &&
+		m.player1Id &&
+		m.player2Id
 	);
 
 	if (openMatches.length === 0) return null;
 
 	// Sort by suggested play order
 	openMatches.sort((a, b) =>
-		(a.suggested_play_order || 9999) - (b.suggested_play_order || 9999)
+		(a.suggestedPlayOrder || 9999) - (b.suggestedPlayOrder || 9999)
 	);
 
 	// If we have stations, prefer matches that can be assigned to available stations
@@ -1398,242 +1197,133 @@ function findNextSuggestedMatch(matches, assignedStations = []) {
 	return availableMatch || openMatches[0];
 }
 
-// Fetch matches from Challonge and push to MagicMirror
-async function fetchAndPushMatches() {
-	// Get tournament info from state file
-	const stateFile = process.env.MATCH_STATE_FILE || '/root/tournament-control-center/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json';
-
-	let tournamentState;
-	try {
-		const data = fsSync.readFileSync(stateFile, 'utf8');
-		tournamentState = JSON.parse(data);
-	} catch (error) {
-		console.error('[Match Polling] Error reading tournament state:', error.message);
-		return;
+// Fetch matches from local database and push to MagicMirror
+async function fetchAndPushMatches(specificTournamentId = null) {
+	// Get tournament info from state file or use provided ID
+	let tournamentId = specificTournamentId;
+	
+	if (!tournamentId) {
+		const stateFile = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
+		try {
+			const data = fsSync.readFileSync(stateFile, 'utf8');
+			const tournamentState = JSON.parse(data);
+			tournamentId = tournamentState?.tournamentId;
+		} catch (error) {
+			console.error('[Match Polling] Error reading tournament state:', error.message);
+			return;
+		}
 	}
 
-	if (!tournamentState || !tournamentState.tournamentId) {
+	if (!tournamentId) {
 		console.log('[Match Polling] No tournament configured - skipping');
 		return;
 	}
 
-	const { tournamentId } = tournamentState;
-
 	try {
-		console.log('[Match Polling] Fetching matches for tournament:', tournamentId);
+		console.log('[Match Polling] Fetching matches from local DB for tournament:', tournamentId);
 
-		// Get auth headers (OAuth or legacy key)
-		let headers;
-		try {
-			headers = await getChallongeV2Headers();
-		} catch (authError) {
-			console.error('[Match Polling] No Challonge credentials available:', authError.message);
+		// Resolve tournament (can be ID or slug)
+		const tournament = isNaN(tournamentId) 
+			? tournamentDb.getBySlug(tournamentId)
+			: tournamentDb.getById(parseInt(tournamentId));
+
+		if (!tournament) {
+			console.error('[Match Polling] Tournament not found:', tournamentId);
 			return;
 		}
 
-		// Fetch participants first (for name mapping)
-		let participantsCache = {};
-		try {
-			const participantsResponse = await rateLimitedAxios.get(
-				`https://api.challonge.com/v2.1/tournaments/${tournamentId}/participants.json`,
-				{
-					headers,
-					timeout: 15000
-				}
-			);
+		const dbTournamentId = tournament.id;
 
-			const participantsData = participantsResponse.data.data || [];
-			participantsData.forEach(item => {
-				if (item.type === 'participant') {
-					const attrs = item.attributes || {};
-					const name = attrs.name || attrs.display_name || attrs.username ||
-						(attrs.seed != null ? 'Seed ' + attrs.seed : 'Player ' + item.id);
-					participantsCache[String(item.id)] = name;
-				}
-			});
-		} catch (participantError) {
-			console.warn('[Match Polling] Could not fetch participants:', participantError.message);
-		}
+		// Fetch data from local database
+		const matches = matchDb.getByTournament(dbTournamentId);
+		const participants = participantDb.getByTournament(dbTournamentId);
+		const stations = stationDb.getByTournament(dbTournamentId);
 
-		// Fetch matches
-		const matchesResponse = await rateLimitedAxios.get(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}/matches.json?include=participants,stations`,
-			{
-				headers,
-				timeout: 15000
-			}
-		);
+		// Build participant name lookup
+		const participantsCache = {};
+		participants.forEach(p => {
+			participantsCache[String(p.id)] = p.name || p.display_name || `Seed ${p.seed}`;
+		});
 
-		const data = matchesResponse.data.data || [];
-		const included = matchesResponse.data.included || [];
-
-		// Build participant map from included array
-		const participantMap = { ...participantsCache };
-		included.forEach(item => {
-			if (item.type === 'participant') {
-				const attrs = item.attributes || {};
-				const name = attrs.name || attrs.display_name || attrs.username ||
-					(attrs.seed != null ? 'Seed ' + attrs.seed : 'Player ' + item.id);
-				participantMap[String(item.id)] = name;
+		// Build station maps
+		const stationMap = {};
+		const matchStationMap = {};
+		stations.forEach(s => {
+			stationMap[String(s.id)] = s.name;
+			if (s.current_match_id) {
+				matchStationMap[String(s.current_match_id)] = s.name;
 			}
 		});
 
-		// Fetch stations SEPARATELY - Challonge stores match assignments on station objects, not matches
-		// This is the same approach as GET /api/matches which works correctly
-		let stationMap = {};       // stationId -> stationName
-		let matchStationMap = {};  // matchId -> stationName (direct lookup for display)
-		try {
-			const stationHeaders = getStationsApiHeaders();
-			const stationsResponse = await rateLimitedAxios.get(
-				`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations.json`,
-				{ headers: stationHeaders, timeout: 10000 }
-			);
+		// Transform matches to camelCase (consistent with transformMatch in routes/matches.js)
+		const simplified = matches.map(m => ({
+			id: m.id,
+			state: m.state,
+			round: m.round,
+			identifier: m.identifier,
+			suggestedPlayOrder: m.suggested_play_order || 9999,
+			player1Id: m.player1_id,
+			player2Id: m.player2_id,
+			player1Name: m.player1_name || participantsCache[String(m.player1_id)] || 'TBD',
+			player2Name: m.player2_name || participantsCache[String(m.player2_id)] || 'TBD',
+			stationId: m.station_id,
+			stationName: m.station_name || matchStationMap[String(m.id)] || null,
+			underwayAt: m.underway_at,
+			winnerId: m.winner_id,
+			winnerName: m.winner_name
+		}));
 
-			if (stationsResponse.data?.data) {
-				stationsResponse.data.data.forEach(station => {
-					const stationId = String(station.id);
-					const stationName = station.attributes?.name || 'Station ' + station.id;
-					stationMap[stationId] = stationName;
+		// Calculate tournament completion for podium
+		let podium = { isComplete: false, first: null, second: null, third: null, has3rdPlace: false };
+		const has3rdPlaceMatch = matches.some(m => m.identifier === '3P');
+		podium.has3rdPlace = has3rdPlaceMatch;
 
-					// Build reverse mapping: matchId -> stationName
-					// Station stores which match it's assigned to in relationships.match.data
-					const matchData = station.relationships?.match?.data;
-					if (matchData?.id) {
-						matchStationMap[String(matchData.id)] = stationName;
-					}
-				});
-			}
-			console.log('[Match Polling] Stations: ' + Object.keys(stationMap).length +
-				' configured (' + Object.keys(stationMap).map(id => stationMap[id]).join(', ') + '), ' +
-				Object.keys(matchStationMap).length + ' assigned to matches');
-		} catch (stationError) {
-			console.warn('[Match Polling] Could not fetch stations:', stationError.message);
-		}
+		if (matches.length > 0 && matches.every(m => m.state === 'complete')) {
+			// Find finals match (highest positive round that isn't 3P)
+			const finalsMatch = matches
+				.filter(m => m.round > 0 && m.identifier !== '3P')
+				.sort((a, b) => b.round - a.round)[0];
 
-		// Available stations from stationMap (all configured stations)
-		const availableStations = new Set(Object.values(stationMap));
-
-		// Simplify matches for MagicMirror
-		const simplified = data.map(match => {
-			const attrs = match.attributes || {};
-			const rel = match.relationships || {};
-
-			let p1Id = null;
-			let p2Id = null;
-
-			if (Array.isArray(attrs.points_by_participant) && attrs.points_by_participant.length >= 2) {
-				p1Id = attrs.points_by_participant[0].participant_id;
-				p2Id = attrs.points_by_participant[1].participant_id;
-			}
-
-			const p1Key = p1Id != null ? String(p1Id) : null;
-			const p2Key = p2Id != null ? String(p2Id) : null;
-
-			const p1Name = p1Key && participantMap[p1Key] ? participantMap[p1Key] :
-				p1Id != null ? 'Player ' + p1Id : 'TBD';
-			const p2Name = p2Key && participantMap[p2Key] ? participantMap[p2Key] :
-				p2Id != null ? 'Player ' + p2Id : 'TBD';
-
-			// Use matchStationMap for direct lookup (built from station -> match relationship)
-			const stationName = matchStationMap[String(match.id)] || null;
-
-			// Check for local underway tracking (when Challonge v2.1 change_state is broken)
-			const trackingKey = `${tournamentId}:${match.id}`;
-			const localUnderwayAt = localUnderwayTracking.get(trackingKey);
-			const challongeUnderwayAt = (attrs.timestamps && attrs.timestamps.underway_at) || null;
-
-			// Use local tracking if available and Challonge doesn't have underway_at
-			const effectiveUnderwayAt = challongeUnderwayAt || localUnderwayAt || null;
-
-			return {
-				id: match.id,
-				state: attrs.state,
-				round: attrs.round,
-				identifier: attrs.identifier,
-				suggested_play_order: attrs.suggested_play_order != null ? attrs.suggested_play_order : 9999,
-				player1_id: p1Id,
-				player2_id: p2Id,
-				player1_name: p1Name,
-				player2_name: p2Name,
-				station_name: stationName,
-				underway_at: effectiveUnderwayAt,
-				winner_id: attrs.winner_id || null,
-				local_tracking: localUnderwayAt && !challongeUnderwayAt ? true : undefined
-			};
-		});
-
-		// Check if tournament is complete for podium
-		const has3rdPlaceMatch = data.some(m => (m.attributes || {}).identifier === '3P');
-		let podium = { isComplete: false, first: null, second: null, third: null, has3rdPlace: has3rdPlaceMatch };
-
-		if (data.length > 0 && data.every(m => (m.attributes || {}).state === 'complete')) {
-			// Find finals match
-			let finalsMatch = null;
-			data.forEach(m => {
-				const a = m.attributes || {};
-				if (typeof a.round === 'number' && a.round > 0 && a.identifier !== '3P') {
-					if (!finalsMatch || a.round > (finalsMatch.attributes.round || 0)) {
-						finalsMatch = m;
-					}
+			if (finalsMatch && finalsMatch.winner_id) {
+				const loserId = finalsMatch.winner_id === finalsMatch.player1_id 
+					? finalsMatch.player2_id 
+					: finalsMatch.player1_id;
+				
+				podium.isComplete = true;
+				podium.first = participantsCache[String(finalsMatch.winner_id)] || 'Unknown';
+				podium.second = participantsCache[String(loserId)] || 'Unknown';
+				
+				// Find 3rd place match winner
+				const thirdMatch = matches.find(m => m.identifier === '3P' && m.state === 'complete');
+				if (thirdMatch && thirdMatch.winner_id) {
+					podium.third = participantsCache[String(thirdMatch.winner_id)] || null;
 				}
-			});
-
-			if (finalsMatch) {
-				const fa = finalsMatch.attributes || {};
-				const winnerId = fa.winner_id;
-				let secondId = null;
-
-				const fPoints = fa.points_by_participant || [];
-				fPoints.forEach(p => {
-					if (p.participant_id != null && p.participant_id !== winnerId) {
-						secondId = p.participant_id;
-					}
-				});
-
-				const thirdMatch = data.find(m => (m.attributes || {}).identifier === '3P' && (m.attributes || {}).state === 'complete');
-				const thirdId = thirdMatch && (thirdMatch.attributes || {}).winner_id;
-
-				const nameForId = id => {
-					if (!id) return null;
-					return participantMap[String(id)] || 'Player ' + id;
-				};
-
-				podium = {
-					isComplete: true,
-					first: nameForId(winnerId),
-					second: nameForId(secondId),
-					third: thirdId ? nameForId(thirdId) : null,
-					has3rdPlace: has3rdPlaceMatch
-				};
 			}
 		}
 
-		// Build payload for push and cache
-		const pushTimestamp = new Date().toISOString();
-
-		// Calculate match statistics for metadata
+		// Calculate match statistics (using camelCase field names)
 		const completedCount = simplified.filter(m => m.state === 'complete').length;
-		const underwayCount = simplified.filter(m => m.state === 'open' && m.underway_at).length;
-		const openCount = simplified.filter(m => m.state === 'open' && !m.underway_at).length;
+		const underwayCount = simplified.filter(m => m.state === 'underway' || (m.state === 'open' && m.underwayAt)).length;
+		const openCount = simplified.filter(m => m.state === 'open' && !m.underwayAt).length;
 		const totalCount = simplified.length;
 
-		// Find next suggested match using assigned stations
-		const assignedStations = Object.keys(matchStationMap);
-		const nextMatch = findNextSuggestedMatch(simplified, assignedStations);
+		// Find next suggested match
+		const nextMatch = findNextSuggestedMatch(simplified, Object.keys(matchStationMap));
 
+		const pushTimestamp = new Date().toISOString();
 		const payload = {
-			tournamentId: tournamentId,  // Include tournament ID for admin clients
+			tournamentId: tournament.url_slug || tournamentId,
 			matches: simplified,
 			podium: podium,
-			availableStations: Array.from(availableStations),
+			availableStations: Object.values(stationMap),
 			participantsCache: participantsCache,
 			timestamp: pushTimestamp,
-			source: 'live',  // Indicates fresh data from Challonge
+			source: 'local',
 			metadata: {
 				nextMatchId: nextMatch?.id || null,
 				nextMatchPlayers: nextMatch ? {
-					player1: nextMatch.player1_name,
-					player2: nextMatch.player2_name
+					player1: nextMatch.player1Name,
+					player2: nextMatch.player2Name
 				} : null,
 				completedCount,
 				underwayCount,
@@ -1643,62 +1333,39 @@ async function fetchAndPushMatches() {
 			}
 		};
 
-		// Compute hash for deduplication and ACK tracking
+		// Compute hash for deduplication
 		const payloadHash = require('crypto')
 			.createHash('md5')
 			.update(JSON.stringify({ matches: simplified, podium: podium }))
 			.digest('hex');
 
-		// Save to cache before pushing (ensures cache is available even if push fails)
-		saveMatchDataCache(tournamentId, payload);
+		// Save to cache
+		saveMatchDataCache(dbTournamentId, payload);
 
-		// Check if any displays are connected via WebSocket
+		// Check WebSocket connections
 		const displayCount = wsConnections.displays.size;
 		const hasConnectedDisplays = displayCount > 0;
 
-		// Broadcast via WebSocket to all connected displays (real-time)
+		// Broadcast via WebSocket
 		broadcastMatchData(payload, payloadHash);
 
-		// HTTP fallback logic - only push via HTTP if:
-		// 1. No displays connected via WebSocket, OR
-		// 2. No ACK received from any display within fallback window
+		// HTTP fallback if no WebSocket displays
 		const shouldHttpFallback = !hasConnectedDisplays || needsHttpFallback();
-
 		if (shouldHttpFallback) {
 			const matchApiUrl = process.env.MATCH_API_URL || 'http://localhost:2052';
 			try {
 				await axios.post(`${matchApiUrl}/api/matches/push`, payload, { timeout: 5000 });
-				console.log(`[Match Polling] HTTP fallback push (${hasConnectedDisplays ? 'no ACK received' : 'no WS displays'})`);
+				console.log(`[Match Polling] HTTP fallback push`);
 			} catch (httpError) {
 				console.warn(`[Match Polling] HTTP fallback failed: ${httpError.message}`);
 			}
-		} else {
-			console.log(`[Match Polling] WebSocket delivery confirmed, skipping HTTP push`);
 		}
 
 		matchPollingState.lastPollTime = pushTimestamp;
-		console.log(`[Match Polling] Pushed ${simplified.length} matches (WS: ${displayCount} displays${shouldHttpFallback ? ', HTTP fallback' : ''})`);
+		console.log(`[Match Polling] Pushed ${simplified.length} matches from local DB (WS: ${displayCount} displays)`);
 
 	} catch (error) {
 		console.error('[Match Polling] Error:', error.message);
-
-		// If Challonge fetch failed, try to push cached data with stale indicator
-		const cachedData = getMatchDataCache(tournamentState?.tournamentId);
-		if (cachedData && cachedData.data) {
-			try {
-				const matchApiUrl = process.env.MATCH_API_URL || 'http://localhost:2052';
-				await axios.post(`${matchApiUrl}/api/matches/push`, {
-					...cachedData.data,
-					timestamp: cachedData.cacheTimestamp,
-					source: 'cache',
-					isStale: true,
-					cacheAgeMs: cachedData.cacheAgeMs
-				}, { timeout: 5000 });
-				console.log('[Match Polling] Pushed cached data (stale) to MagicMirror');
-			} catch (pushError) {
-				console.error('[Match Polling] Failed to push cached data:', pushError.message);
-			}
-		}
 	}
 }
 
@@ -1759,391 +1426,6 @@ function updateMatchPolling() {
 	} else {
 		stopMatchPolling();
 	}
-}
-
-// Get current rate limit status (for API/dashboard)
-function getRateLimitStatus() {
-	const adaptiveSettings = getAdaptiveRateLimitSettings();
-	const devModeActive = isDevModeActive();
-
-	return {
-		adaptiveEnabled: adaptiveSettings.enabled,
-		currentMode: adaptiveRateState.currentMode.name,
-		modeDescription: adaptiveRateState.currentMode.description,
-		effectiveRate: devModeActive ? 'unlimited' : getChallongeRateLimit(),
-		manualRateLimit: adaptiveSettings.manualRateLimit,
-		manualOverride: adaptiveRateState.manualOverride ? adaptiveRateState.manualOverride.name : null,
-		settings: {
-			idleRate: adaptiveSettings.idleRate,
-			upcomingRate: adaptiveSettings.upcomingRate,
-			activeRate: adaptiveSettings.activeRate,
-			checkIntervalHours: adaptiveSettings.checkIntervalHours,
-			upcomingWindowHours: adaptiveSettings.upcomingWindowHours
-		},
-		upcomingTournament: adaptiveRateState.upcomingTournament,
-		activeTournament: adaptiveRateState.activeTournament,
-		lastCheck: adaptiveRateState.lastCheck,
-		nextCheck: adaptiveRateState.nextCheck,
-		devModeActive: devModeActive,
-		devModeExpiresAt: devModeActive ? new Date(devModeState.expiresAt).toISOString() : null,
-		devModeRemainingMs: getDevModeRemainingMs(),
-		matchPolling: {
-			active: matchPollingState.isPolling,
-			intervalMs: getMatchPollInterval(),
-			lastPollTime: matchPollingState.lastPollTime
-		}
-	};
-}
-
-// Calculate minimum delay between requests in ms
-function getMinRequestDelay() {
-	// Dev mode bypasses rate limiting
-	if (isDevModeActive()) {
-		return 0;
-	}
-
-	const requestsPerMinute = getChallongeRateLimit();
-	// Convert to ms delay between requests (60000ms / requests)
-	return Math.ceil(60000 / requestsPerMinute);
-}
-
-// Rate-limited request executor
-async function executeRateLimitedRequest(requestFn) {
-	return new Promise((resolve, reject) => {
-		challongeRateLimiter.requestQueue.push({ requestFn, resolve, reject });
-		processRequestQueue();
-	});
-}
-
-// Process queued requests with rate limiting
-async function processRequestQueue() {
-	if (challongeRateLimiter.isProcessing || challongeRateLimiter.requestQueue.length === 0) {
-		return;
-	}
-
-	challongeRateLimiter.isProcessing = true;
-
-	while (challongeRateLimiter.requestQueue.length > 0) {
-		const now = Date.now();
-		const minDelay = getMinRequestDelay();
-		const timeSinceLastRequest = now - challongeRateLimiter.lastRequestTime;
-		const waitTime = Math.max(0, minDelay - timeSinceLastRequest);
-
-		const queueLength = challongeRateLimiter.requestQueue.length;
-		if (waitTime > 0) {
-			console.log(`[Rate Limiter] Waiting ${waitTime}ms before next request (queue: ${queueLength}, rate: ${getChallongeRateLimit()} req/min)`);
-			await new Promise(r => setTimeout(r, waitTime));
-		} else {
-			console.log(`[Rate Limiter] Processing request (queue: ${queueLength}, no delay needed)`);
-		}
-
-		const { requestFn, resolve, reject } = challongeRateLimiter.requestQueue.shift();
-		challongeRateLimiter.lastRequestTime = Date.now();
-
-		try {
-			const result = await requestFn();
-			resolve(result);
-		} catch (error) {
-			// Check for Cloudflare rate limit (429 or 403 with specific markers)
-			if (error.response?.status === 429 ||
-				(error.response?.status === 403 && error.response?.data?.toString()?.includes('cloudflare'))) {
-				console.warn('Challonge rate limit hit, adding extra delay...');
-				// Add extra delay and retry once
-				await new Promise(r => setTimeout(r, 5000));
-				try {
-					challongeRateLimiter.lastRequestTime = Date.now();
-					const retryResult = await requestFn();
-					resolve(retryResult);
-				} catch (retryError) {
-					reject(retryError);
-				}
-			} else {
-				reject(error);
-			}
-		}
-	}
-
-	challongeRateLimiter.isProcessing = false;
-}
-
-// ============================================
-// CHALLONGE API v2.1 HELPERS
-// ============================================
-
-// Get v2.1 API headers - uses OAuth Bearer token if connected, falls back to legacy v1 auth
-async function getChallongeV2Headers() {
-	// Try OAuth first if connected
-	if (isChallongeConnected()) {
-		try {
-			const accessToken = await ensureValidToken();
-			return {
-				'Authorization': `Bearer ${accessToken}`,
-				'Authorization-Type': 'v2',  // Required for OAuth Bearer tokens
-				'Content-Type': 'application/vnd.api+json',
-				'Accept': 'application/json'
-			};
-		} catch (error) {
-			console.warn('[Challonge API] OAuth token error, trying legacy key:', error.message);
-		}
-	}
-
-	// Fall back to legacy API key
-	const legacyKey = getLegacyApiKey();
-	if (!legacyKey) {
-		throw new Error('Challonge not connected. Please connect your account in Settings or configure a legacy API key.');
-	}
-
-	return {
-		'Authorization': legacyKey,
-		'Authorization-Type': 'v1',
-		'Content-Type': 'application/vnd.api+json',
-		'Accept': 'application/json'
-	};
-}
-
-// Get headers for stations API - always uses legacy key (Challonge doesn't support OAuth scopes for stations)
-function getStationsApiHeaders() {
-	const legacyKey = getLegacyApiKey();
-	if (!legacyKey) {
-		throw new Error('Challonge legacy API key required for stations. Please configure DEFAULT_CHALLONGE_KEY in .env');
-	}
-	return {
-		'Authorization': legacyKey,
-		'Authorization-Type': 'v1',
-		'Content-Type': 'application/vnd.api+json',
-		'Accept': 'application/json'
-	};
-}
-
-// Make a v2.1 API request (rate-limited) with OAuth 401 fallback to legacy key
-async function challongeV2Request(method, endpoint, data = null) {
-	return executeRateLimitedRequest(async () => {
-		const url = `https://api.challonge.com/v2.1${endpoint}`;
-
-		// Try OAuth first if connected
-		if (isChallongeConnected()) {
-			try {
-				const oauthHeaders = await getChallongeV2Headers();
-				const config = {
-					method,
-					url,
-					headers: oauthHeaders,
-					timeout: 15000
-				};
-
-				if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-					config.data = data;
-				}
-
-				return await axios(config);
-			} catch (error) {
-				// If OAuth returns 401 or 404, fall back to legacy key
-				// 401 = token invalid, 404 = tournament might belong to different account
-				if (error.response?.status === 401) {
-					console.warn('[Challonge API] OAuth token rejected (401), clearing token and trying legacy key');
-					analyticsDb.deleteOAuthTokens('challonge');
-				} else if (error.response?.status === 404) {
-					console.warn('[Challonge API] OAuth returned 404, trying legacy key (tournament may belong to different account)');
-					// Fall through to legacy key
-				} else {
-					throw error; // Re-throw other errors
-				}
-			}
-		}
-
-		// Fall back to legacy API key
-		const legacyKey = getLegacyApiKey();
-		if (!legacyKey) {
-			throw new Error('Challonge not connected. Please connect your account in Settings or configure a legacy API key.');
-		}
-
-		const legacyHeaders = {
-			'Authorization': legacyKey,
-			'Authorization-Type': 'v1',
-			'Content-Type': 'application/vnd.api+json',
-			'Accept': 'application/json'
-		};
-
-		const config = {
-			method,
-			url,
-			headers: legacyHeaders,
-			timeout: 15000
-		};
-
-		if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-			config.data = data;
-		}
-
-		return axios(config);
-	});
-}
-
-// Make a v1 API request (rate-limited) - uses OAuth Bearer if connected, falls back to legacy
-// Automatically clears OAuth token and retries with legacy key if OAuth returns 401
-async function challongeV1Request(method, url, config = {}) {
-	return executeRateLimitedRequest(async () => {
-		// Try OAuth first if connected
-		if (isChallongeConnected()) {
-			try {
-				const accessToken = await ensureValidToken();
-				const oauthHeaders = {
-					'Authorization': `Bearer ${accessToken}`,
-					'Authorization-Type': 'v2',  // Required for OAuth Bearer tokens
-					'Content-Type': 'application/json'
-				};
-
-				return await axios({
-					method,
-					url,
-					timeout: 15000,
-					...config,
-					headers: {
-						...config.headers,
-						...oauthHeaders
-					}
-				});
-			} catch (error) {
-				// If OAuth returns 401, token is invalid - clear it and fall back to legacy
-				if (error.response?.status === 401) {
-					console.warn('[Challonge API] OAuth token rejected (401) in v1 request, clearing token and trying legacy key');
-					analyticsDb.deleteOAuthTokens('challonge');
-				} else if (error.name === 'OAuthNotConnectedError' || error.name === 'OAuthTokenExpiredError') {
-					console.warn('[Challonge API] OAuth token error in v1 request, trying legacy key:', error.message);
-				} else {
-					throw error; // Re-throw non-auth errors
-				}
-			}
-		}
-
-		// Fall back to legacy API key
-		const legacyKey = getLegacyApiKey();
-		if (!legacyKey) {
-			throw new Error('Challonge not connected. Please connect your account in Settings or configure a legacy API key.');
-		}
-
-		const legacyHeaders = {
-			'Authorization': legacyKey,
-			'Authorization-Type': 'v1',
-			'Content-Type': 'application/json'
-		};
-
-		return axios({
-			method,
-			url,
-			timeout: 15000,
-			...config,
-			headers: {
-				...config.headers,
-				...legacyHeaders
-			}
-		});
-	});
-}
-
-// Rate-limited axios wrapper for direct API calls
-// Use this to wrap any axios call: await rateLimitedAxios.get(...) or rateLimitedAxios.post(...)
-const rateLimitedAxios = {
-	get: (...args) => executeRateLimitedRequest(() => axios.get(...args)),
-	post: (...args) => executeRateLimitedRequest(() => axios.post(...args)),
-	put: (...args) => executeRateLimitedRequest(() => axios.put(...args)),
-	delete: (...args) => executeRateLimitedRequest(() => axios.delete(...args)),
-	patch: (...args) => executeRateLimitedRequest(() => axios.patch(...args))
-};
-
-// Parse v2.1 JSON:API response to extract data
-function parseV2Response(response) {
-	const data = response.data?.data;
-	const included = response.data?.included || [];
-
-	// Build lookup maps for included resources
-	const includedMap = {};
-	included.forEach(item => {
-		const key = `${item.type}_${item.id}`;
-		includedMap[key] = item;
-	});
-
-	return { data, included, includedMap };
-}
-
-// Transform v2.1 match to frontend format
-function transformV2Match(match, includedMap = {}) {
-	const attrs = match.attributes;
-	const relationships = match.relationships || {};
-
-	// Get participant IDs from relationships
-	let player1Id = null;
-	let player2Id = null;
-
-	// v2.1 uses points_by_participant for player info
-	if (attrs.points_by_participant && attrs.points_by_participant.length >= 2) {
-		player1Id = attrs.points_by_participant[0]?.participant_id;
-		player2Id = attrs.points_by_participant[1]?.participant_id;
-	}
-
-	// Get station ID from relationship
-	let stationId = null;
-	const stationLink = relationships?.station?.links?.related;
-	if (stationLink) {
-		// Extract station ID from URL like ".../stations/620521.json"
-		const stationMatch = stationLink.match(/stations\/(\d+)\.json/);
-		if (stationMatch) {
-			stationId = stationMatch[1];
-		}
-	}
-
-	// Parse scores from v2.1 format
-	let scores_csv = '';
-	if (attrs.score_in_sets && attrs.score_in_sets.length > 0) {
-		// score_in_sets is like [[2, 1]] for a 2-1 match
-		const lastSet = attrs.score_in_sets[attrs.score_in_sets.length - 1];
-		if (lastSet && lastSet.length === 2) {
-			scores_csv = `${lastSet[0]}-${lastSet[1]}`;
-		}
-	} else if (attrs.scores) {
-		// scores field is like "2 - 1"
-		scores_csv = attrs.scores.replace(/\s/g, '');
-	}
-
-	return {
-		id: parseInt(match.id),
-		tournamentId: null, // Will be set by caller
-		state: attrs.state,
-		round: attrs.round,
-		player1Id: player1Id,
-		player2Id: player2Id,
-		winnerId: attrs.winner_id,
-		loserId: null, // Not directly in v2.1 response
-		scores_csv: scores_csv,
-		suggestedPlayOrder: attrs.suggested_play_order,
-		identifier: attrs.identifier,
-		startedAt: attrs.timestamps?.started_at,
-		completedAt: null, // Not in v2.1 timestamps
-		underwayAt: attrs.timestamps?.underway_at,
-		stationId: stationId
-	};
-}
-
-// Transform v2.1 participant to frontend format
-function transformV2Participant(participant) {
-	const attrs = participant.attributes;
-	return {
-		id: parseInt(participant.id),
-		name: attrs.name || attrs.display_name,
-		displayName: attrs.display_name || attrs.name,
-		seed: attrs.seed,
-		active: attrs.active,
-		checkedIn: attrs.checked_in,
-		checkedInAt: attrs.checked_in_at,
-		canCheckIn: attrs.can_check_in,
-		onWaitingList: attrs.on_waiting_list,
-		invitationPending: attrs.invitation_pending,
-		finalRank: attrs.final_rank,
-		misc: attrs.misc,
-		email: attrs.email_hash ? null : attrs.email, // email_hash means email is hidden
-		challongeUsername: attrs.challonge_username,
-		groupId: attrs.group_id
-	};
 }
 
 // Get security settings with defaults
@@ -2410,15 +1692,22 @@ function requireAdmin(req, res, next) {
 	});
 }
 
+// Check if user is superadmin (admin with userId 1, or configured superadmin)
+function isSuperadmin(req) {
+	if (!req.session || !req.session.userId) return false;
+	// Legacy support: admin with userId 1 is superadmin
+	return req.session.role === 'admin' && req.session.userId === 1;
+}
+
 // API Token OR Session auth middleware (for device access like Stream Deck)
 // Checks X-API-Token header first, falls back to session auth
 function requireTokenOrSessionAuth(req, res, next) {
 	// Check for API token first
 	const apiToken = req.headers['x-api-token'];
 	if (apiToken) {
-		const tokenRecord = analyticsDb.verifyApiToken(apiToken);
+		const tokenRecord = systemDb.verifyApiToken(apiToken);
 		if (tokenRecord && tokenRecord.isActive) {
-			analyticsDb.updateTokenLastUsed(tokenRecord.id);
+			systemDb.updateTokenLastUsed(tokenRecord.id);
 			req.apiToken = tokenRecord;
 			req.isTokenAuth = true;
 			return next();
@@ -2437,28 +1726,8 @@ function requireTokenOrSessionAuth(req, res, next) {
 // PUBLIC ROUTES (no authentication required)
 // ============================================
 
-// Public route for flyer previews
-app.get('/api/flyers/preview/:filename', async (req, res) => {
-	try {
-		const filename = req.params.filename;
-
-		// Security check - prevent path traversal
-		if (filename.includes('..') || filename.includes('/')) {
-			return res.status(400).json({
-				success: false,
-				error: 'Invalid filename'
-			});
-		}
-
-		const filePath = path.join(process.env.FLYERS_PATH, filename);
-		res.sendFile(filePath);
-	} catch (error) {
-		res.status(500).json({
-			success: false,
-			error: 'Failed to serve flyer preview'
-		});
-	}
-});
+// Note: Flyer preview routes are now handled by routes/flyers.js with multi-tenant support
+// Legacy single-tenant route removed - see routes/flyers.js for /preview/:userId/:filename
 
 // Login page and static files (no auth required)
 app.use(express.static('public'));
@@ -2469,17 +1738,32 @@ app.use(express.static('public'));
 
 // Socket.IO connection handler
 io.on('connection', (socket) => {
-	console.log(`[WebSocket] New connection: ${socket.id}`);
+	console.log(`[WebSocket] New connection: ${socket.id} from origin: ${socket.handshake.headers.origin || 'unknown'}`);
 
-	// Handle display registration (MagicMirror modules)
+	// Debug: Log all incoming events (temporarily for debugging)
+	socket.onAny((eventName, ...args) => {
+		if (!['matches:ack'].includes(eventName)) {  // Skip noisy events
+			console.log(`[WebSocket] Event from ${socket.id}: ${eventName}`, args.length > 0 ? JSON.stringify(args[0]).substring(0, 100) : '');
+		}
+	});
+
+	// Handle display registration (MagicMirror modules and web displays)
 	socket.on('display:register', (data) => {
-		const { displayType, displayId } = data;
-		console.log(`[WebSocket] Display registered: ${displayType} (${displayId})`);
+		const { displayType, displayId, userId } = data;
+		console.log(`[WebSocket] Display registered: ${displayType} (${displayId})${userId ? ` for user:${userId}` : ''}`);
 
 		// Store display connection
 		socket.displayType = displayType;
 		socket.displayId = displayId;
+		socket.userId = userId || null;
 		wsConnections.displays.set(displayId, socket);
+
+		// Join user-specific rooms for multi-tenant isolation
+		if (userId) {
+			socket.join(`user:${userId}`);
+			socket.join(`user:${userId}:${displayType}`);
+			console.log(`[WebSocket] Display joined rooms: user:${userId}, user:${userId}:${displayType}`);
+		}
 
 		// Send current match data if available
 		if (matchDataCache.data) {
@@ -2535,6 +1819,8 @@ io.on('connection', (socket) => {
 			success: true,
 			displayId,
 			displayType,
+			userId: userId || null,
+			rooms: userId ? [`user:${userId}`, `user:${userId}:${displayType}`] : [],
 			serverTime: new Date().toISOString()
 		});
 	});
@@ -2645,14 +1931,61 @@ function broadcastMatchData(payload, updateHash = null, deltaInfo = null) {
 	}
 }
 
-// Broadcast ticker message to all displays
-function broadcastTickerMessage(message, duration) {
-	io.emit('ticker:message', {
+// Broadcast match data to a specific user's displays only (multi-tenant isolation)
+function broadcastMatchDataToUser(userId, payload, updateHash = null, deltaInfo = null) {
+	const timestamp = new Date().toISOString();
+
+	// Build delta payload if available
+	const delta = deltaInfo || buildDeltaPayload(previousMatchState, payload, payload.availableStations);
+
+	const data = {
+		...payload,
+		timestamp,
+		source: 'live',
+		updateHash: updateHash,
+		updateType: delta.type,
+		changes: delta.changes
+	};
+
+	if (userId) {
+		// Targeted broadcast to user's displays only
+		io.to(`user:${userId}`).emit('matches:update', data);
+		console.log(`[WebSocket] User-targeted broadcast to user:${userId} (hash: ${updateHash ? updateHash.substring(0, 8) + '...' : 'none'})`);
+	} else {
+		// Fallback: broadcast to all (for legacy Pi displays without userId)
+		io.emit('matches:update', data);
+		console.log(`[WebSocket] Legacy broadcast to all displays (hash: ${updateHash ? updateHash.substring(0, 8) + '...' : 'none'})`);
+	}
+}
+
+// Broadcast ticker message to user's displays (multi-tenant)
+function broadcastTickerMessage(message, duration, userId = null) {
+	const payload = {
 		message,
 		duration,
 		timestamp: new Date().toISOString()
-	});
-	console.log(`[WebSocket] Broadcast ticker message: "${message}" (${duration}s)`);
+	};
+
+	if (userId) {
+		// Targeted broadcast to user's displays only
+		io.to(`user:${userId}`).emit('ticker:message', payload);
+		console.log(`[WebSocket] User-targeted ticker to user:${userId}: "${message}" (${duration}s)`);
+	} else {
+		// Fallback to global broadcast (for scheduled tickers without user context)
+		io.emit('ticker:message', payload);
+		console.log(`[WebSocket] Global ticker broadcast: "${message}" (${duration}s)`);
+	}
+}
+
+// Generic multi-tenant broadcast helper
+function broadcastToUser(event, payload, userId = null) {
+	if (userId) {
+		io.to(`user:${userId}`).emit(event, payload);
+		console.log(`[WebSocket] User-targeted ${event} to user:${userId}`);
+	} else {
+		io.emit(event, payload);
+		console.log(`[WebSocket] Global ${event} broadcast`);
+	}
 }
 
 // Broadcast tournament update
@@ -2808,6 +2141,7 @@ app.get('/api/auth/status', requireAuthAPI, (req, res) => {
 
 	res.json({
 		success: true,
+		isSuperadmin: isSuperadmin(req),
 		user: {
 			id: user.id,
 			username: user.username,
@@ -2849,7 +2183,7 @@ app.post('/api/auth/tokens', requireAdmin, async (req, res) => {
 			});
 		}
 
-		const result = analyticsDb.createApiToken(
+		const result = systemDb.createApiToken(
 			deviceName.trim(),
 			deviceType,
 			req.session.username,
@@ -2878,7 +2212,7 @@ app.post('/api/auth/tokens', requireAdmin, async (req, res) => {
 // List all API tokens (admin only)
 app.get('/api/auth/tokens', requireAdmin, (req, res) => {
 	try {
-		const tokens = analyticsDb.listApiTokens();
+		const tokens = systemDb.listApiTokens();
 		res.json({
 			success: true,
 			tokens
@@ -2904,7 +2238,7 @@ app.delete('/api/auth/tokens/:id', requireAdmin, (req, res) => {
 		}
 
 		// Get token info before revoking for logging
-		const token = analyticsDb.getApiToken(tokenId);
+		const token = systemDb.getApiToken(tokenId);
 		if (!token) {
 			return res.status(404).json({
 				success: false,
@@ -2912,7 +2246,7 @@ app.delete('/api/auth/tokens/:id', requireAdmin, (req, res) => {
 			});
 		}
 
-		const revoked = analyticsDb.revokeApiToken(tokenId);
+		const revoked = systemDb.revokeApiToken(tokenId);
 		if (revoked) {
 			logActivity('token_revoked', `API token revoked: ${token.deviceName}`, req.session.username);
 			res.json({
@@ -2945,9 +2279,9 @@ app.get('/api/auth/verify-token', (req, res) => {
 		});
 	}
 
-	const tokenRecord = analyticsDb.verifyApiToken(apiToken);
+	const tokenRecord = systemDb.verifyApiToken(apiToken);
 	if (tokenRecord && tokenRecord.isActive) {
-		analyticsDb.updateTokenLastUsed(tokenRecord.id);
+		systemDb.updateTokenLastUsed(tokenRecord.id);
 		res.json({
 			success: true,
 			device: {
@@ -3083,7 +2417,7 @@ app.get('/auth/challonge/callback', async (req, res) => {
 		}
 
 		// Save tokens to database (encrypted)
-		analyticsDb.saveOAuthTokens({
+		systemDb.saveOAuthTokens({
 			access_token: tokens.access_token,
 			refresh_token: tokens.refresh_token,
 			token_type: tokens.token_type || 'Bearer',
@@ -3106,7 +2440,7 @@ app.get('/auth/challonge/callback', async (req, res) => {
 // Get OAuth connection status
 app.get('/api/oauth/status', requireAuthAPI, (req, res) => {
 	try {
-		const status = analyticsDb.getOAuthStatus();
+		const status = systemDb.getOAuthStatus();
 		res.json({
 			success: true,
 			...status,
@@ -3125,7 +2459,7 @@ app.get('/api/oauth/status', requireAuthAPI, (req, res) => {
 app.post('/api/oauth/disconnect', requireAuthAPI, async (req, res) => {
 	try {
 		// Get tokens before deleting
-		const tokens = analyticsDb.getOAuthTokens();
+		const tokens = systemDb.getOAuthTokens();
 
 		if (tokens) {
 			// Try to revoke token with Challonge (best effort)
@@ -3145,7 +2479,7 @@ app.post('/api/oauth/disconnect', requireAuthAPI, async (req, res) => {
 		}
 
 		// Delete tokens from database
-		analyticsDb.deleteOAuthTokens();
+		systemDb.deleteOAuthTokens();
 
 		res.json({
 			success: true,
@@ -3163,7 +2497,7 @@ app.post('/api/oauth/disconnect', requireAuthAPI, async (req, res) => {
 // Manually refresh OAuth token
 app.post('/api/oauth/refresh', requireAuthAPI, async (req, res) => {
 	try {
-		const tokens = analyticsDb.getOAuthTokens();
+		const tokens = systemDb.getOAuthTokens();
 
 		if (!tokens || !tokens.refreshToken) {
 			return res.status(400).json({
@@ -3189,7 +2523,7 @@ app.post('/api/oauth/refresh', requireAuthAPI, async (req, res) => {
 		const newTokens = tokenResponse.data;
 
 		// Save new tokens (preserve user info)
-		analyticsDb.saveOAuthTokens({
+		systemDb.saveOAuthTokens({
 			access_token: newTokens.access_token,
 			refresh_token: newTokens.refresh_token || tokens.refreshToken,
 			token_type: newTokens.token_type || 'Bearer',
@@ -3212,7 +2546,7 @@ app.post('/api/oauth/refresh', requireAuthAPI, async (req, res) => {
 
 		// If refresh fails, token might be invalid - mark as disconnected
 		if (error.response?.status === 400 || error.response?.status === 401) {
-			analyticsDb.deleteOAuthTokens();
+			systemDb.deleteOAuthTokens();
 			return res.status(401).json({
 				success: false,
 				error: 'Refresh token expired. Please reconnect your Challonge account.',
@@ -3254,7 +2588,7 @@ class OAuthTokenExpiredError extends Error {
  * @throws {OAuthTokenExpiredError} If token is expired and refresh fails
  */
 async function ensureValidToken() {
-	const tokens = analyticsDb.getOAuthTokens();
+	const tokens = systemDb.getOAuthTokens();
 
 	if (!tokens) {
 		throw new OAuthNotConnectedError();
@@ -3288,7 +2622,7 @@ async function ensureValidToken() {
 			const newTokens = tokenResponse.data;
 
 			// Save new tokens
-			analyticsDb.saveOAuthTokens({
+			systemDb.saveOAuthTokens({
 				access_token: newTokens.access_token,
 				refresh_token: newTokens.refresh_token || tokens.refreshToken,
 				token_type: newTokens.token_type || 'Bearer',
@@ -3303,7 +2637,7 @@ async function ensureValidToken() {
 
 		} catch (error) {
 			console.error('[OAuth] Auto-refresh failed:', error.message);
-			analyticsDb.deleteOAuthTokens();
+			systemDb.deleteOAuthTokens();
 			throw new OAuthTokenExpiredError('Token refresh failed. Please reconnect your Challonge account.');
 		}
 	}
@@ -3717,16 +3051,6 @@ const sponsorUpload = multer({
 	}
 });
 
-// Helper function to read state files
-async function readStateFile(filePath) {
-	try {
-		const data = await fs.readFile(filePath, 'utf8');
-		return JSON.parse(data);
-	} catch (error) {
-		return null;
-	}
-}
-
 // Helper function to check service status
 async function checkModuleStatus(apiUrl, endpoint = '/api/tournament/status') {
 	try {
@@ -3745,7 +3069,7 @@ async function checkModuleStatus(apiUrl, endpoint = '/api/tournament/status') {
 // Apply authentication middleware to all /api/ routes except auth routes
 app.use('/api/status', requireTokenOrSessionAuth);
 app.use('/api/tournament', requireAuthAPI);
-app.use('/api/flyers', requireAuthAPI);
+// Note: /api/flyers handles auth internally (preview routes are public)
 app.use('/api/flyer', requireAuthAPI);
 app.use('/api/tournaments', requireAuthAPI);
 app.use('/api/test-connection', requireAuthAPI);
@@ -3940,13 +3264,13 @@ async function sendPushNotification(subscription, payload) {
 
 	try {
 		await webpush.sendNotification(pushSubscription, JSON.stringify(payload));
-		analyticsDb.updateSubscriptionLastUsed(subscription.endpoint);
+		systemDb.updateSubscriptionLastUsed(subscription.endpoint);
 		return { success: true };
 	} catch (error) {
 		console.error('[Push] Error sending notification:', error.message);
 		// Remove invalid subscriptions (410 Gone or 404 Not Found)
 		if (error.statusCode === 410 || error.statusCode === 404) {
-			analyticsDb.deletePushSubscription(subscription.endpoint);
+			systemDb.deletePushSubscription(subscription.endpoint);
 			console.log('[Push] Removed invalid subscription:', subscription.endpoint.substring(0, 50));
 		}
 		return { success: false, error: error.message };
@@ -3961,7 +3285,7 @@ async function broadcastPushNotification(notificationType, payload) {
 		return { success: false, sent: 0, error: 'VAPID keys not configured' };
 	}
 
-	const subscriptions = analyticsDb.getAllPushSubscriptions();
+	const subscriptions = systemDb.getAllPushSubscriptions();
 	let sent = 0;
 	let failed = 0;
 
@@ -4010,7 +3334,7 @@ app.post('/api/notifications/subscribe', requireAuthAPI, (req, res) => {
 
 	try {
 		const userAgent = req.headers['user-agent'];
-		analyticsDb.savePushSubscription(req.session.userId, subscription, userAgent);
+		systemDb.savePushSubscription(req.session.userId, subscription, userAgent);
 
 		console.log(`[Push] Subscription saved for user ${req.session.username}`);
 		logActivity('push_subscribe', 'system', 'Push notifications enabled', req.session.username);
@@ -4034,9 +3358,9 @@ app.delete('/api/notifications/unsubscribe', requireAuthAPI, (req, res) => {
 
 	try {
 		if (endpoint) {
-			analyticsDb.deletePushSubscription(endpoint);
+			systemDb.deletePushSubscription(endpoint);
 		} else {
-			analyticsDb.deleteUserPushSubscriptions(req.session.userId);
+			systemDb.deleteUserPushSubscriptions(req.session.userId);
 		}
 
 		console.log(`[Push] Subscription removed for user ${req.session.username}`);
@@ -4058,8 +3382,8 @@ app.delete('/api/notifications/unsubscribe', requireAuthAPI, (req, res) => {
 // Get notification preferences
 app.get('/api/notifications/preferences', requireAuthAPI, (req, res) => {
 	try {
-		const preferences = analyticsDb.getNotificationPreferences(req.session.userId);
-		const subscriptions = analyticsDb.getPushSubscriptions(req.session.userId);
+		const preferences = systemDb.getNotificationPreferences(req.session.userId);
+		const subscriptions = systemDb.getPushSubscriptionsByUser(req.session.userId);
 
 		res.json({
 			success: true,
@@ -4081,7 +3405,7 @@ app.put('/api/notifications/preferences', requireAuthAPI, (req, res) => {
 	const preferences = req.body;
 
 	try {
-		analyticsDb.saveNotificationPreferences(req.session.userId, preferences);
+		systemDb.saveNotificationPreferences(req.session.userId, preferences);
 
 		console.log(`[Push] Preferences updated for user ${req.session.username}`);
 
@@ -4101,7 +3425,7 @@ app.put('/api/notifications/preferences', requireAuthAPI, (req, res) => {
 // Send test notification
 app.post('/api/notifications/test', requireAuthAPI, async (req, res) => {
 	try {
-		const subscriptions = analyticsDb.getPushSubscriptions(req.session.userId);
+		const subscriptions = systemDb.getPushSubscriptionsByUser(req.session.userId);
 
 		if (subscriptions.length === 0) {
 			return res.status(400).json({
@@ -4182,7 +3506,7 @@ app.post('/api/matches/force-update', requireAuthAPI, async (req, res) => {
 
 // Get match cache status
 app.get('/api/matches/cache-status', requireAuthAPI, (req, res) => {
-	const stateFile = process.env.MATCH_STATE_FILE || '/root/tournament-control-center/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json';
+	const stateFile = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
 	let tournamentId = null;
 
 	try {
@@ -4289,7 +3613,7 @@ app.post('/api/rate-limit/mode', requireAuthAPI, requireAdmin, (req, res) => {
 	}
 });
 
-// Setup tournament on both modules
+// Setup tournament on both modules (tcc-custom: uses local database)
 app.post('/api/tournament/setup', async (req, res) => {
 	const { tournamentId, registrationWindowHours, signupCap } = req.body;
 
@@ -4305,58 +3629,121 @@ app.post('/api/tournament/setup', async (req, res) => {
 	const regWindow = registrationWindowHours ? parseInt(registrationWindowHours) : 48;
 	const cap = signupCap ? parseInt(signupCap) : null;
 
-	const useApiKey = getChallongeApiKey();
-
-	if (!useApiKey) {
-		return res.status(500).json({
-			success: false,
-			error: 'Challonge not connected. Please connect your account in Settings.'
-		});
-	}
-
 	try {
-		// Build bracket URL (HTTPS required for mixed content security)
+		// Get tournament from local database
+		const tournament = tournamentDb.getBySlug(tournamentId) || tournamentDb.getById(tournamentId);
+		if (!tournament) {
+			return res.status(404).json({
+				success: false,
+				error: 'Tournament not found in local database'
+			});
+		}
+
+		// Build bracket URL for native rendering (tcc-custom uses local bracket display)
 		const displaySettings = getDisplaySettings();
-		const bracketUrl = `https://challonge.com/${tournamentId}/module?scale_to_fit=1&multiplier=${displaySettings.bracketZoomLevel}`;
+		const bracketUrl = `${process.env.BRACKET_API_URL || 'http://localhost:2053'}/bracket/${tournamentId}`;
 
 		// Send to match and bracket modules (flyer is managed separately via Flyers page)
-		const [matchResponse, bracketResponse] = await Promise.all([
-			axios.post(`${process.env.MATCH_API_URL}/api/tournament/update`, {
-				apiKey: useApiKey,
+		const results = { match: null, bracket: null };
+		const errors = [];
+
+		// Try match module
+		try {
+			const matchResponse = await axios.post(`${process.env.MATCH_API_URL}/api/tournament/update`, {
+				apiKey: 'local-tcc-custom',  // Placeholder for local DB mode
 				tournamentId: tournamentId,
+				tournamentName: tournament.name,
+				gameName: tournament.game_name,
 				registrationWindowHours: regWindow,
 				signupCap: cap
-			}, { timeout: 5000 }),
-			axios.post(`${process.env.BRACKET_API_URL}/api/bracket/update`, {
-				bracketUrl: bracketUrl
-			}, { timeout: 5000 })
-		]);
+			}, { timeout: 5000 });
+			results.match = matchResponse.data;
+		} catch (matchErr) {
+			console.error('Match module setup error:', matchErr.message);
+			errors.push(`Match module: ${matchErr.message}`);
+		}
 
+		// Try bracket module
+		try {
+			const bracketResponse = await axios.post(`${process.env.BRACKET_API_URL}/api/bracket/update`, {
+				tournamentId: tournamentId,
+				bracketUrl: bracketUrl
+			}, { timeout: 5000 });
+			results.bracket = bracketResponse.data;
+		} catch (bracketErr) {
+			console.error('Bracket module setup error:', bracketErr.message);
+			errors.push(`Bracket module: ${bracketErr.message}`);
+		}
+
+		// Broadcast tournament deployed event so dashboard updates immediately
+		if (io) {
+			io.emit('tournament:deployed', {
+				tournamentId: tournamentId,
+				tournament: {
+					id: tournamentId,
+					name: tournament.name,
+					bracketUrl: bracketUrl
+				}
+			});
+		}
+
+		// Write state file directly for deployment checklist verification
+		// This ensures the pre-flight checklist shows "Deployed" even if modules are offline
+		// Note: tournamentId must be the URL slug to match frontend expectations
+		try {
+			const stateFilePath = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
+			const stateDir = require('path').dirname(stateFilePath);
+
+			// Ensure directory exists
+			await require('fs').promises.mkdir(stateDir, { recursive: true });
+
+			// Write state file - tournamentId should be the URL slug (as frontend expects)
+			// tournamentId parameter could be numeric ID or slug, so use tournament.url_slug
+			await require('fs').promises.writeFile(stateFilePath, JSON.stringify({
+				tournamentId: tournament.url_slug,
+				tournamentDbId: tournament.id,
+				tournamentName: tournament.name,
+				gameName: tournament.game_name,
+				bracketUrl: bracketUrl,
+				deployedAt: new Date().toISOString(),
+				lastUpdated: new Date().toISOString()
+			}, null, 2));
+
+			console.log(`[Tournament Setup] State file written to ${stateFilePath}`);
+		} catch (stateErr) {
+			console.error('[Tournament Setup] Failed to write state file:', stateErr.message);
+			errors.push(`State file: ${stateErr.message}`);
+		}
+
+		// Return success even if some modules failed (they might be offline)
 		res.json({
 			success: true,
-			message: 'Tournament configured successfully on display modules',
-			results: {
-				match: matchResponse.data,
-				bracket: bracketResponse.data
-			},
+			message: errors.length > 0
+				? `Tournament configured with warnings: ${errors.join('; ')}`
+				: 'Tournament configured successfully on display modules',
+			results: results,
 			tournament: {
 				id: tournamentId,
+				name: tournament.name,
 				bracketUrl: bracketUrl
-			}
+			},
+			warnings: errors.length > 0 ? errors : undefined
 		});
 	} catch (error) {
 		console.error('Tournament setup error:', error.message);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to configure tournament',
-			details: error.response ? error.response.data : error.message
+			details: error.message
 		});
 	}
 });
 
 // Update flyer display only (without reconfiguring tournament)
+// Updated for standalone flyer-display service - uses WebSocket only, no HTTP proxy
 app.post('/api/flyer/update', async (req, res) => {
 	const { flyer } = req.body;
+	const userId = req.session?.userId;
 
 	// Validation
 	if (!flyer) {
@@ -4367,25 +3754,39 @@ app.post('/api/flyer/update', async (req, res) => {
 	}
 
 	try {
-		// Send only to flyer module
-		const flyerResponse = await axios.post(
-			`${process.env.FLYER_API_URL}/api/flyer/update`,
-			{ flyer: flyer },
-			{ timeout: 5000 }
-		);
+		// Broadcast to user-specific flyer room (WebSocket only, no HTTP to port 2054)
+		if (io && userId) {
+			io.to(`user:${userId}:flyer`).emit('flyer:activated', {
+				flyer,
+				userId,
+				timestamp: new Date().toISOString()
+			});
+			console.log(`[Flyer] Broadcast to user:${userId}:flyer - ${flyer}`);
+		}
+
+		// General broadcast for admin dashboard updates
+		io.emit('flyer:activated', { flyer, userId });
+
+		// Log activity
+		if (typeof logActivity === 'function') {
+			logActivity('flyer_set_active', req.session?.username || 'system', {
+				flyer: flyer,
+				userId: userId
+			});
+		}
 
 		res.json({
 			success: true,
 			message: 'Flyer display updated successfully',
-			result: flyerResponse.data,
-			flyer: flyer
+			flyer: flyer,
+			userId: userId
 		});
 	} catch (error) {
 		console.error('Flyer update error:', error.message);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to update flyer display',
-			details: error.response ? error.response.data : error.message
+			details: error.message
 		});
 	}
 });
@@ -4541,9 +3942,10 @@ app.post('/api/ticker/send', requireTokenOrSessionAuth, async (req, res) => {
 	}
 
 	const trimmedMessage = message.trim().substring(0, 200);
+	const userId = req.session?.userId;
 
-	// Broadcast via WebSocket (real-time)
-	broadcastTickerMessage(trimmedMessage, tickerDuration);
+	// Broadcast via WebSocket (real-time) - multi-tenant
+	broadcastTickerMessage(trimmedMessage, tickerDuration, userId);
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -4686,6 +4088,7 @@ app.delete('/api/ticker/schedule', requireAuthAPI, (req, res) => {
 app.post('/api/audio/announce', requireAuthAPI, async (req, res) => {
 	try {
 		const { text, voice, rate, volume } = req.body;
+		const userId = req.session?.userId;
 
 		if (!text || typeof text !== 'string' || text.trim().length === 0) {
 			return res.status(400).json({ success: false, error: 'Text is required' });
@@ -4703,9 +4106,9 @@ app.post('/api/audio/announce', requireAuthAPI, async (req, res) => {
 			timestamp: Date.now()
 		};
 
-		// Broadcast via WebSocket
-		io.emit('audio:announce', payload);
-		console.log(`[Audio] Announcement broadcast via WebSocket: "${announcementText.substring(0, 50)}..."`);
+		// Broadcast via WebSocket (multi-tenant)
+		broadcastToUser('audio:announce', payload, userId);
+		console.log(`[Audio] Announcement broadcast via WebSocket: "${announcementText.substring(0, 50)}..."${userId ? ` (user:${userId})` : ''}`);
 
 		// Also send via HTTP to match display for redundancy
 		try {
@@ -4732,6 +4135,7 @@ app.post('/api/audio/announce', requireAuthAPI, async (req, res) => {
 // Start a DQ timer for a specific TV (TV 1 or TV 2)
 app.post('/api/timer/dq', requireAuthAPI, async (req, res) => {
 	const { tv, duration, tournamentId, matchId, playerId, playerName } = req.body;
+	const userId = req.session?.userId;
 
 	// Validate TV parameter
 	if (!tv || (tv !== 'TV 1' && tv !== 'TV 2')) {
@@ -4751,22 +4155,22 @@ app.post('/api/timer/dq', requireAuthAPI, async (req, res) => {
 		});
 	}
 
-	console.log(`[Timer] Starting DQ timer for ${tv}: ${timerDuration} seconds`);
+	console.log(`[Timer] Starting DQ timer for ${tv}: ${timerDuration} seconds${userId ? ` (user:${userId})` : ''}`);
 
 	// If enhanced params provided, use server-side timer management
 	if (tournamentId && matchId) {
-		startServerDQTimer(tournamentId, matchId, tv, timerDuration, playerId, playerName);
+		startServerDQTimer(tournamentId, matchId, tv, timerDuration, playerId, playerName, userId);
 	}
 
-	// Broadcast via WebSocket (for display)
-	io.emit('timer:dq', {
+	// Broadcast via WebSocket (multi-tenant)
+	broadcastToUser('timer:dq', {
 		tv: tv,
 		duration: timerDuration,
 		action: 'start',
 		matchId: matchId || null,
 		playerName: playerName || null,
 		timestamp: new Date().toISOString()
-	});
+	}, userId);
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -4799,11 +4203,12 @@ app.get('/api/timer/dq/active', requireAuthAPI, (req, res) => {
 // Cancel a specific DQ timer
 app.delete('/api/timer/dq/:key', requireAuthAPI, (req, res) => {
 	const { key } = req.params;
+	const userId = req.session?.userId;
 
 	// URL decode the key (it may contain colons)
 	const decodedKey = decodeURIComponent(key);
 
-	if (cancelDQTimer(decodedKey)) {
+	if (cancelDQTimer(decodedKey, userId)) {
 		res.json({
 			success: true,
 			message: 'DQ timer cancelled'
@@ -4819,6 +4224,7 @@ app.delete('/api/timer/dq/:key', requireAuthAPI, (req, res) => {
 // Start the tournament-wide timer (large timer between TVs and Up Next)
 app.post('/api/timer/tournament', requireAuthAPI, async (req, res) => {
 	const { duration } = req.body;
+	const userId = req.session?.userId;
 
 	// Validate duration
 	const timerDuration = parseInt(duration, 10);
@@ -4829,14 +4235,14 @@ app.post('/api/timer/tournament', requireAuthAPI, async (req, res) => {
 		});
 	}
 
-	console.log(`[Timer] Starting tournament timer: ${timerDuration} seconds`);
+	console.log(`[Timer] Starting tournament timer: ${timerDuration} seconds${userId ? ` (user:${userId})` : ''}`);
 
-	// Broadcast via WebSocket
-	io.emit('timer:tournament', {
+	// Broadcast via WebSocket (multi-tenant)
+	broadcastToUser('timer:tournament', {
 		duration: timerDuration,
 		action: 'start',
 		timestamp: new Date().toISOString()
-	});
+	}, userId);
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -4859,6 +4265,7 @@ app.post('/api/timer/tournament', requireAuthAPI, async (req, res) => {
 // Hide/stop a timer
 app.post('/api/timer/hide', requireAuthAPI, async (req, res) => {
 	const { type, tv } = req.body;
+	const userId = req.session?.userId;
 
 	// Validate type parameter
 	if (!type || (type !== 'dq' && type !== 'tournament' && type !== 'all')) {
@@ -4876,14 +4283,14 @@ app.post('/api/timer/hide', requireAuthAPI, async (req, res) => {
 		});
 	}
 
-	console.log(`[Timer] Hiding timer: type=${type}, tv=${tv || 'N/A'}`);
+	console.log(`[Timer] Hiding timer: type=${type}, tv=${tv || 'N/A'}${userId ? ` (user:${userId})` : ''}`);
 
-	// Broadcast via WebSocket
-	io.emit('timer:hide', {
+	// Broadcast via WebSocket (multi-tenant)
+	broadcastToUser('timer:hide', {
 		type: type,
 		tv: tv || null,
 		timestamp: new Date().toISOString()
-	});
+	}, userId);
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -4973,15 +4380,24 @@ app.post('/api/qr/show', requireAuthAPI, async (req, res) => {
 	}
 
 	const qrDuration = duration ? Math.min(Math.max(duration, 10), 300) : null; // 10s-5min, or null for permanent
+	const userId = req.session?.userId;
 
-	// Broadcast via WebSocket
-	io.emit('qr:show', {
+	// Broadcast via WebSocket (multi-tenant)
+	const qrPayload = {
 		qrCode: qrDataUrl,
 		url: url,
 		label: label || 'Scan to Join',
 		duration: qrDuration,
 		timestamp: new Date().toISOString()
-	});
+	};
+
+	if (userId) {
+		io.to(`user:${userId}`).emit('qr:show', qrPayload);
+		console.log(`[WebSocket] User-targeted QR show to user:${userId}`);
+	} else {
+		io.emit('qr:show', qrPayload);
+		console.log(`[WebSocket] Global QR show broadcast`);
+	}
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -5003,10 +4419,18 @@ app.post('/api/qr/show', requireAuthAPI, async (req, res) => {
 
 // Hide QR code from match display
 app.post('/api/qr/hide', requireAuthAPI, async (req, res) => {
-	// Broadcast via WebSocket
-	io.emit('qr:hide', {
-		timestamp: new Date().toISOString()
-	});
+	const userId = req.session?.userId;
+
+	// Broadcast via WebSocket (multi-tenant)
+	const hidePayload = { timestamp: new Date().toISOString() };
+
+	if (userId) {
+		io.to(`user:${userId}`).emit('qr:hide', hidePayload);
+		console.log(`[WebSocket] User-targeted QR hide to user:${userId}`);
+	} else {
+		io.emit('qr:hide', hidePayload);
+		console.log(`[WebSocket] Global QR hide broadcast`);
+	}
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -5255,121 +4679,56 @@ app.post('/api/matches/:tournamentId/undo', requireTokenOrSessionAuth, async (re
 	}
 });
 
-// List available flyers
-app.get('/api/flyers', async (req, res) => {
-	try {
-		const flyersPath = process.env.FLYERS_PATH;
-		const files = await fs.readdir(flyersPath);
+// Note: GET /api/flyers is now handled by routes/flyers.js with multi-tenant support
 
-		const flyers = await Promise.all(
-			files
-				.filter(file => {
-					const ext = path.extname(file).toLowerCase();
-					return ALLOWED_FLYER_EXTENSIONS.includes(ext);
-				})
-				.map(async (file) => {
-					const stats = await fs.stat(path.join(flyersPath, file));
-					const ext = path.extname(file).toLowerCase();
-					return {
-						filename: file,
-						size: stats.size,
-						modified: stats.mtime,
-						type: ext === '.mp4' ? 'video' : 'image'
-					};
-				})
-		);
+// Note: Flyer preview is handled by routes/flyers.js
 
-		res.json({
-			success: true,
-			flyers: flyers
-		});
-	} catch (error) {
-		res.status(500).json({
-			success: false,
-			error: error.message
+// Image optimization constants
+const IMAGE_MAX_WIDTH = 1920;
+const IMAGE_MAX_HEIGHT = 1080;
+const JPEG_QUALITY = 85;
+const PNG_COMPRESSION = 9;
+
+/**
+ * Optimize image by resizing and compressing
+ */
+async function optimizeImage(inputPath, outputPath) {
+	const inputStats = await fs.stat(inputPath);
+	const metadata = await sharp(inputPath).metadata();
+
+	const needsResize = metadata.width > IMAGE_MAX_WIDTH || metadata.height > IMAGE_MAX_HEIGHT;
+
+	let pipeline = sharp(inputPath).rotate(); // Auto-orient based on EXIF
+
+	if (needsResize) {
+		pipeline = pipeline.resize(IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, {
+			fit: 'inside',
+			withoutEnlargement: true
 		});
 	}
-});
 
-// Serve flyer preview
-
-// Upload new flyer
-app.post('/api/flyers/upload', upload.single('flyer'), async (req, res) => {
-	try {
-		if (!req.file) {
-			return res.status(400).json({
-				success: false,
-				error: 'No file uploaded'
-			});
-		}
-
-		// Get the original file extension
-		const originalExt = path.extname(req.file.originalname).toLowerCase();
-		const customName = req.body.customName;
-
-		let finalName;
-		if (customName) {
-			// If custom name provided, ensure it has the correct extension
-			const customExt = path.extname(customName).toLowerCase();
-			if (ALLOWED_FLYER_EXTENSIONS.includes(customExt)) {
-				finalName = customName;
-			} else {
-				// Add the original file's extension
-				finalName = customName + originalExt;
-			}
-		} else {
-			// Use original filename
-			finalName = req.file.originalname;
-		}
-
-		const tempPath = req.file.path;
-		const targetPath = path.join(process.env.FLYERS_PATH, finalName);
-
-		// Move file from uploads to flyers directory
-		await fs.rename(tempPath, targetPath);
-
-		res.json({
-			success: true,
-			message: 'Flyer uploaded successfully',
-			filename: finalName,
-			type: originalExt === '.mp4' ? 'video' : 'image'
-		});
-	} catch (error) {
-		console.error('Upload error:', error);
-		res.status(500).json({
-			success: false,
-			error: error.message
-		});
+	// Apply format-specific optimization
+	if (outputPath.match(/\.jpe?g$/i)) {
+		pipeline = pipeline.jpeg({ quality: JPEG_QUALITY });
+	} else if (outputPath.match(/\.png$/i)) {
+		pipeline = pipeline.png({ compressionLevel: PNG_COMPRESSION });
 	}
-});
 
-// Delete flyer
-app.delete('/api/flyers/:filename', async (req, res) => {
-	try {
-		const filename = req.params.filename;
-		const filePath = path.join(process.env.FLYERS_PATH, filename);
+	await pipeline.toFile(outputPath);
 
-		// Security check - prevent path traversal
-		if (filename.includes('..') || filename.includes('/')) {
-			return res.status(400).json({
-				success: false,
-				error: 'Invalid filename'
-			});
-		}
+	const outputStats = await fs.stat(outputPath);
 
-		await fs.unlink(filePath);
+	return {
+		originalDimensions: `${metadata.width}x${metadata.height}`,
+		optimized: needsResize,
+		originalSize: inputStats.size,
+		newSize: outputStats.size
+	};
+}
 
-		res.json({
-			success: true,
-			message: 'Flyer deleted successfully'
-		});
-	} catch (error) {
-		res.status(500).json({
-			success: false,
-			error: error.message
-		});
-	}
-});
+// Note: POST /api/flyers/upload is now handled by routes/flyers.js with multi-tenant support
+
+// Note: DELETE /api/flyers/:filename is now handled by routes/flyers.js with multi-tenant support
 
 // ========================================
 // SPONSOR MANAGEMENT ENDPOINTS
@@ -5732,7 +5091,14 @@ app.post('/api/sponsors/config', requireAuthAPI, async (req, res) => {
 app.post('/api/sponsors/show', requireAuthAPI, async (req, res) => {
 	try {
 		const { sponsorId, position, all, duration = 0, realtimeUpdate, offsetX, offsetY } = req.body;
+		const userId = req.session?.userId;
 		const state = loadSponsorState();
+
+		// Store userId for background sponsor processes (rotation, timer view)
+		if (userId) {
+			state.activeUserId = userId;
+			saveSponsorState(state);
+		}
 
 		let sponsorsToShow = [];
 
@@ -5879,6 +5245,729 @@ app.post('/api/sponsors/hide', requireAuthAPI, async (req, res) => {
 	} catch (error) {
 		res.status(500).json({ success: false, error: error.message });
 	}
+});
+
+// ============================================
+// Sponsor Impression Tracking API Endpoints
+// ============================================
+
+// POST /api/sponsors/impressions/record - Record impression from display (no auth for displays)
+app.post('/api/sponsors/impressions/record', async (req, res) => {
+	try {
+		const {
+			sponsorId,
+			displayId,
+			displayType,
+			tournamentId,
+			position,
+			displayStart,
+			displayEnd,
+			durationSeconds,
+			viewerEstimate
+		} = req.body;
+
+		if (!sponsorId) {
+			return res.status(400).json({ success: false, error: 'sponsorId is required' });
+		}
+
+		const impressionId = systemDb.recordSponsorImpression({
+			sponsorId,
+			displayId,
+			displayType,
+			tournamentId,
+			position,
+			displayStart,
+			displayEnd,
+			durationSeconds: durationSeconds || 0,
+			viewerEstimate: viewerEstimate || 0
+		});
+
+		console.log(`[Sponsors] Impression recorded: ${sponsorId}, duration: ${durationSeconds}s`);
+
+		res.json({
+			success: true,
+			impressionId,
+			message: 'Impression recorded'
+		});
+	} catch (error) {
+		console.error('[Sponsors] Impression record error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// POST /api/sponsors/impressions/start - Start tracking an impression
+app.post('/api/sponsors/impressions/start', async (req, res) => {
+	try {
+		const { sponsorId, displayId, displayType, tournamentId, position, viewerEstimate } = req.body;
+
+		if (!sponsorId) {
+			return res.status(400).json({ success: false, error: 'sponsorId is required' });
+		}
+
+		const impressionId = systemDb.startSponsorImpression({
+			sponsorId,
+			displayId,
+			displayType,
+			tournamentId,
+			position,
+			viewerEstimate
+		});
+
+		res.json({
+			success: true,
+			impressionId
+		});
+	} catch (error) {
+		console.error('[Sponsors] Impression start error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// POST /api/sponsors/impressions/:id/end - End tracking an impression
+app.post('/api/sponsors/impressions/:id/end', async (req, res) => {
+	try {
+		const impressionId = parseInt(req.params.id);
+
+		systemDb.endSponsorImpression(impressionId);
+
+		res.json({
+			success: true,
+			message: 'Impression ended'
+		});
+	} catch (error) {
+		console.error('[Sponsors] Impression end error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/impressions/overview - Get impression stats for all sponsors
+app.get('/api/sponsors/impressions/overview', requireAuthAPI, async (req, res) => {
+	try {
+		const { startDate, endDate } = req.query;
+
+		const stats = systemDb.getAllSponsorImpressionStats({
+			startDate,
+			endDate
+		});
+
+		// Calculate totals
+		const totals = stats.reduce((acc, s) => ({
+			totalImpressions: acc.totalImpressions + (s.total_impressions || 0),
+			totalDuration: acc.totalDuration + (s.total_duration_seconds || 0),
+			totalViewerMinutes: acc.totalViewerMinutes + (s.total_viewer_minutes || 0)
+		}), { totalImpressions: 0, totalDuration: 0, totalViewerMinutes: 0 });
+
+		res.json({
+			success: true,
+			sponsors: stats,
+			totals: {
+				totalImpressions: totals.totalImpressions,
+				totalDurationSeconds: totals.totalDuration,
+				totalDurationFormatted: formatDurationSeconds(totals.totalDuration),
+				totalViewerMinutes: totals.totalViewerMinutes
+			},
+			dateRange: { startDate, endDate }
+		});
+	} catch (error) {
+		console.error('[Sponsors] Impressions overview error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/:id/impressions - Get impression stats for a single sponsor
+app.get('/api/sponsors/:id/impressions', requireAuthAPI, async (req, res) => {
+	try {
+		const sponsorId = req.params.id;
+		const { startDate, endDate, limit } = req.query;
+
+		// Get daily stats
+		const dailyStats = systemDb.getSponsorImpressionStats(sponsorId, {
+			startDate,
+			endDate,
+			limit: parseInt(limit) || 30
+		});
+
+		// Get all-time totals
+		const totals = systemDb.getSponsorImpressionTotals(sponsorId);
+
+		res.json({
+			success: true,
+			sponsorId,
+			dailyStats,
+			totals: {
+				...totals,
+				totalDurationFormatted: formatDurationSeconds(totals.total_duration_seconds || 0)
+			},
+			dateRange: { startDate, endDate }
+		});
+	} catch (error) {
+		console.error('[Sponsors] Sponsor impressions error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/:id/impressions/raw - Get raw impression records
+app.get('/api/sponsors/:id/impressions/raw', requireAuthAPI, async (req, res) => {
+	try {
+		const sponsorId = req.params.id;
+		const { startDate, endDate, limit, offset } = req.query;
+
+		const impressions = systemDb.getSponsorImpressions(sponsorId, {
+			startDate,
+			endDate,
+			limit: parseInt(limit) || 100,
+			offset: parseInt(offset) || 0
+		});
+
+		res.json({
+			success: true,
+			sponsorId,
+			impressions,
+			pagination: {
+				limit: parseInt(limit) || 100,
+				offset: parseInt(offset) || 0,
+				count: impressions.length
+			}
+		});
+	} catch (error) {
+		console.error('[Sponsors] Raw impressions error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// POST /api/sponsors/impressions/cleanup - Clean up old impressions
+app.post('/api/sponsors/impressions/cleanup', requireAuthAPI, async (req, res) => {
+	try {
+		const { daysToKeep } = req.body;
+		const deleted = systemDb.cleanupOldImpressions(daysToKeep || 90);
+
+		console.log(`[Sponsors] Cleaned up ${deleted} old impression records`);
+
+		res.json({
+			success: true,
+			deleted,
+			message: `Deleted ${deleted} old impression records`
+		});
+	} catch (error) {
+		console.error('[Sponsors] Impressions cleanup error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// Helper function to format duration
+function formatDurationSeconds(seconds) {
+	if (!seconds || seconds === 0) return '0s';
+
+	const hours = Math.floor(seconds / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	const secs = seconds % 60;
+
+	const parts = [];
+	if (hours > 0) parts.push(`${hours}h`);
+	if (minutes > 0) parts.push(`${minutes}m`);
+	if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+
+	return parts.join(' ');
+}
+
+// ============================================
+// Sponsor QR Code Overlay API Endpoints
+// ============================================
+
+// PUT /api/sponsors/:id/qr - Update sponsor QR code URL
+app.put('/api/sponsors/:id/qr', requireAuthAPI, async (req, res) => {
+	try {
+		const sponsorId = req.params.id;
+		const { qrUrl } = req.body;
+
+		// Update the sponsor's qr_url in the database
+		systemDb.getDb().prepare(`
+			UPDATE sponsors SET qr_url = ? WHERE id = ?
+		`).run(qrUrl || null, sponsorId);
+
+		console.log(`[Sponsors] QR URL updated for ${sponsorId}: ${qrUrl || '(cleared)'}`);
+
+		res.json({
+			success: true,
+			message: 'QR URL updated',
+			sponsorId,
+			qrUrl
+		});
+	} catch (error) {
+		console.error('[Sponsors] QR URL update error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// POST /api/sponsors/:id/show-with-qr - Show sponsor with QR code overlay
+app.post('/api/sponsors/:id/show-with-qr', requireAuthAPI, async (req, res) => {
+	try {
+		const sponsorId = req.params.id;
+		const { duration, qrLabel, viewerEstimate } = req.body;
+
+		// Get sponsor from database
+		const sponsor = systemDb.getDb().prepare('SELECT * FROM sponsors WHERE id = ?').get(sponsorId);
+		if (!sponsor) {
+			return res.status(404).json({ success: false, error: 'Sponsor not found' });
+		}
+
+		// Get QR URL from sponsor or request body
+		const qrUrl = req.body.qrUrl || sponsor.qr_url;
+		if (!qrUrl) {
+			return res.status(400).json({ success: false, error: 'No QR URL configured for this sponsor' });
+		}
+
+		// Generate QR code
+		const QRCode = require('qrcode');
+		const qrSize = 200;
+		const qrDataUrl = await QRCode.toDataURL(qrUrl, {
+			width: qrSize,
+			margin: 1,
+			color: {
+				dark: '#000000',
+				light: '#ffffff'
+			}
+		});
+
+		// Build sponsor data for display
+		const sponsorData = {
+			id: sponsor.id,
+			name: sponsor.name,
+			filename: sponsor.filename,
+			position: sponsor.position,
+			type: sponsor.type,
+			size: sponsor.size,
+			opacity: sponsor.opacity,
+			offsetX: sponsor.offset_x || 0,
+			offsetY: sponsor.offset_y || 0,
+			qrCode: qrDataUrl,
+			qrUrl: qrUrl,
+			qrLabel: qrLabel || 'Scan for offer'
+		};
+
+		const qrDuration = duration ? Math.min(Math.max(duration, 10), 3600) : 0;
+
+		// Broadcast via WebSocket
+		io.emit('sponsor:show-with-qr', {
+			sponsor: sponsorData,
+			duration: qrDuration,
+			timestamp: new Date().toISOString()
+		});
+
+		// Also send via HTTP to MagicMirror modules
+		const state = sponsorService.loadSponsorState();
+		const matchEnabled = state.config.displays?.match !== false;
+		const bracketEnabled = state.config.displays?.bracket !== false;
+
+		if (matchEnabled && process.env.SPONSOR_MATCH_API_URL) {
+			try {
+				await axios.post(`${process.env.SPONSOR_MATCH_API_URL}/api/sponsor/show-with-qr`, {
+					sponsor: sponsorData,
+					duration: qrDuration
+				}, { timeout: 5000 });
+			} catch (httpError) {
+				console.warn(`[Sponsors] HTTP QR push to match failed: ${httpError.message}`);
+			}
+		}
+
+		if (bracketEnabled && process.env.SPONSOR_BRACKET_API_URL) {
+			try {
+				await axios.post(`${process.env.SPONSOR_BRACKET_API_URL}/api/sponsor/show-with-qr`, {
+					sponsor: sponsorData,
+					duration: qrDuration
+				}, { timeout: 5000 });
+			} catch (httpError) {
+				console.warn(`[Sponsors] HTTP QR push to bracket failed: ${httpError.message}`);
+			}
+		}
+
+		// Record impression with QR flag
+		try {
+			systemDb.recordSponsorImpression({
+				sponsorId: sponsor.id,
+				displayType: 'match', // Could be enhanced to track which display
+				position: sponsor.position,
+				durationSeconds: qrDuration || 30,
+				viewerEstimate: viewerEstimate || 0
+			});
+		} catch (impError) {
+			console.warn('[Sponsors] Failed to record QR impression:', impError.message);
+		}
+
+		console.log(`[Sponsors] Showing ${sponsor.name} with QR code for ${qrDuration || 'unlimited'}s`);
+
+		res.json({
+			success: true,
+			message: `Showing ${sponsor.name} with QR code`,
+			sponsor: sponsorData,
+			duration: qrDuration
+		});
+	} catch (error) {
+		console.error('[Sponsors] Show with QR error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/:id/qr - Get sponsor's QR code URL and preview
+app.get('/api/sponsors/:id/qr', requireAuthAPI, async (req, res) => {
+	try {
+		const sponsorId = req.params.id;
+
+		const sponsor = systemDb.getDb().prepare('SELECT id, name, qr_url FROM sponsors WHERE id = ?').get(sponsorId);
+		if (!sponsor) {
+			return res.status(404).json({ success: false, error: 'Sponsor not found' });
+		}
+
+		let qrPreview = null;
+		if (sponsor.qr_url) {
+			const QRCode = require('qrcode');
+			qrPreview = await QRCode.toDataURL(sponsor.qr_url, {
+				width: 150,
+				margin: 1
+			});
+		}
+
+		res.json({
+			success: true,
+			sponsorId: sponsor.id,
+			sponsorName: sponsor.name,
+			qrUrl: sponsor.qr_url,
+			qrPreview
+		});
+	} catch (error) {
+		console.error('[Sponsors] Get QR error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// ============================================
+// Sponsor Report Generation API Endpoints
+// ============================================
+
+// GET /api/sponsors/report/json - Get sponsor report as JSON
+app.get('/api/sponsors/report/json', requireAuthAPI, async (req, res) => {
+	try {
+		const { sponsorId, startDate, endDate } = req.query;
+
+		let sponsors = [];
+		if (sponsorId) {
+			const sponsor = systemDb.getDb().prepare('SELECT * FROM sponsors WHERE id = ?').get(sponsorId);
+			if (!sponsor) {
+				return res.status(404).json({ success: false, error: 'Sponsor not found' });
+			}
+			sponsors = [sponsor];
+		} else {
+			sponsors = systemDb.getDb().prepare('SELECT * FROM sponsors').all();
+		}
+
+		// Build report data for each sponsor
+		const reportData = sponsors.map(sponsor => {
+			const totals = systemDb.getSponsorImpressionTotals(sponsor.id);
+			const dailyStats = systemDb.getSponsorImpressionStats(sponsor.id, {
+				startDate,
+				endDate,
+				limit: 90
+			});
+
+			return {
+				sponsor: {
+					id: sponsor.id,
+					name: sponsor.name,
+					position: sponsor.position,
+					type: sponsor.type,
+					active: Boolean(sponsor.active)
+				},
+				totals: {
+					totalImpressions: totals.total_impressions || 0,
+					totalDurationSeconds: totals.total_duration_seconds || 0,
+					totalDurationFormatted: formatDurationSeconds(totals.total_duration_seconds || 0),
+					totalViewerMinutes: totals.total_viewer_minutes || 0,
+					matchImpressions: totals.match_impressions || 0,
+					bracketImpressions: totals.bracket_impressions || 0,
+					uniqueTournaments: totals.unique_tournaments || 0,
+					firstImpression: totals.first_impression,
+					lastImpression: totals.last_impression
+				},
+				dailyBreakdown: dailyStats.map(day => ({
+					date: day.stat_date,
+					impressions: day.total_impressions,
+					durationSeconds: day.total_duration_seconds,
+					viewerMinutes: day.total_viewer_minutes,
+					matchCount: day.display_match_count,
+					bracketCount: day.display_bracket_count
+				}))
+			};
+		});
+
+		res.json({
+			success: true,
+			generatedAt: new Date().toISOString(),
+			dateRange: { startDate: startDate || 'all-time', endDate: endDate || 'present' },
+			sponsorCount: reportData.length,
+			report: sponsorId ? reportData[0] : reportData
+		});
+	} catch (error) {
+		console.error('[Sponsors] Report JSON error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/report/csv - Export sponsor impressions as CSV
+app.get('/api/sponsors/report/csv', requireAuthAPI, async (req, res) => {
+	try {
+		const { sponsorId, startDate, endDate, type } = req.query;
+
+		// Get all sponsors or specific one
+		let sponsors = [];
+		if (sponsorId) {
+			const sponsor = systemDb.getDb().prepare('SELECT * FROM sponsors WHERE id = ?').get(sponsorId);
+			if (!sponsor) {
+				return res.status(404).json({ success: false, error: 'Sponsor not found' });
+			}
+			sponsors = [sponsor];
+		} else {
+			sponsors = systemDb.getDb().prepare('SELECT * FROM sponsors').all();
+		}
+
+		let csv = '';
+
+		if (type === 'daily') {
+			// Daily breakdown CSV
+			const headers = ['Sponsor Name', 'Date', 'Impressions', 'Duration (seconds)', 'Viewer Minutes', 'Match Count', 'Bracket Count'];
+			csv = headers.join(',') + '\n';
+
+			for (const sponsor of sponsors) {
+				const dailyStats = systemDb.getSponsorImpressionStats(sponsor.id, {
+					startDate,
+					endDate,
+					limit: 365
+				});
+
+				for (const day of dailyStats) {
+					csv += [
+						`"${sponsor.name}"`,
+						day.stat_date,
+						day.total_impressions,
+						day.total_duration_seconds,
+						day.total_viewer_minutes,
+						day.display_match_count,
+						day.display_bracket_count
+					].join(',') + '\n';
+				}
+			}
+		} else {
+			// Summary CSV
+			const headers = ['Sponsor Name', 'Position', 'Active', 'Total Impressions', 'Total Duration', 'Viewer Minutes', 'Match Impressions', 'Bracket Impressions', 'Tournaments'];
+			csv = headers.join(',') + '\n';
+
+			for (const sponsor of sponsors) {
+				const totals = systemDb.getSponsorImpressionTotals(sponsor.id);
+				csv += [
+					`"${sponsor.name}"`,
+					sponsor.position,
+					sponsor.active ? 'Yes' : 'No',
+					totals.total_impressions || 0,
+					formatDurationSeconds(totals.total_duration_seconds || 0),
+					totals.total_viewer_minutes || 0,
+					totals.match_impressions || 0,
+					totals.bracket_impressions || 0,
+					totals.unique_tournaments || 0
+				].join(',') + '\n';
+			}
+		}
+
+		const filename = sponsorId
+			? `sponsor_report_${sponsors[0]?.name?.replace(/[^a-z0-9]/gi, '_') || 'unknown'}.csv`
+			: 'sponsors_report.csv';
+
+		res.setHeader('Content-Type', 'text/csv');
+		res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+		res.send(csv);
+	} catch (error) {
+		console.error('[Sponsors] Report CSV error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/report/pdf - Generate professional PDF sponsor report
+app.get('/api/sponsors/report/pdf', requireAuthAPI, async (req, res) => {
+	try {
+		const { sponsorId, startDate, endDate } = req.query;
+		const PDFDocument = require('pdfkit');
+
+		// Get sponsor(s)
+		let sponsors = [];
+		if (sponsorId) {
+			const sponsor = systemDb.getDb().prepare('SELECT * FROM sponsors WHERE id = ?').get(sponsorId);
+			if (!sponsor) {
+				return res.status(404).json({ success: false, error: 'Sponsor not found' });
+			}
+			sponsors = [sponsor];
+		} else {
+			sponsors = systemDb.getDb().prepare('SELECT * FROM sponsors').all();
+		}
+
+		// PDF color scheme
+		const PDF_COLORS = {
+			primary: '#1a1a2e',
+			secondary: '#ffffff',
+			accent: '#e94560',
+			muted: '#6b7280',
+			border: '#e5e7eb',
+			rowAlt: '#f9fafb',
+			success: '#10b981'
+		};
+
+		// Create PDF
+		const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+
+		const filename = sponsorId
+			? `sponsor_report_${sponsors[0]?.name?.replace(/[^a-z0-9]/gi, '_') || 'unknown'}.pdf`
+			: 'sponsors_report.pdf';
+
+		res.setHeader('Content-Type', 'application/pdf');
+		res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+		doc.pipe(res);
+
+		// === HEADER ===
+		doc.rect(0, 0, 612, 80).fill(PDF_COLORS.primary);
+		doc.fillColor(PDF_COLORS.secondary)
+			.fontSize(24)
+			.text('Sponsor Performance Report', 50, 25, { width: 512 });
+
+		const dateRange = startDate && endDate
+			? `${startDate} to ${endDate}`
+			: startDate ? `From ${startDate}`
+			: endDate ? `Through ${endDate}`
+			: 'All Time';
+
+		doc.fontSize(11)
+			.fillColor('#9ca3af')
+			.text(`Date Range: ${dateRange} | Generated: ${new Date().toLocaleDateString()}`, 50, 52);
+
+		let y = 100;
+
+		// === SUMMARY SECTION ===
+		doc.fillColor(PDF_COLORS.primary)
+			.fontSize(16)
+			.text('Summary', 50, y);
+
+		y += 25;
+
+		// Calculate overall totals
+		const overallTotals = sponsors.reduce((acc, sponsor) => {
+			const totals = systemDb.getSponsorImpressionTotals(sponsor.id);
+			return {
+				totalImpressions: acc.totalImpressions + (totals.total_impressions || 0),
+				totalDuration: acc.totalDuration + (totals.total_duration_seconds || 0),
+				totalViewerMinutes: acc.totalViewerMinutes + (totals.total_viewer_minutes || 0)
+			};
+		}, { totalImpressions: 0, totalDuration: 0, totalViewerMinutes: 0 });
+
+		// Summary boxes
+		const boxWidth = 160;
+		const boxHeight = 50;
+
+		// Box 1: Total Impressions
+		doc.rect(50, y, boxWidth, boxHeight).fillAndStroke('#f3f4f6', PDF_COLORS.border);
+		doc.fillColor(PDF_COLORS.muted).fontSize(9).text('TOTAL IMPRESSIONS', 60, y + 8);
+		doc.fillColor(PDF_COLORS.primary).fontSize(20).text(overallTotals.totalImpressions.toLocaleString(), 60, y + 25);
+
+		// Box 2: Display Time
+		doc.rect(220, y, boxWidth, boxHeight).fillAndStroke('#f3f4f6', PDF_COLORS.border);
+		doc.fillColor(PDF_COLORS.muted).fontSize(9).text('TOTAL DISPLAY TIME', 230, y + 8);
+		doc.fillColor(PDF_COLORS.primary).fontSize(20).text(formatDurationSeconds(overallTotals.totalDuration), 230, y + 25);
+
+		// Box 3: Viewer Minutes
+		doc.rect(390, y, boxWidth, boxHeight).fillAndStroke('#f3f4f6', PDF_COLORS.border);
+		doc.fillColor(PDF_COLORS.muted).fontSize(9).text('VIEWER MINUTES', 400, y + 8);
+		doc.fillColor(PDF_COLORS.primary).fontSize(20).text(overallTotals.totalViewerMinutes.toLocaleString(), 400, y + 25);
+
+		y += boxHeight + 30;
+
+		// === INDIVIDUAL SPONSOR SECTIONS ===
+		for (const sponsor of sponsors) {
+			if (y > 650) {
+				doc.addPage();
+				y = 50;
+			}
+
+			const totals = systemDb.getSponsorImpressionTotals(sponsor.id);
+			const dailyStats = systemDb.getSponsorImpressionStats(sponsor.id, {
+				startDate,
+				endDate,
+				limit: 7
+			});
+
+			// Sponsor name header
+			doc.rect(50, y, 512, 25).fill(PDF_COLORS.primary);
+			doc.fillColor(PDF_COLORS.secondary)
+				.fontSize(12)
+				.text(sponsor.name, 60, y + 7);
+			doc.text(`Position: ${sponsor.position || 'N/A'}`, 400, y + 7, { width: 150, align: 'right' });
+
+			y += 35;
+
+			// Stats row
+			doc.fillColor(PDF_COLORS.muted).fontSize(9);
+			doc.text(`Impressions: ${(totals.total_impressions || 0).toLocaleString()}`, 50, y);
+			doc.text(`Duration: ${formatDurationSeconds(totals.total_duration_seconds || 0)}`, 180, y);
+			doc.text(`Viewer Minutes: ${(totals.total_viewer_minutes || 0).toLocaleString()}`, 310, y);
+			doc.text(`Match: ${totals.match_impressions || 0} | Bracket: ${totals.bracket_impressions || 0}`, 440, y);
+
+			y += 20;
+
+			// Recent activity (last 7 days)
+			if (dailyStats.length > 0) {
+				doc.fillColor(PDF_COLORS.primary).fontSize(10).text('Recent Activity (Last 7 Days):', 50, y);
+				y += 15;
+
+				// Table header
+				doc.fillColor(PDF_COLORS.muted).fontSize(8);
+				doc.text('Date', 50, y);
+				doc.text('Impressions', 150, y);
+				doc.text('Duration', 250, y);
+				doc.text('Viewer Min', 350, y);
+
+				y += 12;
+
+				for (let i = 0; i < Math.min(dailyStats.length, 5); i++) {
+					const day = dailyStats[i];
+					if (i % 2 === 0) {
+						doc.rect(50, y - 2, 512, 12).fill(PDF_COLORS.rowAlt);
+					}
+					doc.fillColor(PDF_COLORS.primary).fontSize(8);
+					doc.text(day.stat_date, 50, y);
+					doc.text(day.total_impressions.toString(), 150, y);
+					doc.text(formatDurationSeconds(day.total_duration_seconds), 250, y);
+					doc.text(day.total_viewer_minutes.toString(), 350, y);
+					y += 12;
+				}
+			}
+
+			y += 20;
+		}
+
+		// === FOOTER ===
+		doc.fillColor(PDF_COLORS.muted)
+			.fontSize(8)
+			.text(`Generated by TCC Custom | ${new Date().toISOString()}`, 50, 750, { width: 512, align: 'center' });
+
+		doc.end();
+
+		console.log(`[Sponsors] PDF report generated for ${sponsors.length} sponsor(s)`);
+	} catch (error) {
+		console.error('[Sponsors] Report PDF error:', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+// GET /api/sponsors/:id/report/pdf - Generate PDF report for single sponsor
+app.get('/api/sponsors/:id/report/pdf', requireAuthAPI, async (req, res) => {
+	// Redirect to main report endpoint with sponsorId
+	req.query.sponsorId = req.params.id;
+	res.redirect(`/api/sponsors/report/pdf?sponsorId=${req.params.id}&${new URLSearchParams(req.query).toString()}`);
 });
 
 // ============================================
@@ -6092,724 +6181,31 @@ app.delete('/api/games/:gameKey', requireAuthAPI, requireAdmin, (req, res) => {
 	}
 });
 
-// Create a new tournament on Challonge
-app.post('/api/tournaments/create', async (req, res) => {
-	console.log('=== Tournament Creation Request ===');
-	console.log('Session user:', req.session?.username || 'NOT AUTHENTICATED');
-	console.log('Request body:', JSON.stringify(req.body, null, 2));
-
-	const apiKey = getChallongeApiKey();
-
-	if (!apiKey) {
-		console.log('ERROR: Challonge not connected');
-		return res.status(500).json({
-			success: false,
-			error: 'Challonge not connected. Please connect your account in Settings.'
-		});
-	}
-
-	const {
-		// Basic info
-		name,
-		tournamentType,
-		gameName,
-		description,
-
-		// Schedule
-		startAt,
-		checkInDuration,
-		signupCap,
-
-		// Format-specific options
-		grandFinalsModifier,
-		holdThirdPlaceMatch,
-
-		// Round Robin options
-		rrIterations,
-		rankedBy,
-		rrMatchWin,
-		rrMatchTie,
-		rrGameWin,
-		rrGameTie,
-
-		// Swiss options
-		swissRounds,
-		swissMatchWin,
-		swissMatchTie,
-		swissBye,
-		swissGameWin,
-		swissGameTie,
-
-		// Seeding & Display
-		hideSeeds,
-		sequentialPairings,
-		showRounds,
-
-		// Station options
-		autoAssign,
-
-		// Group Stage options (for elimination formats)
-		groupStageEnabled,
-		groupStageOptions,
-
-		// Registration & Privacy
-		openSignup,
-		privateTournament,
-		hideForum,
-
-		// Match Settings
-		acceptAttachments,
-		// quickAdvance: NOT supported by Challonge v2.1 API
-
-		// Notifications
-		notifyMatchOpen,
-		notifyTournamentEnd
-	} = req.body;
-
-	// Validation
-	if (!name || !name.trim()) {
-		console.log('ERROR: Tournament name is required');
-		return res.status(400).json({
-			success: false,
-			error: 'Tournament name is required'
-		});
-	}
-
-	if (name.length > 60) {
-		return res.status(400).json({
-			success: false,
-			error: 'Tournament name must be 60 characters or less'
-		});
-	}
-
-	try {
-		// Generate URL in format: venue_game_monYY_xxxx
-		// Example: neilsbahr_mkw_dec25_a7x2
-
-		// Helper: Abbreviate game names
-		const abbreviateGame = (game) => {
-			if (!game) return 'tournament';
-			const gameMap = {
-				'super smash bros. ultimate': 'ssbu',
-				'super smash bros ultimate': 'ssbu',
-				'smash ultimate': 'ssbu',
-				'ssbu': 'ssbu',
-				'super smash bros. melee': 'melee',
-				'super smash bros melee': 'melee',
-				'melee': 'melee',
-				'mario kart 8': 'mk8',
-				'mario kart 8 deluxe': 'mk8',
-				'mk8': 'mk8',
-				'mario kart world': 'mkw',
-				'mkw': 'mkw',
-				'street fighter 6': 'sf6',
-				'sf6': 'sf6',
-				'tekken 8': 'tekken8',
-				'guilty gear strive': 'ggst',
-				'mortal kombat 1': 'mk1',
-				'dead or alive xtreme beach volleyball': 'doaxbv',
-				'doaxbv': 'doaxbv'
-			};
-			const lower = game.toLowerCase().trim();
-			if (gameMap[lower]) return gameMap[lower];
-			// Fallback: take first letters of each word (max 4 chars)
-			return lower.split(/\s+/).map(w => w[0]).join('').substring(0, 4);
-		};
-
-		// Helper: Extract venue from tournament name
-		const extractVenue = (tournamentName) => {
-			// Try to find venue after @ symbol: "Game Night @ Venue Name - ..."
-			const atMatch = tournamentName.match(/@\s*([^-]+)/i);
-			if (atMatch) {
-				return atMatch[1].trim().toLowerCase()
-					.replace(/[^a-z0-9]/g, '')
-					.substring(0, 12);
-			}
-			// Fallback: use first meaningful word
-			return tournamentName.toLowerCase()
-				.replace(/[^a-z0-9\s]/g, '')
-				.split(/\s+/)
-				.find(w => w.length > 2 && !['game', 'night', 'the', 'tournament'].includes(w))
-				|| 'event';
-		};
-
-		// Helper: Format month and year
-		const formatMonthYear = (dateStr) => {
-			const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-			let date;
-			if (dateStr) {
-				date = new Date(dateStr);
-			} else {
-				date = new Date();
-			}
-			const month = months[date.getMonth()];
-			const year = String(date.getFullYear()).slice(-2);
-			return `${month}${year}`;
-		};
-
-		// Helper: Generate short random suffix
-		const randomSuffix = () => {
-			return Math.random().toString(36).substring(2, 6);
-		};
-
-		// Build the URL
-		const venue = extractVenue(name);
-		const game = abbreviateGame(gameName);
-		const monthYear = formatMonthYear(startAt);
-		const suffix = randomSuffix();
-
-		const uniqueUrl = `${venue}_${game}_${monthYear}_${suffix}`;
-		console.log(`[Tournament Create] Generated URL: ${uniqueUrl} (venue: ${venue}, game: ${game}, date: ${monthYear})`);
-
-		// Build tournament parameters
-		const tournamentParams = {
-			name: name.trim(),
-			url: uniqueUrl,
-			tournament_type: tournamentType || 'single elimination',
-			game_name: gameName || null,
-			description: description || '',
-			private: !!privateTournament,
-			open_signup: !!openSignup,
-			hide_forum: !!hideForum,
-			notify_users_when_matches_open: !!notifyMatchOpen,
-			notify_users_when_the_tournament_ends: !!notifyTournamentEnd,
-			accept_attachments: !!acceptAttachments
-			// quick_advance: NOT supported by Challonge v2.1 API
-		};
-
-		// Schedule parameters
-		if (startAt) {
-			// Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO 8601 for Challonge
-			const startDate = new Date(startAt);
-			if (!isNaN(startDate.getTime())) {
-				tournamentParams.start_at = startDate.toISOString();
-				console.log(`[Tournament Create] Converted startAt: ${startAt} -> ${tournamentParams.start_at}`);
-			} else {
-				console.log(`[Tournament Create] Invalid startAt date: ${startAt}`);
-			}
-		}
-
-		if (checkInDuration && parseInt(checkInDuration) > 0) {
-			tournamentParams.check_in_duration = parseInt(checkInDuration);
-		}
-
-		if (signupCap && parseInt(signupCap) > 0) {
-			tournamentParams.signup_cap = parseInt(signupCap);
-		}
-
-		// Seeding & Display options
-		if (hideSeeds) {
-			tournamentParams.hide_seeds = true;
-		}
-
-		if (sequentialPairings) {
-			tournamentParams.sequential_pairings = true;
-		}
-
-		if (showRounds) {
-			tournamentParams.show_rounds = true;
-		}
-
-		// Station auto-assign option
-		if (autoAssign) {
-			tournamentParams.auto_assign = true;
-		}
-
-		// Double elimination specific options
-		if (tournamentType === 'double elimination' && grandFinalsModifier) {
-			tournamentParams.grand_finals_modifier = grandFinalsModifier;
-		}
-
-		// Single elimination specific options
-		if (tournamentType === 'single elimination' && holdThirdPlaceMatch) {
-			tournamentParams.hold_third_place_match = true;
-		}
-
-		// Round Robin specific options
-		if (tournamentType === 'round robin') {
-			if (rankedBy) {
-				tournamentParams.ranked_by = rankedBy;
-			}
-
-			// Round Robin point values (only for custom ranking)
-			if (rankedBy === 'custom') {
-				if (rrMatchWin !== undefined) tournamentParams.rr_pts_for_match_win = parseFloat(rrMatchWin);
-				if (rrMatchTie !== undefined) tournamentParams.rr_pts_for_match_tie = parseFloat(rrMatchTie);
-				if (rrGameWin !== undefined) tournamentParams.rr_pts_for_game_win = parseFloat(rrGameWin);
-				if (rrGameTie !== undefined) tournamentParams.rr_pts_for_game_tie = parseFloat(rrGameTie);
-			}
-
-			// Round Robin iterations (how many times everyone plays each other)
-			if (rrIterations && parseInt(rrIterations) > 1) {
-				// Note: The API doesn't have a direct parameter for this in v1
-				// This would need v2.1 API with round_robin_options.iterations
-			}
-		}
-
-		// Swiss specific options
-		if (tournamentType === 'swiss') {
-			if (swissRounds && parseInt(swissRounds) > 0) {
-				tournamentParams.swiss_rounds = parseInt(swissRounds);
-			}
-
-			// Swiss point values
-			if (swissMatchWin !== undefined) tournamentParams.pts_for_match_win = parseFloat(swissMatchWin);
-			if (swissMatchTie !== undefined) tournamentParams.pts_for_match_tie = parseFloat(swissMatchTie);
-			if (swissBye !== undefined) tournamentParams.pts_for_bye = parseFloat(swissBye);
-			if (swissGameWin !== undefined) tournamentParams.pts_for_game_win = parseFloat(swissGameWin);
-			if (swissGameTie !== undefined) tournamentParams.pts_for_game_tie = parseFloat(swissGameTie);
-		}
-
-		// Group Stage options (for elimination tournaments only)
-		if ((tournamentType === 'single elimination' || tournamentType === 'double elimination') && groupStageEnabled) {
-			tournamentParams.group_stage_enabled = true;
-			if (groupStageOptions) {
-				tournamentParams.group_stage_options = {
-					stage_type: groupStageOptions.stageType || 'round robin',
-					group_size: parseInt(groupStageOptions.groupSize) || 4,
-					participant_count_to_advance_per_group: parseInt(groupStageOptions.participantCountToAdvance) || 2,
-					ranked_by: groupStageOptions.rankedBy || 'match wins'
-				};
-			}
-		}
-
-		// Create tournament via Challonge API v2.1
-		console.log('Calling Challonge API v2.1 to create tournament:', tournamentParams.name);
-		console.log('Tournament params:', JSON.stringify(tournamentParams, null, 2));
-
-		// Build v2.1 JSON:API payload
-		const v2Payload = {
-			data: {
-				type: 'tournaments',
-				attributes: {
-					name: tournamentParams.name,
-					url: tournamentParams.url,
-					tournament_type: tournamentParams.tournament_type,
-					game_name: tournamentParams.game_name,
-					description: tournamentParams.description,
-					private: tournamentParams.private,
-					open_signup: tournamentParams.open_signup,
-					hide_forum: tournamentParams.hide_forum,
-					notify_users_when_matches_open: tournamentParams.notify_users_when_matches_open,
-					notify_users_when_the_tournament_ends: tournamentParams.notify_users_when_the_tournament_ends,
-					accept_attachments: tournamentParams.accept_attachments,
-					// quick_advance: NOT supported by Challonge v2.1 API
-					hide_seeds: tournamentParams.hide_seeds,
-					sequential_pairings: tournamentParams.sequential_pairings,
-					show_rounds: tournamentParams.show_rounds
-				}
-			}
-		};
-
-		// Add optional fields if set
-		if (tournamentParams.signup_cap) v2Payload.data.attributes.signup_cap = tournamentParams.signup_cap;
-		if (tournamentParams.start_at) v2Payload.data.attributes.starts_at = tournamentParams.start_at;
-		if (tournamentParams.check_in_duration) v2Payload.data.attributes.check_in_duration = tournamentParams.check_in_duration;
-
-		// Format-specific options using v2.1 nested structure
-		// Double elimination: grand_finals_modifier goes in double_elimination_options
-		if (tournamentParams.grand_finals_modifier) {
-			v2Payload.data.attributes.double_elimination_options = {
-				grand_finals_modifier: tournamentParams.grand_finals_modifier
-			};
-		}
-		// Single elimination: hold_third_place_match goes in match_options.consolation_matches_target_rank
-		if (tournamentParams.hold_third_place_match) {
-			v2Payload.data.attributes.match_options = v2Payload.data.attributes.match_options || {};
-			v2Payload.data.attributes.match_options.consolation_matches_target_rank = 3;
-		}
-
-		// Round robin options
-		if (tournamentParams.rr_iterations) v2Payload.data.attributes.rr_iterations = tournamentParams.rr_iterations;
-		if (tournamentParams.ranked_by) v2Payload.data.attributes.ranked_by = tournamentParams.ranked_by;
-		if (tournamentParams.rr_pts_for_match_win !== undefined) v2Payload.data.attributes.rr_pts_for_match_win = tournamentParams.rr_pts_for_match_win;
-		if (tournamentParams.rr_pts_for_match_tie !== undefined) v2Payload.data.attributes.rr_pts_for_match_tie = tournamentParams.rr_pts_for_match_tie;
-		if (tournamentParams.rr_pts_for_game_win !== undefined) v2Payload.data.attributes.rr_pts_for_game_win = tournamentParams.rr_pts_for_game_win;
-		if (tournamentParams.rr_pts_for_game_tie !== undefined) v2Payload.data.attributes.rr_pts_for_game_tie = tournamentParams.rr_pts_for_game_tie;
-
-		// Swiss options
-		if (tournamentParams.swiss_rounds) v2Payload.data.attributes.swiss_rounds = tournamentParams.swiss_rounds;
-		if (tournamentParams.pts_for_match_win !== undefined) v2Payload.data.attributes.pts_for_match_win = tournamentParams.pts_for_match_win;
-		if (tournamentParams.pts_for_match_tie !== undefined) v2Payload.data.attributes.pts_for_match_tie = tournamentParams.pts_for_match_tie;
-		if (tournamentParams.pts_for_bye !== undefined) v2Payload.data.attributes.pts_for_bye = tournamentParams.pts_for_bye;
-		if (tournamentParams.pts_for_game_win !== undefined) v2Payload.data.attributes.pts_for_game_win = tournamentParams.pts_for_game_win;
-		if (tournamentParams.pts_for_game_tie !== undefined) v2Payload.data.attributes.pts_for_game_tie = tournamentParams.pts_for_game_tie;
-
-		// Group Stage options (for elimination tournaments)
-		if (tournamentParams.group_stage_enabled) {
-			v2Payload.data.attributes.group_stage_enabled = true;
-			if (tournamentParams.group_stage_options) {
-				v2Payload.data.attributes.group_stage_options = tournamentParams.group_stage_options;
-			}
-		}
-
-		const response = await challongeV2Request('POST', '/tournaments.json', v2Payload);
-
-		const tournamentData = response.data.data;
-		const attrs = tournamentData.attributes;
-		const timestamps = attrs.timestamps || {};
-
-		console.log('SUCCESS: Tournament created on Challonge');
-		console.log('Tournament ID:', tournamentData.id);
-		console.log('Tournament URL:', attrs.url);
-
-		// Invalidate tournaments list cache
-		cacheDb.invalidateCache('tournaments', 'list');
-
-		res.json({
-			success: true,
-			message: 'Tournament created successfully',
-			tournament: {
-				id: parseInt(tournamentData.id),
-				tournamentId: attrs.url,
-				name: attrs.name,
-				game: attrs.game_name,
-				state: attrs.state,
-				url: attrs.full_challonge_url,
-				tournamentType: attrs.tournament_type,
-				startAt: timestamps.starts_at || attrs.starts_at,
-				signupCap: attrs.signup_cap,
-				checkInDuration: attrs.check_in_duration
-			}
-		});
-	} catch (error) {
-		console.error('=== Tournament Creation FAILED ===');
-		console.error('Error status:', error.response?.status);
-		console.error('Error data:', JSON.stringify(error.response?.data, null, 2));
-		console.error('Error message:', error.message);
-
-		// Extract meaningful error message from Challonge response
-		let errorMessage = 'Failed to create tournament';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.join(', ');
-			} else if (typeof errors === 'object') {
-				// Handle errors like {name: ["has already been taken"]}
-				errorMessage = Object.entries(errors)
-					.map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
-					.join('; ');
-			}
-		} else if (error.response?.status === 422) {
-			errorMessage = 'Invalid tournament data - check that name is unique';
-		} else if (error.message) {
-			errorMessage = error.message;
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage
-		});
-	}
-});
-
-// Get list of tournaments from Challonge (v2.1 API) - WITH CACHING
-app.get('/api/tournaments', async (req, res) => {
-	const apiKey = getChallongeApiKey();
-
-	if (!apiKey) {
-		return res.status(500).json({
-			success: false,
-			error: 'Challonge not connected. Please connect your account in Settings.'
-		});
-	}
-
-	try {
-		// Get filter parameter (default: 90 days, 0 = show all)
-		// Using 90 days to catch tournaments created months ago but scheduled for upcoming dates
-		const daysFilter = parseInt(req.query.days) || 90;
-		const cacheKey = `list_${daysFilter}`;
-		const forceRefresh = req.query.refresh === 'true';
-
-		// Try to get from cache (unless force refresh requested)
-		if (!forceRefresh) {
-			const cached = cacheDb.getCachedData('tournaments', cacheKey);
-			if (cached && !cached.isExpired) {
-				return res.json({
-					...cached.data,
-					_cache: cached._cache
-				});
-			}
-		}
-
-		// Fetch tournaments from all states separately using v2.1 API
-		// Note: Challonge API states: pending, underway, group_stages_underway, awaiting_review, complete
-		const states = ['pending', 'underway', 'group_stages_underway', 'awaiting_review', 'complete'];
-		const fetchPromises = states.map(state => {
-			return challongeV2Request('GET', `/tournaments.json?state=${state}`)
-				.catch(err => {
-					console.error(`Failed to fetch ${state} tournaments:`, err.message);
-					return { data: { data: [] } }; // Return empty array on error
-				});
-		});
-
-		const responses = await Promise.all(fetchPromises);
-
-		// Combine and transform the data (excluding archived/stale tournaments)
-		// Use a Map to deduplicate by tournament ID
-		const tournamentMap = new Map();
-		const now = new Date();
-		const cutoffDate = new Date();
-		if (daysFilter > 0) {
-			cutoffDate.setDate(cutoffDate.getDate() - daysFilter);
-		}
-
-		responses.forEach(response => {
-			const tournaments = response.data?.data || [];
-			if (Array.isArray(tournaments)) {
-				tournaments.forEach(item => {
-					const attrs = item.attributes;
-					const id = parseInt(item.id);
-
-					// Skip if already processed (deduplication)
-					if (tournamentMap.has(id)) {
-						return;
-					}
-
-					// Get timestamps - v2.1 uses timestamps object
-					const timestamps = attrs.timestamps || {};
-					const startAt = timestamps.starts_at || attrs.starts_at;
-					const startedAt = timestamps.started_at;
-					const createdAt = timestamps.created_at || attrs.created_at;
-					const completedAt = timestamps.completed_at;
-					const updatedAt = timestamps.updated_at;
-
-					// Skip archived tournaments
-					if (timestamps.archived_at || attrs.archived === true) {
-						return;
-					}
-
-					// Apply date filter for completed states
-					const activeStates = ['pending', 'underway', 'group_stages_underway'];
-					if (daysFilter > 0 && !activeStates.includes(attrs.state) && createdAt) {
-						const createdDate = new Date(createdAt);
-						if (createdDate < cutoffDate) {
-							return; // Skip - tournament created before cutoff
-						}
-					}
-
-					// Skip stale pending tournaments
-					if (attrs.state === 'pending') {
-						if (startAt) {
-							// Has start date - skip if start date passed by more than 7 days
-							const startDate = new Date(startAt);
-							const daysSinceScheduled = (now - startDate) / (1000 * 60 * 60 * 24);
-							if (daysSinceScheduled > 7) {
-								return; // Skip - tournament was supposed to start more than 7 days ago
-							}
-						} else if (createdAt) {
-							// No start date - skip if created more than 30 days ago (likely abandoned)
-							const createdDate = new Date(createdAt);
-							const daysSinceCreated = (now - createdDate) / (1000 * 60 * 60 * 24);
-							if (daysSinceCreated > 30) {
-								return; // Skip - old tournament with no scheduled start date
-							}
-						}
-					}
-
-					// Skip stale in-progress tournaments (underway for more than 7 days)
-					if (attrs.state === 'underway' || attrs.state === 'awaiting_review' || attrs.state === 'group_stages_underway') {
-						const referenceDate = startedAt || createdAt;
-						if (referenceDate) {
-							const refDate = new Date(referenceDate);
-							const daysSinceStart = (now - refDate) / (1000 * 60 * 60 * 24);
-							if (daysSinceStart > 7) {
-								return; // Skip - tournament has been in progress too long (abandoned)
-							}
-						}
-					}
-
-					tournamentMap.set(id, {
-						id: id,
-						tournamentId: attrs.url, // This is the URL identifier
-						name: attrs.name,
-						game: attrs.game_name || 'Not specified',
-						state: attrs.state, // pending, underway, awaiting_review, group_stages_underway, complete
-						participants: attrs.participants_count,
-						startedAt: startedAt,
-						createdAt: createdAt,
-						url: attrs.full_challonge_url,
-						// Tournament metadata
-						tournamentType: attrs.tournament_type || 'single elimination',
-						checkInDuration: attrs.check_in_duration || null,
-						startAt: startAt || null,
-						signupCap: attrs.signup_cap || null,
-						openSignup: attrs.open_signup || false,
-						holdThirdPlaceMatch: attrs.hold_third_place_match || false,
-						description: attrs.description || null,
-						completedAt: completedAt || null,
-						updatedAt: updatedAt || null
-					});
-				});
-			}
-		});
-
-		// Convert Map to array
-		const allTournaments = Array.from(tournamentMap.values());
-
-		// Separate tournaments by state
-		const categorized = {
-			pending: allTournaments.filter(t => t.state === 'pending'),
-			inProgress: allTournaments.filter(t => t.state === 'underway' || t.state === 'awaiting_review' || t.state === 'group_stages_underway'),
-			completed: allTournaments.filter(t => t.state === 'complete')
-		};
-
-		// Build the response data
-		const responseData = {
-			success: true,
-			tournaments: categorized,
-			all: allTournaments,
-			filter: {
-				days: daysFilter,
-				total: allTournaments.length,
-				filteredByDate: daysFilter > 0,
-				archivedExcluded: true
-			}
-		};
-
-		// Cache the result
-		cacheDb.setCachedData('tournaments', cacheKey, responseData);
-
-		res.json({
-			...responseData,
-			_cache: {
-				hit: false,
-				source: 'api',
-				cachedAt: new Date().toISOString(),
-				ageSeconds: 0,
-				stale: false
-			}
-		});
-	} catch (error) {
-		console.error('Failed to fetch tournaments:', error.message);
-
-		// Try to serve stale cache on API failure
-		const staleCache = cacheDb.getCachedData('tournaments', `list_${parseInt(req.query.days) || 90}`);
-		if (staleCache) {
-			console.log('[Cache] Serving stale tournament data due to API error');
-			return res.json({
-				...staleCache.data,
-				_cache: {
-					...staleCache._cache,
-					stale: true,
-					offline: true,
-					error: error.message
-				}
-			});
-		}
-
-		res.status(500).json({
-			success: false,
-			error: 'Failed to fetch tournaments from Challonge',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Test Challonge API connection (v2.1 API)
-// GET endpoint for simple API connectivity check (used by checklist)
+// ============================================
+// LOCAL DATABASE API ENDPOINTS
+// ============================================
+
+// Test database connection (local)
 app.get('/api/test-connection', requireAuthAPI, async (req, res) => {
 	try {
-		// Simple request to list tournaments - tests API connectivity
-		const response = await challongeV2Request('GET', '/tournaments.json?page=1&per_page=1');
+		// Test local database connection
+		const db = analyticsDb.getDb();
+		const result = db.prepare('SELECT COUNT(*) as count FROM tcc_tournaments').get();
 		res.json({
 			success: true,
-			message: 'Challonge API connection successful'
+			message: 'Database connection successful',
+			stats: { tournamentCount: result.count }
 		});
 	} catch (error) {
 		res.status(500).json({
 			success: false,
-			error: 'Failed to connect to Challonge API',
+			error: 'Database connection failed',
 			details: error.message
 		});
 	}
 });
 
-// POST endpoint for testing connection with specific tournament
-app.post('/api/test-connection', async (req, res) => {
-	const { tournamentId } = req.body;
-
-	if (!tournamentId) {
-		return res.status(400).json({
-			success: false,
-			error: 'Tournament ID is required'
-		});
-	}
-
-	try {
-		const response = await challongeV2Request('GET', `/tournaments/${tournamentId}.json`);
-		const tournamentData = response.data.data;
-		const attrs = tournamentData.attributes;
-
-		res.json({
-			success: true,
-			message: 'Connection successful',
-			tournament: {
-				name: attrs.name,
-				state: attrs.state,
-				participants: attrs.participants_count
-			}
-		});
-	} catch (error) {
-		res.status(500).json({
-			success: false,
-			error: 'Failed to connect to Challonge',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Complete a tournament (v2.1 API)
-app.post('/api/tournament/:tournamentId/complete', async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		// Finalize the tournament on Challonge using v2.1 change_state endpoint
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/change_state.json`, {
-			data: {
-				type: 'TournamentState',
-				attributes: {
-					state: 'finalize'
-				}
-			}
-		});
-
-		const finalizedData = response.data.data;
-		const attrs = finalizedData.attributes;
-
-		// Invalidate all caches for this tournament
-		cacheDb.invalidateTournamentCaches(tournamentId);
-		cacheDb.invalidateCache('tournaments', 'list');
-
-		// Trigger rate mode check - tournament completed means it's no longer ACTIVE
-		setTimeout(() => {
-			console.log('[Tournament Complete] Triggering rate mode check after tournament finalized');
-			checkTournamentsAndUpdateMode();
-		}, 500);
-
-		res.json({
-			success: true,
-			message: 'Tournament finalized successfully',
-			tournament: {
-				name: attrs.name,
-				state: attrs.state
-			}
-		});
-	} catch (error) {
-		console.error('Tournament finalization error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to finalize tournament',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// ============================================
-// PARTICIPANT MANAGEMENT API ENDPOINTS
-// ============================================
-
-// Get participant stats (lightweight endpoint for dashboard) (v2.1 API)
+// Get participant stats (local database)
 app.get('/api/participants/stats', async (req, res) => {
 	try {
 		// Read tournament ID from match state file
@@ -6822,3064 +6218,44 @@ app.get('/api/participants/stats', async (req, res) => {
 			});
 		}
 
+		// Get tournament from local database (supports both numeric ID and slug)
 		const tournamentId = matchState.tournamentId;
+		const tournament = isNaN(tournamentId)
+			? tournamentDb.getBySlug(tournamentId)
+			: tournamentDb.getById(parseInt(tournamentId));
 
-		// Fetch tournament details and participants from Challonge using v2.1
-		const [tournamentResponse, participantsResponse] = await Promise.all([
-			challongeV2Request('GET', `/tournaments/${tournamentId}.json`),
-			challongeV2Request('GET', `/tournaments/${tournamentId}/participants.json`)
-		]);
+		if (!tournament) {
+			return res.status(404).json({
+				success: false,
+				error: 'Tournament not found'
+			});
+		}
 
-		const tournamentData = tournamentResponse.data.data;
-		const tournamentAttrs = tournamentData.attributes;
-		const participants = participantsResponse.data.data || [];
+		// Get participants from local database
+		const participants = participantDb.getByTournament(tournament.id);
 
 		// Calculate stats
 		const totalParticipants = participants.length;
-		let withInstagram = 0;
-		let latestSignupTime = null;
-
-		participants.forEach(item => {
-			const attrs = item.attributes;
-
-			// Check if has Instagram in misc field
-			if (attrs.misc && attrs.misc.match(/Instagram:/i)) {
-				withInstagram++;
-			}
-
-			// Track latest signup
-			const createdAt = attrs.timestamps?.created_at || attrs.created_at;
-			if (createdAt) {
-				const createdDate = new Date(createdAt);
-				if (!latestSignupTime || createdDate > latestSignupTime) {
-					latestSignupTime = createdDate;
-				}
-			}
-		});
-
-		const instagramPercentage = totalParticipants > 0
-			? Math.round((withInstagram / totalParticipants) * 100)
-			: 0;
-
-		res.json({
-			success: true,
-			tournament: {
-				id: parseInt(tournamentData.id),
-				name: tournamentAttrs.name,
-				gameName: tournamentAttrs.game_name,
-				state: tournamentAttrs.state,
-				url: tournamentAttrs.url,
-				fullChallongeUrl: tournamentAttrs.full_challonge_url,
-				startedAt: tournamentAttrs.timestamps?.started_at,
-				completedAt: tournamentAttrs.timestamps?.completed_at
-			},
-			stats: {
-				totalParticipants: totalParticipants,
-				withInstagram: withInstagram,
-				withoutInstagram: totalParticipants - withInstagram,
-				instagramPercentage: instagramPercentage,
-				latestSignupTime: latestSignupTime
-			}
-		});
-	} catch (error) {
-		console.error('Get participant stats error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to fetch participant stats',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Get all participants from active tournament (v2.1 API)
-app.get('/api/participants', async (req, res) => {
-	try {
-		// Read tournament ID from match state file
-		const matchState = await readStateFile(process.env.MATCH_STATE_FILE);
-
-		if (!matchState || !matchState.tournamentId) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		const tournamentId = matchState.tournamentId;
-
-		// Fetch tournament details and participants from Challonge using v2.1
-		const [tournamentResponse, participantsResponse] = await Promise.all([
-			challongeV2Request('GET', `/tournaments/${tournamentId}.json`),
-			challongeV2Request('GET', `/tournaments/${tournamentId}/participants.json`)
-		]);
-
-		const tournamentData = tournamentResponse.data.data;
-		const tournamentAttrs = tournamentData.attributes;
-		const participantsData = participantsResponse.data.data || [];
-
-		// Process participants to extract Instagram from misc field
-		const participants = participantsData.map(item => {
-			const attrs = item.attributes;
-			let instagram = '';
-
-			// Extract Instagram handle from misc field
-			if (attrs.misc) {
-				const instagramMatch = attrs.misc.match(/Instagram:\s*@?([a-zA-Z0-9._]+)/i);
-				if (instagramMatch) {
-					instagram = instagramMatch[1];
-				}
-			}
-
-			return {
-				id: parseInt(item.id),
-				tournamentId: parseInt(tournamentId),
-				name: attrs.name || attrs.display_name || 'Unknown',
-				seed: attrs.seed,
-				instagram: instagram,
-				misc: attrs.misc || '',
-				finalRank: attrs.final_rank,
-				createdAt: attrs.timestamps?.created_at || attrs.created_at
-			};
-		});
-
-		// Sort by seed
-		participants.sort((a, b) => (a.seed || 999) - (b.seed || 999));
-
-		res.json({
-			success: true,
-			tournamentId: tournamentId,
-			tournament: {
-				id: parseInt(tournamentData.id),
-				name: tournamentAttrs.name,
-				gameName: tournamentAttrs.game_name,
-				state: tournamentAttrs.state,
-				participantsCount: tournamentAttrs.participants_count,
-				url: tournamentAttrs.url
-			},
-			participants: participants,
-			count: participants.length
-		});
-	} catch (error) {
-		console.error('Get participants error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to fetch participants',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Add a new participant (v2.1 API)
-app.post('/api/participants', async (req, res) => {
-	const { participantName, instagram } = req.body;
-
-	if (!participantName) {
-		return res.status(400).json({
-			success: false,
-			error: 'Participant name is required'
-		});
-	}
-
-	try {
-		// Read tournament ID from match state file
-		const matchState = await readStateFile(process.env.MATCH_STATE_FILE);
-
-		if (!matchState || !matchState.tournamentId) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		const tournamentId = matchState.tournamentId;
-
-		// Prepare misc field with Instagram if provided
-		let misc = '';
-		if (instagram) {
-			const cleanInstagram = instagram.replace(/^@/, '').trim();
-			misc = `Instagram: @${cleanInstagram}`;
-		}
-
-		// Add participant to Challonge using v2.1
-		const v2Payload = {
-			data: {
-				type: 'participants',
-				attributes: {
-					name: participantName.trim(),
-					misc: misc
-				}
-			}
-		};
-
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants.json`, v2Payload);
-		const participantData = response.data.data;
-		const attrs = participantData.attributes;
-
-		res.json({
-			success: true,
-			message: 'Participant added successfully',
-			participant: {
-				id: parseInt(participantData.id),
-				name: attrs.name,
-				seed: attrs.seed,
-				instagram: instagram ? instagram.replace(/^@/, '') : ''
-			}
-		});
-	} catch (error) {
-		console.error('Add participant error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to add participant',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Update a participant (v2.1 API)
-app.put('/api/participants/:id', async (req, res) => {
-	const { id } = req.params;
-	const { participantName, instagram, misc, seed } = req.body;
-
-	if (!participantName) {
-		return res.status(400).json({
-			success: false,
-			error: 'Participant name is required'
-		});
-	}
-
-	try {
-		// Read tournament ID from match state file
-		const matchState = await readStateFile(process.env.MATCH_STATE_FILE);
-
-		if (!matchState || !matchState.tournamentId) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		const tournamentId = matchState.tournamentId;
-
-		// Prepare misc field
-		let miscField = misc || '';
-		if (instagram) {
-			const cleanInstagram = instagram.replace(/^@/, '').trim();
-			// Update or add Instagram in misc field
-			if (miscField.match(/Instagram:/i)) {
-				miscField = miscField.replace(/Instagram:\s*@?[a-zA-Z0-9._]+/i, `Instagram: @${cleanInstagram}`);
-			} else {
-				miscField = miscField ? `Instagram: @${cleanInstagram}\n${miscField}` : `Instagram: @${cleanInstagram}`;
-			}
-		} else {
-			// Remove Instagram from misc field if no instagram provided
-			miscField = miscField.replace(/Instagram:\s*@?[a-zA-Z0-9._]+\n?/gi, '').trim();
-		}
-
-		// Prepare update payload for v2.1
-		// misc must be a string (not null) for Challonge v2.1
-		const attributes = {
-			name: participantName.trim(),
-			misc: miscField || ''
-		};
-
-		// Add seed if provided
-		if (seed !== undefined && seed !== null) {
-			attributes.seed = parseInt(seed);
-		}
-
-		const v2Payload = {
-			data: {
-				type: 'participants',
-				attributes
-			}
-		};
-
-		// Update participant on Challonge using v2.1
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/participants/${id}.json`, v2Payload);
-		const participantData = response.data.data;
-		const attrs = participantData.attributes;
-
-		res.json({
-			success: true,
-			message: 'Participant updated successfully',
-			participant: {
-				id: parseInt(participantData.id),
-				name: attrs.name,
-				seed: attrs.seed
-			}
-		});
-	} catch (error) {
-		console.error('Update participant error:', error.message);
-		console.error('Challonge error details:', JSON.stringify(error.response?.data, null, 2));
-
-		// Parse Challonge error message for more helpful response
-		let errorMessage = 'Failed to update participant';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.map(e => e.detail || e.title || e).join(', ');
-			}
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Randomize all participant seeds (v2.1 API)
-app.post('/api/participants/randomize', requireAuthAPI, async (req, res) => {
-	try {
-		// Read tournament ID from match state file
-		const matchState = await readStateFile(process.env.MATCH_STATE_FILE);
-
-		if (!matchState || !matchState.tournamentId) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		const tournamentId = matchState.tournamentId;
-
-		// Use v2.1 process endpoint for randomize
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/process.json`, {
-			data: {
-				type: 'ParticipantProcess',
-				attributes: {
-					action: 'randomize'
-				}
-			}
-		});
-
-		const participantsData = response.data.data || [];
-
-		res.json({
-			success: true,
-			message: 'Participant seeds randomized successfully',
-			participants: participantsData
-		});
-	} catch (error) {
-		console.error('Randomize participants error:', error.message);
-		console.error('Challonge error details:', JSON.stringify(error.response?.data, null, 2));
-
-		let errorMessage = 'Failed to randomize participant seeds';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.map(e => e.detail || e.title || e).join(', ');
-			}
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Bulk add participants (v2.1 API)
-app.post('/api/participants/bulk', requireAuthAPI, async (req, res) => {
-	const { participants } = req.body;
-
-	if (!participants || !Array.isArray(participants) || participants.length === 0) {
-		return res.status(400).json({
-			success: false,
-			error: 'Participants array is required'
-		});
-	}
-
-	try {
-		// Read tournament ID from match state file
-		const matchState = await readStateFile(process.env.MATCH_STATE_FILE);
-
-		if (!matchState || !matchState.tournamentId) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		const tournamentId = matchState.tournamentId;
-
-		// Format participants for v2.1 bulk add endpoint
-		const formattedParticipants = participants.map(name => ({
-			name: name.trim()
-		}));
-
-		// Use v2.1 bulk add endpoint
-		const v2Payload = {
-			data: {
-				type: 'participants',
-				attributes: {
-					participants: formattedParticipants
-				}
-			}
-		};
-
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/bulk_add.json`, v2Payload);
-		const participantsData = response.data.data || [];
-
-		res.json({
-			success: true,
-			message: `Successfully added ${formattedParticipants.length} participants`,
-			participants: participantsData,
-			count: formattedParticipants.length
-		});
-	} catch (error) {
-		console.error('Bulk add participants error:', error.message);
-		console.error('Challonge error details:', JSON.stringify(error.response?.data, null, 2));
-
-		let errorMessage = 'Failed to bulk add participants';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.map(e => e.detail || e.title || e).join(', ');
-			}
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Delete a participant (v2.1 API)
-app.delete('/api/participants/:id', async (req, res) => {
-	const { id } = req.params;
-
-	try {
-		// Read tournament ID from match state file
-		const matchState = await readStateFile(process.env.MATCH_STATE_FILE);
-
-		if (!matchState || !matchState.tournamentId) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		const tournamentId = matchState.tournamentId;
-
-		// Delete participant from Challonge using v2.1
-		await challongeV2Request('DELETE', `/tournaments/${tournamentId}/participants/${id}.json`);
-
-		res.json({
-			success: true,
-			message: 'Participant deleted successfully'
-		});
-	} catch (error) {
-		console.error('Delete participant error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to delete participant',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// ============================================
-// MATCH MANAGEMENT API ENDPOINTS
-// ============================================
-
-// Get matches for a tournament (v2.1 API) - with caching
-app.get('/api/matches/:tournamentId', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-	const apiKey = getChallongeApiKey();
-
-	if (!apiKey) {
-		return res.status(500).json({
-			success: false,
-			error: 'Challonge not connected. Please connect your account in Settings.'
-		});
-	}
-
-	// Helper function to fetch matches from Challonge API
-	const fetchMatchesFromAPI = async () => {
-		// Fetch matches from v2.1 API with stations included
-		const response = await challongeV2Request(
-			'GET',
-			`/tournaments/${tournamentId}/matches.json`
-		);
-
-		// Fetch participants for name resolution
-		let participantMap = {}; // participantId -> name
-		try {
-			const participantsResponse = await challongeV2Request(
-				'GET',
-				`/tournaments/${tournamentId}/participants.json`
-			);
-			const participantsData = participantsResponse.data?.data || [];
-			participantsData.forEach(item => {
-				if (item.type === 'participant') {
-					const attrs = item.attributes || {};
-					const name = attrs.name || attrs.display_name || attrs.username ||
-						(attrs.seed != null ? 'Seed ' + attrs.seed : 'Player ' + item.id);
-					participantMap[String(item.id)] = name;
-				}
-			});
-		} catch (participantError) {
-			console.warn('Failed to fetch participants for name resolution:', participantError.message);
-		}
-
-		// Also fetch stations to build match-station mapping
-		// (station relationships aren't in match response, they're in station objects)
-		let stationMatchMap = {}; // matchId -> stationId
-		let stationNameMap = {}; // stationId -> name
-		try {
-			// Note: Stations API requires legacy key - Challonge doesn't support OAuth scopes for stations
-			const headers = getStationsApiHeaders();
-			const stationsResponse = await rateLimitedAxios.get(
-				`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations.json`,
-				{ headers, timeout: 10000 }
-			);
-
-			if (stationsResponse.data?.data) {
-				stationsResponse.data.data.forEach(station => {
-					stationNameMap[station.id] = station.attributes?.name || 'Station';
-					const matchData = station.relationships?.match?.data;
-					if (matchData?.id) {
-						stationMatchMap[matchData.id] = station.id;
-					}
-				});
-			}
-		} catch (stationError) {
-			console.warn('Failed to fetch stations:', stationError.message);
-		}
-
-		const { data: matchesData } = parseV2Response(response);
-
-		// Transform matches from v2.1 format
-		const matches = (Array.isArray(matchesData) ? matchesData : [matchesData]).map(match => {
-			const attrs = match.attributes;
-			const relationships = match.relationships || {};
-
-			// Get participant IDs from relationships (v2.1 structure) first
-			// Fall back to points_by_participant if relationships not available
-			let player1Id = relationships.player1?.data?.id || null;
-			let player2Id = relationships.player2?.data?.id || null;
-
-			// Fallback to points_by_participant if relationships don't have IDs
-			if (!player1Id && !player2Id && attrs.points_by_participant && attrs.points_by_participant.length >= 2) {
-				player1Id = attrs.points_by_participant[0]?.participant_id;
-				player2Id = attrs.points_by_participant[1]?.participant_id;
-			}
-
-			// Resolve player names from participant map
-			const player1Name = player1Id ? (participantMap[String(player1Id)] || 'TBD') : 'TBD';
-			const player2Name = player2Id ? (participantMap[String(player2Id)] || 'TBD') : 'TBD';
-
-			// Parse scores from v2.1 format
-			let scores_csv = '';
-			if (attrs.score_in_sets && attrs.score_in_sets.length > 0) {
-				const lastSet = attrs.score_in_sets[attrs.score_in_sets.length - 1];
-				if (lastSet && lastSet.length === 2) {
-					scores_csv = `${lastSet[0]}-${lastSet[1]}`;
-				}
-			} else if (attrs.scores) {
-				scores_csv = attrs.scores.replace(/\s/g, '');
-			}
-
-			return {
-				id: parseInt(match.id),
-				tournamentId: tournamentId,
-				state: attrs.state,
-				round: attrs.round,
-				player1Id: player1Id,
-				player2Id: player2Id,
-				player1Name: player1Name,
-				player2Name: player2Name,
-				winnerId: attrs.winner_id,
-				loserId: null,
-				scores_csv: scores_csv,
-				suggestedPlayOrder: attrs.suggested_play_order,
-				identifier: attrs.identifier,
-				startedAt: attrs.timestamps?.started_at,
-				completedAt: attrs.timestamps?.completed_at,
-				underwayAt: attrs.timestamps?.underway_at,
-				stationId: stationMatchMap[String(match.id)] || null
-			};
-		});
-
-		// Sort by suggested play order, then by round
-		matches.sort((a, b) => {
-			if (a.suggestedPlayOrder && b.suggestedPlayOrder) {
-				return a.suggestedPlayOrder - b.suggestedPlayOrder;
-			}
-			return (a.round || 0) - (b.round || 0);
-		});
-
-		return { matches, count: matches.length };
-	};
-
-	try {
-		// Use cache with stale-while-revalidate pattern
-		const { data, _cache } = await cacheDb.getCachedOrFetch(
-			'matches',
-			tournamentId,
-			fetchMatchesFromAPI
-		);
-
-		// Merge local underway tracking into match data
-		// This handles the case where Challonge v2.1 change_state endpoint is broken
-		const matchesWithLocalTracking = data.matches.map(match => {
-			const trackingKey = `${tournamentId}:${match.id}`;
-			const localUnderwayAt = localUnderwayTracking.get(trackingKey);
-
-			if (localUnderwayAt && !match.underwayAt) {
-				// Local tracking exists but Challonge doesn't have it
-				return {
-					...match,
-					underwayAt: localUnderwayAt,
-					localTracking: true
-				};
-			}
-			return match;
-		});
-
-		res.json({
-			success: true,
-			matches: matchesWithLocalTracking,
-			count: data.count,
-			_cache
-		});
-	} catch (error) {
-		console.error('Get matches error:', error.message);
-		console.error('Error details:', error.response?.data);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to fetch matches',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Get match statistics for a tournament (v2.1 API) - Enhanced
-app.get('/api/matches/:tournamentId/stats', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-	const apiKey = getChallongeApiKey();
-
-	if (!apiKey) {
-		return res.status(500).json({
-			success: false,
-			error: 'Challonge not connected. Please connect your account in Settings.'
-		});
-	}
-
-	try {
-		const response = await challongeV2Request(
-			'GET',
-			`/tournaments/${tournamentId}/matches.json`
-		);
-
-		const { data: matchesData } = parseV2Response(response);
-		const matches = Array.isArray(matchesData) ? matchesData : [matchesData];
-
-		const total = matches.length;
-		const completed = matches.filter(match => match.attributes?.state === 'complete').length;
-		const remaining = total - completed;
-
-		// Count in-progress matches (open with underway_at set)
-		const inProgress = matches.filter(match => {
-			const attrs = match.attributes || {};
-			return attrs.state === 'open' && attrs.timestamps?.underway_at != null;
-		}).length;
-
-		// Find current round (highest round among open/underway matches)
-		let currentRound = '--';
-		const activeMatches = matches.filter(match => {
-			const attrs = match.attributes || {};
-			return attrs.state === 'open' || attrs.state === 'pending';
-		});
-		if (activeMatches.length > 0) {
-			const rounds = activeMatches.map(m => m.attributes?.round).filter(r => r != null);
-			if (rounds.length > 0) {
-				// Get the minimum round number for winners bracket (positive rounds)
-				// or the maximum for losers bracket (negative rounds)
-				const positiveRounds = rounds.filter(r => r > 0);
-				const negativeRounds = rounds.filter(r => r < 0);
-
-				if (positiveRounds.length > 0 && negativeRounds.length > 0) {
-					// Double elimination - show both
-					const winnersRound = Math.min(...positiveRounds);
-					const losersRound = Math.max(...negativeRounds);
-					currentRound = `W${winnersRound}/L${Math.abs(losersRound)}`;
-				} else if (positiveRounds.length > 0) {
-					currentRound = `R${Math.min(...positiveRounds)}`;
-				} else if (negativeRounds.length > 0) {
-					currentRound = `L${Math.abs(Math.max(...negativeRounds))}`;
-				}
-			}
-		}
-
-		// Calculate average match time for completed matches
-		let avgMatchTime = null;
-		const completedMatches = matches.filter(match => match.attributes?.state === 'complete');
-		if (completedMatches.length > 0) {
-			const durations = completedMatches
-				.map(match => {
-					const attrs = match.attributes || {};
-					const underwayAt = attrs.timestamps?.underway_at;
-					const completedAt = attrs.timestamps?.completed_at;
-					if (underwayAt && completedAt) {
-						const start = new Date(underwayAt);
-						const end = new Date(completedAt);
-						return (end - start) / 1000; // seconds
-					}
-					return null;
-				})
-				.filter(d => d != null && d > 0 && d < 7200); // Filter out invalid or >2hr matches
-
-			if (durations.length > 0) {
-				avgMatchTime = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
-			}
-		}
+		const checkedInCount = participants.filter(p => p.checked_in).length;
 
 		res.json({
 			success: true,
 			stats: {
-				total,
-				completed,
-				remaining,
-				inProgress,
-				currentRound,
-				avgMatchTime // in seconds
-			}
-		});
-	} catch (error) {
-		console.error('Get match stats error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to fetch match stats',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Get participants for a specific tournament (v2.1 API) - with caching
-app.get('/api/participants/:tournamentId', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	// Helper function to fetch participants from Challonge API
-	const fetchParticipantsFromAPI = async () => {
-		const response = await challongeV2Request('GET', `/tournaments/${tournamentId}/participants.json`);
-		const participantsData = response.data.data || [];
-
-		const participants = participantsData.map(item => {
-			const p = item.attributes;
-			// Extract Instagram from misc field if present
-			let instagram = null;
-			let misc = p.misc || '';
-			const instagramMatch = misc.match(/Instagram:\s*@?([a-zA-Z0-9._]+)/i);
-			if (instagramMatch) {
-				instagram = instagramMatch[1];
-			}
-			return {
-				id: parseInt(item.id),
-				name: p.name || p.display_name || `Player ${item.id}`,
-				displayName: p.display_name,
-				seed: p.seed,
-				instagram: instagram,
-				misc: misc,
-				email: p.email || null,
-				challongeUsername: p.challonge_username || null,
-				checkedIn: p.checked_in,
-				checkedInAt: p.checked_in_at,
-				canCheckIn: p.can_check_in,
-				active: p.active,
-				onWaitingList: p.on_waiting_list,
-				invitationPending: p.invitation_pending,
-				finalRank: p.final_rank,
-				groupId: p.group_id,
-				createdAt: p.timestamps?.created_at || p.created_at,
-				updatedAt: p.timestamps?.updated_at || p.updated_at
-			};
-		});
-
-		return participants;
-	};
-
-	try {
-		// Use cache with stale-while-revalidate pattern
-		const { data: participants, _cache } = await cacheDb.getCachedOrFetch(
-			'participants',
-			tournamentId,
-			fetchParticipantsFromAPI
-		);
-
-		res.json({
-			success: true,
-			participants: participants,
-			_cache
-		});
-	} catch (error) {
-		console.error('Get participants error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to fetch participants',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Add participant to a specific tournament (v2.1 API)
-app.post('/api/participants/:tournamentId', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-	const { participantName, email, challongeUsername, instagram, seed } = req.body;
-
-	// At least one identifier is required
-	if (!participantName?.trim() && !email?.trim() && !challongeUsername?.trim()) {
-		return res.status(400).json({
-			success: false,
-			error: 'At least a name, email, or Challonge username is required'
-		});
-	}
-
-	try {
-		// Build misc field with Instagram if provided
-		let misc = '';
-		if (instagram) {
-			misc = `Instagram: @${instagram.replace('@', '')}`;
-		}
-
-		// Build participant payload for v2.1
-		const attributes = {};
-		if (participantName?.trim()) attributes.name = participantName.trim();
-		if (email?.trim()) attributes.email = email.trim();
-		if (challongeUsername?.trim()) attributes.challonge_username = challongeUsername.trim();
-		if (misc) attributes.misc = misc;
-		if (seed) attributes.seed = seed;
-
-		const v2Payload = {
-			data: {
-				type: 'participants',
-				attributes
-			}
-		};
-
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants.json`, v2Payload);
-		const participantData = response.data.data;
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		// Schedule AI seeding recalculation (debounced)
-		aiSeedingService.scheduleRecalculation(tournamentId);
-
-		res.json({
-			success: true,
-			participant: {
-				id: parseInt(participantData.id),
-				...participantData.attributes
-			}
-		});
-	} catch (error) {
-		console.error('Add participant error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to add participant',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Update participant in a specific tournament (v2.1 API)
-app.put('/api/participants/:tournamentId/:participantId', requireAuthAPI, async (req, res) => {
-	const { tournamentId, participantId } = req.params;
-	const { participantName, email, challongeUsername, instagram, misc, seed } = req.body;
-
-	try {
-		// Build misc field with Instagram
-		let miscField = misc || '';
-		if (instagram) {
-			// Remove any existing Instagram line
-			miscField = miscField.replace(/Instagram:\s*@?[a-zA-Z0-9._]+\n?/gi, '').trim();
-			// Add new Instagram
-			miscField = `Instagram: @${instagram.replace('@', '')}${miscField ? '\n' + miscField : ''}`;
-		}
-
-		const attributes = {};
-		if (participantName) attributes.name = participantName.trim();
-		if (email !== undefined) attributes.email = email?.trim() || null;
-		if (challongeUsername !== undefined) attributes.challonge_username = challongeUsername?.trim() || null;
-		// misc must be a string (not null) for Challonge v2.1
-		if (miscField !== undefined) attributes.misc = miscField || '';
-		if (seed !== undefined && seed !== null) attributes.seed = seed;
-
-		const v2Payload = {
-			data: {
-				type: 'participants',
-				attributes
-			}
-		};
-
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/participants/${participantId}.json`, v2Payload);
-		const participantData = response.data.data;
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		res.json({
-			success: true,
-			participant: {
-				id: parseInt(participantData.id),
-				...participantData.attributes
-			}
-		});
-	} catch (error) {
-		console.error('Update participant error:', error.message);
-		console.error('Challonge error details:', JSON.stringify(error.response?.data, null, 2));
-		console.error('Request payload was:', JSON.stringify(req.body, null, 2));
-
-		// Parse error message
-		let errorMessage = 'Failed to update participant';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.map(e => e.detail || e.title || e).join(', ');
-			}
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Delete participant from a specific tournament (v2.1 API)
-app.delete('/api/participants/:tournamentId/:participantId', requireAuthAPI, async (req, res) => {
-	const { tournamentId, participantId } = req.params;
-
-	try {
-		await challongeV2Request('DELETE', `/tournaments/${tournamentId}/participants/${participantId}.json`);
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		// Schedule AI seeding recalculation (debounced)
-		aiSeedingService.scheduleRecalculation(tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Participant deleted successfully'
-		});
-	} catch (error) {
-		console.error('Delete participant error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to delete participant',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Randomize participants for a specific tournament (v2.1 API)
-app.post('/api/participants/:tournamentId/randomize', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		// Use v2.1 process endpoint for randomize
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/process.json`, {
-			data: {
-				type: 'ParticipantProcess',
-				attributes: {
-					action: 'randomize'
-				}
-			}
-		});
-
-		const participantsData = response.data.data || [];
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Participants randomized successfully',
-			participants: participantsData
-		});
-	} catch (error) {
-		console.error('Randomize participants error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to randomize participants',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Bulk add participants to a specific tournament (v2.1 API)
-app.post('/api/participants/:tournamentId/bulk', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-	const { participants } = req.body;
-
-	if (!participants || !Array.isArray(participants) || participants.length === 0) {
-		return res.status(400).json({
-			success: false,
-			error: 'Participants array is required'
-		});
-	}
-
-	try {
-		// Format participants for v2.1 bulk add endpoint
-		// Supports both string names and full participant objects
-		const bulkData = participants.map(p => {
-			if (typeof p === 'string') {
-				return { name: p.trim() };
-			}
-			// Full participant object
-			const participant = {};
-			if (p.name) participant.name = p.name.trim();
-			if (p.email) participant.email = p.email.trim();
-			if (p.challongeUsername) participant.challonge_username = p.challongeUsername.trim();
-			if (p.seed) participant.seed = p.seed;
-			if (p.misc) participant.misc = p.misc.trim();
-			return participant;
-		});
-
-		const v2Payload = {
-			data: {
-				type: 'participants',
-				attributes: {
-					participants: bulkData
-				}
-			}
-		};
-
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/bulk_add.json`, v2Payload);
-		const participantsData = response.data.data || [];
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		// Schedule AI seeding recalculation (debounced)
-		aiSeedingService.scheduleRecalculation(tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Participants added successfully',
-			count: participantsData.length || bulkData.length,
-			participants: participantsData
-		});
-	} catch (error) {
-		console.error('Bulk add participants error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to add participants',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Check in a participant (v2.1 API)
-app.post('/api/participants/:tournamentId/:participantId/check-in', requireAuthAPI, async (req, res) => {
-	const { tournamentId, participantId } = req.params;
-
-	try {
-		// Use v2.1 process endpoint for check-in
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/${participantId}/process.json`, {
-			data: {
-				type: 'ParticipantProcess',
-				attributes: {
-					action: 'check_in'
-				}
-			}
-		});
-
-		const participantData = response.data.data;
-
-		// Log activity
-		const userId = req.session?.userId || 0;
-		const username = req.session?.username || 'System';
-		const playerName = participantData?.attributes?.name || 'Unknown';
-		logActivity(userId, username, ACTIVITY_TYPES.PARTICIPANT_CHECKIN, {
-			tournamentId,
-			participantId,
-			playerName
-		});
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Participant checked in successfully',
-			participant: participantData ? {
-				id: parseInt(participantData.id),
-				...participantData.attributes
-			} : null
-		});
-	} catch (error) {
-		console.error('Check in participant error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to check in participant',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Undo check-in for a participant (v2.1 API)
-app.post('/api/participants/:tournamentId/:participantId/undo-check-in', requireAuthAPI, async (req, res) => {
-	const { tournamentId, participantId } = req.params;
-
-	try {
-		// Use v2.1 process endpoint for undo check-in
-		const response = await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/${participantId}/process.json`, {
-			data: {
-				type: 'ParticipantProcess',
-				attributes: {
-					action: 'undo_check_in'
-				}
-			}
-		});
-
-		const participantData = response.data.data;
-
-		// Log activity
-		const userId = req.session?.userId || 0;
-		const username = req.session?.username || 'System';
-		const playerName = participantData?.attributes?.name || 'Unknown';
-		logActivity(userId, username, ACTIVITY_TYPES.PARTICIPANT_CHECKOUT, {
-			tournamentId,
-			participantId,
-			playerName
-		});
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Check-in undone successfully',
-			participant: participantData ? {
-				id: parseInt(participantData.id),
-				...participantData.attributes
-			} : null
-		});
-	} catch (error) {
-		console.error('Undo check in error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to undo check-in',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Clear all participants from a tournament (v2.1 API)
-app.delete('/api/participants/:tournamentId/clear', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		// Use v2.1 process endpoint for clear
-		await challongeV2Request('POST', `/tournaments/${tournamentId}/participants/process.json`, {
-			data: {
-				type: 'ParticipantProcess',
-				attributes: {
-					action: 'clear'
-				}
-			}
-		});
-
-		// Invalidate participants cache
-		cacheDb.invalidateCache('participants', tournamentId);
-
-		// Invalidate AI seeding cache since all participants are cleared
-		analyticsDb.invalidateSeedingCache(tournamentId);
-
-		res.json({
-			success: true,
-			message: 'All participants cleared successfully'
-		});
-	} catch (error) {
-		console.error('Clear all participants error:', error.message);
-		let errorMessage = 'Failed to clear participants';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.map(e => e.detail || e.title || e).join(', ');
-			}
-		}
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Mark match as underway (v2.1 API with v1 fallback)
-// NOTE: Challonge v2.1 change_state endpoint is currently broken (returns 500)
-// When v2.1 fails, we fall back to v1 API until v2.1 is fixed
-app.post('/api/matches/:tournamentId/:matchId/underway', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-
-	try {
-		let matchData = null;
-		let underwayAt = null;
-		let usedV1Fallback = false;
-
-		// Try v2.1 change_state endpoint first
-		try {
-			const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}/change_state.json`, {
-				data: {
-					type: 'MatchState',
-					attributes: {
-						state: 'mark_as_underway'
-					}
-				}
-			});
-
-			matchData = response.data?.data?.attributes;
-			underwayAt = matchData?.timestamps?.underway_at || matchData?.underway_at;
-
-			// Clear any local tracking if v2.1 succeeded
-			const trackingKey = `${tournamentId}:${matchId}`;
-			localUnderwayTracking.delete(trackingKey);
-
-		} catch (v2Error) {
-			// If v2.1 returns 500, fall back to v1 API
-			if (v2Error.response?.status === 500) {
-				console.log('[Underway] v2.1 API returned 500, trying v1 fallback...');
-
-				try {
-					const apiKey = getLegacyApiKey();
-					if (!apiKey) {
-						throw new Error('No legacy API key configured for v1 fallback');
-					}
-					const v1Response = await rateLimitedAxios.post(
-						`https://api.challonge.com/v1/tournaments/${tournamentId}/matches/${matchId}/mark_as_underway.json`,
-						null,
-						{
-							params: { api_key: apiKey },
-							timeout: 15000
-						}
-					);
-
-					matchData = v1Response.data?.match;
-					underwayAt = matchData?.underway_at || new Date().toISOString();
-					usedV1Fallback = true;
-
-					// Clear any local tracking
-					const trackingKey = `${tournamentId}:${matchId}`;
-					localUnderwayTracking.delete(trackingKey);
-
-					console.log('[Underway] v1 fallback succeeded');
-				} catch (v1Error) {
-					console.error('[Underway] v1 fallback also failed:', v1Error.message);
-					throw v1Error;
-				}
-			} else {
-				throw v2Error; // Not a 500 error, rethrow
-			}
-		}
-
-		// Trigger immediate fetch and push to update TV display quickly
-		fetchAndPushMatches().catch(err => {
-			console.error('[Underway] Background fetch/push failed:', err.message);
-		});
-
-		// Log activity
-		const userId = req.session?.userId || req.tokenUserId || 0;
-		const username = req.session?.username || req.tokenUsername || 'API';
-		logActivity(userId, username, ACTIVITY_TYPES.MATCH_START, {
-			tournamentId,
-			matchId,
-			underwayAt: underwayAt,
-			v1Fallback: usedV1Fallback
-		});
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: usedV1Fallback ? 'Match marked as underway (v1 fallback)' : 'Match marked as underway',
-			match: matchData,
-			underwayAt: underwayAt,
-			v1Fallback: usedV1Fallback
-		});
-	} catch (error) {
-		console.error('Mark underway error:', error.message);
-		console.error('Full error:', JSON.stringify(error.response?.data, null, 2));
-		console.error('Status:', error.response?.status);
-
-		// Parse error details for better feedback
-		const errorData = error.response?.data;
-		let errorMessage = 'Failed to mark match as underway';
-
-		// Check for specific Challonge error types
-		if (error.response?.status === 422) {
-			errorMessage = 'Match cannot be marked as underway (may already be underway or completed)';
-		} else if (error.response?.status === 404) {
-			errorMessage = 'Match not found';
-		} else if (error.response?.status === 500) {
-			errorMessage = 'Challonge server error - please try again';
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: errorData || error.message
-		});
-	}
-});
-
-// Unmark match as underway (v2.1 API with v1 fallback)
-app.post('/api/matches/:tournamentId/:matchId/unmark-underway', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-
-	try {
-		// Clear any local tracking
-		const trackingKey = `${tournamentId}:${matchId}`;
-		localUnderwayTracking.delete(trackingKey);
-
-		let matchData = null;
-		let usedV1Fallback = false;
-
-		// Try v2.1 change_state endpoint first
-		try {
-			const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}/change_state.json`, {
-				data: {
-					type: 'MatchState',
-					attributes: {
-						state: 'unmark_as_underway'
-					}
-				}
-			});
-			matchData = response.data?.data?.attributes;
-		} catch (v2Error) {
-			// If v2.1 returns 500, fall back to v1 API
-			if (v2Error.response?.status === 500) {
-				console.log('[Unmark Underway] v2.1 API returned 500, trying v1 fallback...');
-
-				try {
-					const apiKey = getLegacyApiKey();
-					if (!apiKey) {
-						throw new Error('No legacy API key configured for v1 fallback');
-					}
-					const v1Response = await rateLimitedAxios.post(
-						`https://api.challonge.com/v1/tournaments/${tournamentId}/matches/${matchId}/unmark_as_underway.json`,
-						null,
-						{
-							params: { api_key: apiKey },
-							timeout: 15000
-						}
-					);
-
-					matchData = v1Response.data?.match;
-					usedV1Fallback = true;
-					console.log('[Unmark Underway] v1 fallback succeeded');
-				} catch (v1Error) {
-					console.error('[Unmark Underway] v1 fallback also failed:', v1Error.message);
-					throw v1Error;
-				}
-			} else {
-				throw v2Error; // Rethrow non-500 errors
-			}
-		}
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: usedV1Fallback ? 'Match unmarked as underway (v1 fallback)' : 'Match unmarked as underway',
-			match: matchData,
-			v1Fallback: usedV1Fallback
-		});
-	} catch (error) {
-		console.error('Unmark underway error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to unmark match as underway',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Update match score (v2.1 API)
-app.post('/api/matches/:tournamentId/:matchId/score', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-	const { scores, player1Id, player2Id } = req.body;
-
-	if (!scores) {
-		return res.status(400).json({
-			success: false,
-			error: 'Scores are required (format: "1-2")'
-		});
-	}
-
-	try {
-		// Parse scores "1-2" into individual scores
-		const scoreParts = scores.split('-').map(s => s.trim());
-		if (scoreParts.length !== 2) {
-			return res.status(400).json({
-				success: false,
-				error: 'Scores must be in format "X-Y" (e.g., "1-2")'
-			});
-		}
-
-		// If player IDs not provided, fetch match first to get them
-		let p1Id = player1Id;
-		let p2Id = player2Id;
-		if (!p1Id || !p2Id) {
-			const matchResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${matchId}.json`);
-			const matchAttrs = matchResponse.data?.data?.attributes;
-			// v2.1 uses points_by_participant array with participant relationship
-			const relationships = matchResponse.data?.data?.relationships;
-			if (relationships?.player1?.data?.id) {
-				p1Id = relationships.player1.data.id;
-			}
-			if (relationships?.player2?.data?.id) {
-				p2Id = relationships.player2.data.id;
-			}
-			// Fallback to attributes if relationships not available
-			if (!p1Id) p1Id = matchAttrs?.player1_id;
-			if (!p2Id) p2Id = matchAttrs?.player2_id;
-		}
-
-		if (!p1Id || !p2Id) {
-			return res.status(400).json({
-				success: false,
-				error: 'Could not determine participant IDs for match'
-			});
-		}
-
-		// Use v2.1 update match endpoint with proper payload
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}.json`, {
-			data: {
-				type: 'Match',
-				attributes: {
-					match: [
-						{ participant_id: String(p1Id), score_set: scoreParts[0] },
-						{ participant_id: String(p2Id), score_set: scoreParts[1] }
-					]
-				}
-			}
-		});
-
-		const matchData = response.data?.data?.attributes;
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Match score updated',
-			match: matchData
-		});
-	} catch (error) {
-		console.error('Update score error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to update match score',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Declare match winner (v2.1 API)
-app.post('/api/matches/:tournamentId/:matchId/winner', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-	const { winnerId, scores, player1Id, player2Id } = req.body;
-
-	if (!winnerId) {
-		return res.status(400).json({
-			success: false,
-			error: 'Winner ID is required'
-		});
-	}
-
-	if (!scores) {
-		return res.status(400).json({
-			success: false,
-			error: 'Scores are required when declaring winner (format: "1-2")'
-		});
-	}
-
-	try {
-		// Parse scores "1-2" into individual scores
-		const scoreParts = scores.split('-').map(s => s.trim());
-		if (scoreParts.length !== 2) {
-			return res.status(400).json({
-				success: false,
-				error: 'Scores must be in format "X-Y" (e.g., "1-2")'
-			});
-		}
-
-		// If player IDs not provided, fetch match first to get them
-		let p1Id = player1Id;
-		let p2Id = player2Id;
-		if (!p1Id || !p2Id) {
-			const matchResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${matchId}.json`);
-			const matchAttrs = matchResponse.data?.data?.attributes;
-			const relationships = matchResponse.data?.data?.relationships;
-			if (relationships?.player1?.data?.id) {
-				p1Id = relationships.player1.data.id;
-			}
-			if (relationships?.player2?.data?.id) {
-				p2Id = relationships.player2.data.id;
-			}
-			// Fallback to points_by_participant (v2.1 structure)
-			if (!p1Id && !p2Id && matchAttrs?.points_by_participant?.length >= 2) {
-				p1Id = matchAttrs.points_by_participant[0]?.participant_id;
-				p2Id = matchAttrs.points_by_participant[1]?.participant_id;
-			}
-			// Final fallback to player1_id/player2_id
-			if (!p1Id) p1Id = matchAttrs?.player1_id;
-			if (!p2Id) p2Id = matchAttrs?.player2_id;
-		}
-
-		if (!p1Id || !p2Id) {
-			return res.status(400).json({
-				success: false,
-				error: 'Could not determine participant IDs for match'
-			});
-		}
-
-		// Determine which player wins
-		const p1Wins = String(winnerId) === String(p1Id);
-
-		// Use v2.1 update match endpoint with rank and advancing to declare winner
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}.json`, {
-			data: {
-				type: 'Match',
-				attributes: {
-					match: [
-						{ participant_id: String(p1Id), score_set: scoreParts[0], rank: p1Wins ? 1 : 2, advancing: p1Wins },
-						{ participant_id: String(p2Id), score_set: scoreParts[1], rank: p1Wins ? 2 : 1, advancing: !p1Wins }
-					]
-				}
-			}
-		});
-
-		const matchData = response.data?.data?.attributes;
-
-		// Clear local underway tracking since match is now complete
-		const trackingKey = `${tournamentId}:${matchId}`;
-		localUnderwayTracking.delete(trackingKey);
-
-		// Record match change for rollback
-		const usernameForHistory = req.session?.user?.username || req.tokenUsername || 'API';
-		recordMatchChange(tournamentId, matchId, {
-			winnerId,
-			scores,
-			player1Id: p1Id,
-			player2Id: p2Id
-		}, `winner_declared: ${scores}`, usernameForHistory);
-
-		// Trigger immediate fetch and push to update TV display quickly
-		fetchAndPushMatches().catch(err => {
-			console.error('[Winner] Background fetch/push failed:', err.message);
-		});
-
-		// Log activity
-		const userId = req.session?.userId || req.tokenUserId || 0;
-		const username = req.session?.username || req.tokenUsername || 'API';
-		logActivity(userId, username, ACTIVITY_TYPES.MATCH_COMPLETE, {
-			tournamentId,
-			matchId,
-			winnerId,
-			score: scores
-		});
-
-		// Send push notification for match completion
-		broadcastPushNotification('match_completed', {
-			title: 'Match Completed',
-			body: `Match finished: ${scores}`,
-			data: {
-				type: 'match_completed',
-				tournamentId,
-				matchId,
-				winnerId,
-				scores
-			}
-		}).catch(err => console.error('[Push] Match notification error:', err.message));
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Match winner declared',
-			match: matchData
-		});
-	} catch (error) {
-		console.error('Declare winner error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to declare match winner',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Reopen a completed match (v2.1 API with v1 fallback)
-app.post('/api/matches/:tournamentId/:matchId/reopen', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-
-	try {
-		let matchData = null;
-		let usedV1Fallback = false;
-
-		// Try v2.1 change_state endpoint first
-		try {
-			const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}/change_state.json`, {
-				data: {
-					type: 'MatchState',
-					attributes: {
-						state: 'reopen'
-					}
-				}
-			});
-			matchData = response.data?.data?.attributes;
-		} catch (v2Error) {
-			// If v2.1 returns 500, fall back to v1 API
-			if (v2Error.response?.status === 500) {
-				console.log('[Reopen] v2.1 API returned 500, trying v1 fallback...');
-
-				try {
-					const apiKey = getLegacyApiKey();
-					if (!apiKey) {
-						throw new Error('No legacy API key configured for v1 fallback');
-					}
-					const v1Response = await rateLimitedAxios.post(
-						`https://api.challonge.com/v1/tournaments/${tournamentId}/matches/${matchId}/reopen.json`,
-						null,
-						{
-							params: { api_key: apiKey },
-							timeout: 15000
-						}
-					);
-
-					matchData = v1Response.data?.match;
-					usedV1Fallback = true;
-					console.log('[Reopen] v1 fallback succeeded');
-				} catch (v1Error) {
-					console.error('[Reopen] v1 fallback also failed:', v1Error.message);
-					throw v1Error;
-				}
-			} else {
-				throw v2Error; // Rethrow non-500 errors
-			}
-		}
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: usedV1Fallback ? 'Match reopened (v1 fallback)' : 'Match reopened',
-			match: matchData,
-			v1Fallback: usedV1Fallback
-		});
-	} catch (error) {
-		console.error('Reopen match error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to reopen match',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// DQ/Forfeit - Declare winner due to disqualification or no-show (v2.1 API)
-app.post('/api/matches/:tournamentId/:matchId/dq', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-	const { winnerId, loserId, player1Id, player2Id } = req.body;
-
-	if (!winnerId) {
-		return res.status(400).json({
-			success: false,
-			error: 'Winner ID is required (the player who advances)'
-		});
-	}
-
-	try {
-		// If player IDs not provided, fetch match first to get them
-		let p1Id = player1Id;
-		let p2Id = player2Id;
-		if (!p1Id || !p2Id) {
-			const matchResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${matchId}.json`);
-			const matchAttrs = matchResponse.data?.data?.attributes;
-			const relationships = matchResponse.data?.data?.relationships;
-			if (relationships?.player1?.data?.id) {
-				p1Id = relationships.player1.data.id;
-			}
-			if (relationships?.player2?.data?.id) {
-				p2Id = relationships.player2.data.id;
-			}
-			if (!p1Id) p1Id = matchAttrs?.player1_id;
-			if (!p2Id) p2Id = matchAttrs?.player2_id;
-		}
-
-		if (!p1Id || !p2Id) {
-			return res.status(400).json({
-				success: false,
-				error: 'Could not determine participant IDs for match'
-			});
-		}
-
-		// Determine which player wins
-		const p1Wins = String(winnerId) === String(p1Id);
-
-		// v2.1 API: Set winner with 0-0 score (indicates forfeit)
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}.json`, {
-			data: {
-				type: 'Match',
-				attributes: {
-					match: [
-						{ participant_id: String(p1Id), score_set: '0', rank: p1Wins ? 1 : 2, advancing: p1Wins },
-						{ participant_id: String(p2Id), score_set: '0', rank: p1Wins ? 2 : 1, advancing: !p1Wins }
-					]
-				}
-			}
-		});
-
-		const matchData = response.data?.data?.attributes;
-
-		// Trigger immediate match data refresh for displays
-		if (typeof fetchAndPushMatches === 'function') {
-			fetchAndPushMatches().catch(err => console.error('Error pushing matches after DQ:', err.message));
-		}
-
-		// Log activity
-		const userId = req.session?.userId || req.tokenUserId || 0;
-		const username = req.session?.username || req.tokenUsername || 'API';
-		logActivity(userId, username, ACTIVITY_TYPES.MATCH_DQ, {
-			tournamentId,
-			matchId,
-			winnerId,
-			loserId: loserId || (p1Wins ? p2Id : p1Id)
-		});
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Match forfeited - winner advanced',
-			match: matchData,
-			forfeited: true
-		});
-	} catch (error) {
-		console.error('DQ/Forfeit error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to process forfeit',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Assign station to a match
-app.post('/api/matches/:tournamentId/:matchId/station', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-	const { stationId } = req.body;
-	const apiKey = getChallongeApiKey();
-
-	if (!apiKey) {
-		return res.status(500).json({
-			success: false,
-			error: 'Challonge not connected. Please connect your account in Settings.'
-		});
-	}
-
-	const headers = {
-		'Authorization': apiKey,
-		'Authorization-Type': 'v1',
-		'Content-Type': 'application/vnd.api+json',
-		'Accept': 'application/json'
-	};
-
-	try {
-		if (stationId) {
-			// Assign match to station: PUT to station endpoint with match_id
-			const stationData = {
-				data: {
-					type: 'station',
-					attributes: {
-						match_id: String(matchId)
-					}
-				}
-			};
-
-			await rateLimitedAxios.put(
-				`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations/${stationId}.json`,
-				stationData,
-				{ headers, timeout: 10000 }
-			);
-
-			// Trigger immediate fetch and push to update TV display quickly
-			fetchAndPushMatches().catch(err => {
-				console.error('[Station Assign] Background fetch/push failed:', err.message);
-			});
-
-			// Invalidate matches and stations caches
-			cacheDb.invalidateCache('matches', tournamentId);
-			cacheDb.invalidateCache('stations', tournamentId);
-
-			res.json({
-				success: true,
-				message: 'Station assigned to match'
-			});
-		} else {
-			// Unassign: Find which station has this match and clear it
-			const stationsResponse = await rateLimitedAxios.get(
-				`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations.json`,
-				{ headers, timeout: 10000 }
-			);
-
-			// Find station that has this match
-			const stationWithMatch = stationsResponse.data?.data?.find(station => {
-				const stationMatchId = station.relationships?.match?.data?.id;
-				return stationMatchId === String(matchId);
-			});
-
-			if (stationWithMatch) {
-				// Clear the station's match assignment
-				const stationData = {
-					data: {
-						type: 'station',
-						attributes: {
-							match_id: null
-						}
-					}
-				};
-
-				await rateLimitedAxios.put(
-					`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations/${stationWithMatch.id}.json`,
-					stationData,
-					{ headers, timeout: 10000 }
-				);
-			}
-
-			// Trigger immediate fetch and push to update TV display quickly
-			fetchAndPushMatches().catch(err => {
-				console.error('[Station Unassign] Background fetch/push failed:', err.message);
-			});
-
-			// Invalidate matches and stations caches
-			cacheDb.invalidateCache('matches', tournamentId);
-			cacheDb.invalidateCache('stations', tournamentId);
-
-			res.json({
-				success: true,
-				message: 'Station unassigned from match'
-			});
-		}
-	} catch (error) {
-		console.error('Assign station error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to assign station',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Clear match scores (reset to no score, keep state) - v2.1 API
-app.post('/api/matches/:tournamentId/:matchId/clear-scores', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-	const { player1Id, player2Id } = req.body;
-
-	try {
-		// If player IDs not provided, fetch match first to get them
-		let p1Id = player1Id;
-		let p2Id = player2Id;
-		if (!p1Id || !p2Id) {
-			const matchResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${matchId}.json`);
-			const matchAttrs = matchResponse.data?.data?.attributes;
-			const relationships = matchResponse.data?.data?.relationships;
-			if (relationships?.player1?.data?.id) {
-				p1Id = relationships.player1.data.id;
-			}
-			if (relationships?.player2?.data?.id) {
-				p2Id = relationships.player2.data.id;
-			}
-			if (!p1Id) p1Id = matchAttrs?.player1_id;
-			if (!p2Id) p2Id = matchAttrs?.player2_id;
-		}
-
-		if (!p1Id || !p2Id) {
-			return res.status(400).json({
-				success: false,
-				error: 'Could not determine participant IDs for match'
-			});
-		}
-
-		// v2.1 API: Clear scores with empty score_set
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${matchId}.json`, {
-			data: {
-				type: 'Match',
-				attributes: {
-					match: [
-						{ participant_id: String(p1Id), score_set: '' },
-						{ participant_id: String(p2Id), score_set: '' }
-					]
-				}
-			}
-		});
-
-		const matchData = response.data?.data?.attributes;
-
-		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Match scores cleared',
-			match: matchData
-		});
-	} catch (error) {
-		console.error('Clear scores error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to clear scores',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Batch score entry - submit multiple match scores at once
-app.post('/api/matches/:tournamentId/batch-scores', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-	const { scores } = req.body;
-
-	if (!scores || !Array.isArray(scores) || scores.length === 0) {
-		return res.status(400).json({
-			success: false,
-			error: 'scores array is required'
-		});
-	}
-
-	// Validate all entries first
-	const validationErrors = [];
-	for (let i = 0; i < scores.length; i++) {
-		const entry = scores[i];
-		if (!entry.matchId) {
-			validationErrors.push({ index: i, error: 'matchId is required' });
-			continue;
-		}
-		if (!entry.winnerId) {
-			validationErrors.push({ index: i, error: 'winnerId is required' });
-			continue;
-		}
-		if (entry.score1 === undefined || entry.score2 === undefined) {
-			validationErrors.push({ index: i, error: 'score1 and score2 are required' });
-			continue;
-		}
-		// Scores must be different (no ties) or one must be 0 for forfeit
-		if (entry.score1 === entry.score2 && entry.score1 !== 0) {
-			validationErrors.push({ index: i, error: 'Tied scores not allowed' });
-		}
-	}
-
-	if (validationErrors.length > 0) {
-		return res.status(400).json({
-			success: false,
-			error: 'Validation failed',
-			validationErrors
-		});
-	}
-
-	const results = [];
-	let succeeded = 0;
-	let failed = 0;
-
-	// Process each score entry
-	for (const entry of scores) {
-		try {
-			// Get match details first to get player IDs
-			const matchResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${entry.matchId}.json`);
-			const matchData = matchResponse.data?.data;
-			const matchAttrs = matchData?.attributes;
-			const relationships = matchData?.relationships;
-
-			// Extract player IDs
-			let player1Id = relationships?.player1?.data?.id || matchAttrs?.player1_id;
-			let player2Id = relationships?.player2?.data?.id || matchAttrs?.player2_id;
-
-			if (!player1Id || !player2Id) {
-				results.push({
-					matchId: entry.matchId,
-					success: false,
-					error: 'Could not determine player IDs'
-				});
-				failed++;
-				continue;
-			}
-
-			// Determine winner and loser
-			const isPlayer1Winner = String(entry.winnerId) === String(player1Id);
-			const winnerId = isPlayer1Winner ? player1Id : player2Id;
-			const loserId = isPlayer1Winner ? player2Id : player1Id;
-			const winnerScore = isPlayer1Winner ? entry.score1 : entry.score2;
-			const loserScore = isPlayer1Winner ? entry.score2 : entry.score1;
-
-			// Build v2.1 match update payload
-			const updatePayload = {
-				data: {
-					type: 'Match',
-					attributes: {
-						match: [
-							{
-								participant_id: String(winnerId),
-								score_set: String(winnerScore),
-								rank: 1,
-								advancing: true
-							},
-							{
-								participant_id: String(loserId),
-								score_set: String(loserScore),
-								rank: 2,
-								advancing: false
-							}
-						]
-					}
-				}
-			};
-
-			// Submit to Challonge
-			await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${entry.matchId}.json`, updatePayload);
-
-			results.push({
-				matchId: entry.matchId,
-				success: true,
-				winnerId: entry.winnerId,
-				score: `${entry.score1}-${entry.score2}`
-			});
-			succeeded++;
-
-		} catch (error) {
-			console.error(`Batch score error for match ${entry.matchId}:`, error.message);
-			results.push({
-				matchId: entry.matchId,
-				success: false,
-				error: error.response?.data?.errors?.[0]?.detail || error.message
-			});
-			failed++;
-		}
-	}
-
-	// Single cache invalidation at the end
-	cacheDb.invalidateCache('matches', tournamentId);
-
-	// Single push to displays at the end
-	try {
-		await fetchAndPushMatches(tournamentId);
-	} catch (pushError) {
-		console.error('Failed to push matches after batch score:', pushError.message);
-	}
-
-	// Log activity
-	logActivity(
-		req.session?.userId || 0,
-		req.session?.username || 'API',
-		'batch_score_entry',
-		{
-			tournamentId,
-			submitted: scores.length,
-			succeeded,
-			failed
-		}
-	);
-
-	res.json({
-		success: failed === 0,
-		submitted: scores.length,
-		succeeded,
-		failed,
-		results
-	});
-});
-
-// Get single match details (v2.1 API)
-app.get('/api/matches/:tournamentId/:matchId', requireAuthAPI, async (req, res) => {
-	const { tournamentId, matchId } = req.params;
-
-	try {
-		const response = await challongeV2Request('GET', `/tournaments/${tournamentId}/matches/${matchId}.json`);
-
-		const matchData = response.data?.data;
-		const match = matchData?.attributes || {};
-		const relationships = matchData?.relationships || {};
-		const timestamps = match.timestamps || {};
-
-		// Extract player IDs from relationships or attributes
-		let player1Id = relationships?.player1?.data?.id || match.player1_id;
-		let player2Id = relationships?.player2?.data?.id || match.player2_id;
-
-		// Parse v2.1 scores format to scores_csv
-		let scoresCsv = '';
-		if (match.score_in_sets && Array.isArray(match.score_in_sets) && match.score_in_sets.length > 0) {
-			// v2.1 format: [[p1Score, p2Score], ...] - take first set for simple score
-			const firstSet = match.score_in_sets[0];
-			if (Array.isArray(firstSet) && firstSet.length === 2) {
-				scoresCsv = `${firstSet[0]}-${firstSet[1]}`;
-			}
-		} else if (match.scores) {
-			// Alternative format: "X - Y" string
-			scoresCsv = match.scores.replace(/\s/g, '');
-		}
-
-		res.json({
-			success: true,
-			match: {
-				id: parseInt(matchData.id),
-				state: match.state,
-				round: match.round,
-				player1Id: player1Id,
-				player2Id: player2Id,
-				winnerId: match.winner_id,
-				loserId: match.loser_id,
-				scores_csv: scoresCsv,
-				underwayAt: timestamps.underway_at || match.underway_at,
-				startedAt: timestamps.started_at || match.started_at,
-				completedAt: timestamps.completed_at || match.completed_at,
-				suggestedPlayOrder: match.suggested_play_order,
-				stationId: relationships?.station?.data?.id || null,
-				identifier: match.identifier
-			}
-		});
-	} catch (error) {
-		console.error('Get match error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to get match',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// ============================================
-// STATION MANAGEMENT API ENDPOINTS
-// ============================================
-
-// Get stations for a tournament - with caching
-app.get('/api/stations/:tournamentId', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	// Helper function to fetch stations from Challonge API
-	// Note: Stations API requires legacy key - Challonge doesn't support OAuth scopes for stations
-	const fetchStationsFromAPI = async () => {
-		const headers = getStationsApiHeaders();
-		const response = await rateLimitedAxios.get(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations.json`,
-			{
-				headers,
-				timeout: 10000
-			}
-		);
-
-		const stations = (response.data.data || []).map(s => ({
-			id: s.id,
-			name: s.attributes?.name || `Station ${s.id}`,
-			streamUrl: s.attributes?.stream_url || null
-		}));
-
-		return stations;
-	};
-
-	try {
-		// Use cache with stale-while-revalidate pattern
-		const { data: stations, _cache } = await cacheDb.getCachedOrFetch(
-			'stations',
-			tournamentId,
-			fetchStationsFromAPI
-		);
-
-		res.json({
-			success: true,
-			stations,
-			_cache
-		});
-	} catch (error) {
-		console.error('Get stations error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to get stations',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Create a station for a tournament
-// Note: Stations API requires legacy key - Challonge doesn't support OAuth scopes for stations
-app.post('/api/stations/:tournamentId', requireTokenOrSessionAuth, async (req, res) => {
-	const { tournamentId } = req.params;
-	const { name } = req.body;
-
-	if (!name) {
-		return res.status(400).json({
-			success: false,
-			error: 'Station name is required'
-		});
-	}
-
-	try {
-		const headers = getStationsApiHeaders();
-		const response = await rateLimitedAxios.post(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations.json`,
-			{
-				data: {
-					type: 'station',
-					attributes: { name }
-				}
+				totalParticipants,
+				checkedInCount,
+				signupCap: tournament.signup_cap || null,
+				checkInEnabled: !!tournament.check_in_duration,
+				tournamentState: tournament.state,
+				tournamentName: tournament.name
 			},
-			{
-				headers,
-				timeout: 10000
-			}
-		);
-
-		const station = response.data.data;
-
-		// Invalidate stations cache
-		cacheDb.invalidateCache('stations', tournamentId);
-
-		res.json({
-			success: true,
-			message: `Station "${name}" created`,
-			station: {
-				id: station.id,
-				name: station.attributes?.name || name
-			}
+			source: 'local'
 		});
 	} catch (error) {
-		console.error('Create station error:', error.message);
+		console.error('[Participant Stats] Error:', error.message);
 		res.status(500).json({
 			success: false,
-			error: 'Failed to create station',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Delete a station
-// Note: Stations API requires legacy key - Challonge doesn't support OAuth scopes for stations
-app.delete('/api/stations/:tournamentId/:stationId', requireAuthAPI, async (req, res) => {
-	const { tournamentId, stationId } = req.params;
-
-	try {
-		const headers = getStationsApiHeaders();
-		await rateLimitedAxios.delete(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}/stations/${stationId}.json`,
-			{
-				headers,
-				timeout: 10000
-			}
-		);
-
-		// Invalidate stations cache
-		cacheDb.invalidateCache('stations', tournamentId);
-
-		res.json({
-			success: true,
-			message: 'Station deleted'
-		});
-	} catch (error) {
-		console.error('Delete station error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to delete station',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Get station settings for a tournament
-// Note: Station settings use legacy key for consistency with stations API
-app.get('/api/tournament/:tournamentId/station-settings', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		const headers = getStationsApiHeaders();
-		const response = await rateLimitedAxios.get(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}.json`,
-			{
-				headers,
-				timeout: 10000
-			}
-		);
-
-		const stationOptions = response.data.data?.attributes?.station_options || {};
-		res.json({
-			success: true,
-			stationSettings: {
-				autoAssign: stationOptions.auto_assign || false,
-				onlyStartWithStations: stationOptions.only_start_matches_with_assigned_stations || false
-			}
-		});
-	} catch (error) {
-		console.error('Get station settings error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to get station settings',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Update station settings for a tournament
-// Note: Station settings use legacy key for consistency with stations API
-app.put('/api/tournament/:tournamentId/station-settings', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-	const { autoAssign, onlyStartWithStations } = req.body;
-
-	try {
-		// Build station_options object
-		const stationOptions = {};
-		if (typeof autoAssign === 'boolean') {
-			stationOptions.auto_assign = autoAssign;
-		}
-		if (typeof onlyStartWithStations === 'boolean') {
-			stationOptions.only_start_matches_with_assigned_stations = onlyStartWithStations;
-		}
-
-		const headers = getStationsApiHeaders();
-		const response = await rateLimitedAxios.put(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}.json`,
-			{
-				data: {
-					type: 'tournament',
-					attributes: {
-						station_options: stationOptions
-					}
-				}
-			},
-			{
-				headers,
-				timeout: 10000
-			}
-		);
-
-		const updatedOptions = response.data.data?.attributes?.station_options || {};
-		res.json({
-			success: true,
-			message: 'Station settings updated',
-			stationSettings: {
-				autoAssign: updatedOptions.auto_assign || false,
-				onlyStartWithStations: updatedOptions.only_start_matches_with_assigned_stations || false
-			}
-		});
-	} catch (error) {
-		console.error('Update station settings error:', error.message);
-		// Check if it's a "can't change after started" error
-		const errorDetails = error.response?.data?.errors;
-		if (errorDetails && Array.isArray(errorDetails)) {
-			const relevantErrors = errorDetails.filter(e =>
-				e.source?.pointer?.includes('station_options')
-			);
-			if (relevantErrors.length === 0 && errorDetails.length > 0) {
-				// The errors are about other fields, not station_options
-				// Try to get current settings and return success
-				try {
-					const getResponse = await rateLimitedAxios.get(
-						`https://api.challonge.com/v2.1/tournaments/${tournamentId}.json`,
-						{
-							headers: {
-								'Accept': 'application/json',
-								'Content-Type': 'application/vnd.api+json',
-								'Authorization-Type': 'v1',
-								'Authorization': apiKey
-							},
-							timeout: 10000
-						}
-					);
-					const currentOptions = getResponse.data.data?.attributes?.station_options || {};
-					return res.json({
-						success: true,
-						message: 'Station settings may have been updated (some tournament fields cannot be changed after start)',
-						stationSettings: {
-							autoAssign: currentOptions.auto_assign || false,
-							onlyStartWithStations: currentOptions.only_start_matches_with_assigned_stations || false
-						}
-					});
-				} catch (getError) {
-					// Fall through to error response
-				}
-			}
-		}
-		res.status(500).json({
-			success: false,
-			error: 'Failed to update station settings',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// ============================================
-// TOURNAMENT LIFECYCLE API ENDPOINTS
-// ============================================
-
-// Get a single tournament's details (v2.1 API) - with caching
-app.get('/api/tournament/:tournamentId', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	// Helper function to fetch tournament details from Challonge API
-	const fetchTournamentFromAPI = async () => {
-		const response = await challongeV2Request('GET', `/tournaments/${tournamentId}.json`);
-		const tournamentData = response.data.data;
-		const attrs = tournamentData.attributes;
-
-		// Debug: Log the raw response for troubleshooting
-		console.log('[Tournament GET] Raw attrs for', tournamentId, ':', JSON.stringify({
-			starts_at: attrs.starts_at,
-			timestamps_starts_at: attrs.timestamps?.starts_at,
-			match_options: attrs.match_options,
-			notifications: attrs.notifications
-		}, null, 2));
-
-		// v2.1 returns nested option objects
-		const regOpts = attrs.registration_options || {};
-		const seedOpts = attrs.seeding_options || {};
-		const matchOpts = attrs.match_options || {};
-		const notifyOpts = attrs.notifications || {};
-		const doubleElimOpts = attrs.double_elimination_options || {};
-
-		return {
-			// Basic info
-			id: parseInt(tournamentData.id),
-			tournamentId: attrs.url,
-			name: attrs.name,
-			description: attrs.description || '',
-			game: attrs.game_name || '',
-			state: attrs.state,
-			tournamentType: attrs.tournament_type,
-			participants: attrs.participants_count || 0,
-			url: attrs.full_challonge_url,
-
-			// Schedule (v2.1 uses timestamps.starts_at or top-level starts_at)
-			startAt: attrs.timestamps?.starts_at || attrs.starts_at,
-			checkInDuration: regOpts.check_in_duration,
-
-			// Registration (from registration_options)
-			signupCap: regOpts.signup_cap,
-			openSignup: regOpts.open_signup || false,
-
-			// Format options
-			// v2.1 uses consolation_matches_target_rank in match_options (>= 3 = enabled)
-			holdThirdPlaceMatch: matchOpts.consolation_matches_target_rank != null && matchOpts.consolation_matches_target_rank >= 3,
-			// v2.1 uses double_elimination_options for grand_finals_modifier
-			grandFinalsModifier: doubleElimOpts.grand_finals_modifier || '',
-			sequentialPairings: seedOpts.sequential_pairings || false,
-			showRounds: attrs.show_rounds || false,
-			swissRounds: attrs.swiss_rounds || 0,
-
-			// Round Robin options
-			rankedBy: attrs.ranked_by || 'match wins',
-			rrIterations: attrs.rr_iterations || 1,
-			rrPtsForMatchWin: attrs.rr_pts_for_match_win || '1.0',
-			rrPtsForMatchTie: attrs.rr_pts_for_match_tie || '0.5',
-			rrPtsForGameWin: attrs.rr_pts_for_game_win || '0.0',
-			rrPtsForGameTie: attrs.rr_pts_for_game_tie || '0.0',
-
-			// Swiss options
-			ptsForMatchWin: attrs.pts_for_match_win || '1.0',
-			ptsForMatchTie: attrs.pts_for_match_tie || '0.5',
-			ptsForBye: attrs.pts_for_bye || '1.0',
-			ptsForGameWin: attrs.pts_for_game_win || '0.0',
-			ptsForGameTie: attrs.pts_for_game_tie || '0.0',
-
-			// Display options (from seeding_options)
-			hideSeeds: seedOpts.hide_seeds || false,
-			hideForum: attrs.hide_forum || false,
-			privateTournament: attrs.private || false,
-
-			// Match settings (from match_options)
-			acceptAttachments: matchOpts.accept_attachments || false,
-			// NOTE: quickAdvance is NOT supported by Challonge v2.1 API
-
-			// Notifications (from notifications)
-			notifyMatchOpen: notifyOpts.upon_matches_open || false,
-			notifyTournamentEnd: notifyOpts.upon_tournament_ends || false,
-
-			// Group Stage
-			groupStageEnabled: attrs.group_stage_enabled || false,
-			groupStageOptions: attrs.group_stage_options ? {
-				stageType: attrs.group_stage_options.stage_type,
-				groupSize: attrs.group_stage_options.group_size,
-				participantCountToAdvance: attrs.group_stage_options.participant_count_to_advance_per_group,
-				rankedBy: attrs.group_stage_options.ranked_by
-			} : null
-		};
-	};
-
-	try {
-		// Use cache with stale-while-revalidate pattern
-		const { data: tournament, _cache } = await cacheDb.getCachedOrFetch(
-			'tournamentDetails',
-			tournamentId,
-			fetchTournamentFromAPI
-		);
-
-		res.json({
-			success: true,
-			tournament,
-			_cache
-		});
-	} catch (error) {
-		console.error('Get tournament error:', error.message);
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: 'Failed to get tournament details',
-			details: error.response?.data || error.message
-		});
-	}
-});
-
-// Update a tournament (v2.1 API)
-app.put('/api/tournament/:tournamentId', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	const {
-		// Basic info
-		name,
-		description,
-		gameName,
-
-		// Schedule
-		startAt,
-		checkInDuration,
-
-		// Registration
-		signupCap,
-		openSignup,
-
-		// Format options
-		holdThirdPlaceMatch,
-		grandFinalsModifier,
-		sequentialPairings,
-		showRounds,
-		swissRounds,
-
-		// Round Robin options
-		rankedBy,
-		rrPtsForMatchWin,
-		rrPtsForMatchTie,
-		rrPtsForGameWin,
-		rrPtsForGameTie,
-
-		// Swiss options
-		ptsForMatchWin,
-		ptsForMatchTie,
-		ptsForBye,
-		ptsForGameWin,
-		ptsForGameTie,
-
-		// Display options
-		hideSeeds,
-		hideForum,
-		privateTournament,
-
-		// Match settings
-		acceptAttachments,
-		// Note: quickAdvance is NOT supported by Challonge v2.1 API
-
-		// Notifications
-		notifyMatchOpen,
-		notifyTournamentEnd,
-
-		// Group Stage
-		groupStageEnabled,
-		groupStageOptions
-	} = req.body;
-
-	// Validation
-	if (name !== undefined && (!name || !name.trim())) {
-		return res.status(400).json({
-			success: false,
-			error: 'Tournament name cannot be empty'
-		});
-	}
-
-	if (name && name.length > 60) {
-		return res.status(400).json({
-			success: false,
-			error: 'Tournament name must be 60 characters or less'
-		});
-	}
-
-	try {
-		// Build update params - only include fields that were provided
-		// v2.1 API requires nested option objects
-		const tournamentParams = {};
-
-		// Top-level fields
-		if (name !== undefined) {
-			tournamentParams.name = name.trim();
-		}
-
-		if (description !== undefined) {
-			tournamentParams.description = description;
-		}
-
-		if (gameName !== undefined) {
-			tournamentParams.game_name = gameName || null;
-		}
-
-		// Note: v2.1 uses "starts_at" (with 's'), not "start_at"
-		// IMPORTANT: Challonge v2.1 rejects starts_at: null with 422 error
-		// Only send starts_at if it has a valid value (to change date) - omit to keep existing
-		console.log(`[Tournament Update] Client sent startAt:`, startAt, `(type: ${typeof startAt})`);
-		if (startAt !== undefined && startAt) {
-			const startDate = new Date(startAt);
-			if (!isNaN(startDate.getTime())) {
-				tournamentParams.starts_at = startDate.toISOString();
-				console.log(`[Tournament Update] Converted startAt: ${startAt} -> ${tournamentParams.starts_at}`);
-			} else {
-				console.log(`[Tournament Update] Invalid date, not sending starts_at`);
-			}
-		} else {
-			console.log(`[Tournament Update] startAt is empty/undefined, not sending starts_at (preserves existing)`);
-		}
-		// Note: To clear a start date, user must do it directly on Challonge (API doesn't support null)
-
-		if (privateTournament !== undefined) {
-			tournamentParams.private = !!privateTournament;
-		}
-
-		if (hideForum !== undefined) {
-			tournamentParams.hide_forum = !!hideForum;
-		}
-
-		// Format-specific fields are handled in nested options below
-		// showRounds remains at top level in v2.1
-		if (showRounds !== undefined) {
-			tournamentParams.show_rounds = !!showRounds;
-		}
-
-		if (swissRounds !== undefined && swissRounds !== null) {
-			tournamentParams.swiss_rounds = parseInt(swissRounds) || 0;
-		}
-
-		// Round Robin options (top-level)
-		if (rankedBy !== undefined) {
-			tournamentParams.ranked_by = rankedBy || 'match wins';
-		}
-
-		if (rrPtsForMatchWin !== undefined) {
-			tournamentParams.rr_pts_for_match_win = parseFloat(rrPtsForMatchWin) || 1.0;
-		}
-
-		if (rrPtsForMatchTie !== undefined) {
-			tournamentParams.rr_pts_for_match_tie = parseFloat(rrPtsForMatchTie) || 0.5;
-		}
-
-		if (rrPtsForGameWin !== undefined) {
-			tournamentParams.rr_pts_for_game_win = parseFloat(rrPtsForGameWin) || 0.0;
-		}
-
-		if (rrPtsForGameTie !== undefined) {
-			tournamentParams.rr_pts_for_game_tie = parseFloat(rrPtsForGameTie) || 0.0;
-		}
-
-		// Swiss options (top-level)
-		if (ptsForMatchWin !== undefined) {
-			tournamentParams.pts_for_match_win = parseFloat(ptsForMatchWin) || 1.0;
-		}
-
-		if (ptsForMatchTie !== undefined) {
-			tournamentParams.pts_for_match_tie = parseFloat(ptsForMatchTie) || 0.5;
-		}
-
-		if (ptsForBye !== undefined) {
-			tournamentParams.pts_for_bye = parseFloat(ptsForBye) || 1.0;
-		}
-
-		if (ptsForGameWin !== undefined) {
-			tournamentParams.pts_for_game_win = parseFloat(ptsForGameWin) || 0.0;
-		}
-
-		if (ptsForGameTie !== undefined) {
-			tournamentParams.pts_for_game_tie = parseFloat(ptsForGameTie) || 0.0;
-		}
-
-		// NOTE: quick_advance is NOT supported by Challonge v2.1 API (removed)
-
-		// v2.1 nested option objects
-		// Registration options - only include fields with actual values (v2.1 rejects null for integers)
-		const registrationOptions = {};
-		if (checkInDuration !== undefined && checkInDuration !== null && checkInDuration !== '') {
-			registrationOptions.check_in_duration = parseInt(checkInDuration);
-		}
-		if (signupCap !== undefined && signupCap !== null && signupCap !== '') {
-			registrationOptions.signup_cap = parseInt(signupCap);
-		}
-		if (openSignup !== undefined) {
-			registrationOptions.open_signup = !!openSignup;
-		}
-		if (Object.keys(registrationOptions).length > 0) {
-			tournamentParams.registration_options = registrationOptions;
-		}
-
-		// Seeding options
-		const seedingOptions = {};
-		if (hideSeeds !== undefined) {
-			seedingOptions.hide_seeds = !!hideSeeds;
-		}
-		if (sequentialPairings !== undefined) {
-			seedingOptions.sequential_pairings = !!sequentialPairings;
-		}
-		if (Object.keys(seedingOptions).length > 0) {
-			tournamentParams.seeding_options = seedingOptions;
-		}
-
-		// Match options
-		const matchOptions = {};
-		if (acceptAttachments !== undefined) {
-			matchOptions.accept_attachments = !!acceptAttachments;
-		}
-		// NOTE: quick_advance is NOT supported by Challonge v2.1 API (removed)
-		// v2.1 uses consolation_matches_target_rank instead of hold_third_place_match
-		// Setting to 3 enables 3rd place match
-		// To disable, we need to send an empty match_options or exclude the field (API rejects null/0)
-		if (holdThirdPlaceMatch !== undefined) {
-			if (holdThirdPlaceMatch) {
-				matchOptions.consolation_matches_target_rank = 3;
-			}
-			// If false, we still send match_options but without consolation_matches_target_rank
-			// This will reset it to null on Challonge's side
-		}
-		// Always send match_options if holdThirdPlaceMatch was provided (even if empty, to reset)
-		if (Object.keys(matchOptions).length > 0 || holdThirdPlaceMatch !== undefined) {
-			tournamentParams.match_options = matchOptions;
-		}
-
-		// Double elimination options
-		if (grandFinalsModifier !== undefined) {
-			tournamentParams.double_elimination_options = {
-				grand_finals_modifier: grandFinalsModifier || null
-			};
-		}
-
-		// Notifications
-		// NOTE: Challonge API ignores notification setting updates (they stay at current values)
-		// Users must change notification settings directly on Challonge website
-		// We still send the values for completeness, but they won't take effect
-		const notifications = {};
-		if (notifyMatchOpen !== undefined) {
-			notifications.upon_matches_open = !!notifyMatchOpen;
-		}
-		if (notifyTournamentEnd !== undefined) {
-			notifications.upon_tournament_ends = !!notifyTournamentEnd;
-		}
-		if (Object.keys(notifications).length > 0) {
-			tournamentParams.notifications = notifications;
-		}
-
-		// Group Stage
-		if (groupStageEnabled !== undefined) {
-			tournamentParams.group_stage_enabled = !!groupStageEnabled;
-
-			if (groupStageEnabled && groupStageOptions) {
-				tournamentParams.group_stage_options = {
-					stage_type: groupStageOptions.stageType || 'round robin',
-					group_size: parseInt(groupStageOptions.groupSize) || 4,
-					participant_count_to_advance_per_group: parseInt(groupStageOptions.participantCountToAdvance) || 2,
-					ranked_by: groupStageOptions.rankedBy || 'match wins'
-				};
-			}
-		}
-
-		console.log(`[Tournament Update] Updating tournament ${tournamentId}:`, JSON.stringify(tournamentParams, null, 2));
-
-		// Build v2.1 JSON:API payload
-		const v2Payload = {
-			data: {
-				type: 'tournaments',
-				attributes: tournamentParams
-			}
-		};
-
-		console.log('[Tournament Update] Sending payload to Challonge:', JSON.stringify(v2Payload, null, 2));
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}.json`, v2Payload);
-
-		// Debug: Log what Challonge returns
-		const responseAttrs = response.data.data.attributes;
-		console.log('[Tournament Update] Challonge response starts_at:', responseAttrs.starts_at);
-		console.log('[Tournament Update] Challonge response timestamps.starts_at:', responseAttrs.timestamps?.starts_at);
-		console.log('[Tournament Update] Challonge response match_options:', JSON.stringify(responseAttrs.match_options));
-
-		const tournamentData = response.data.data;
-		const t = tournamentData.attributes;
-
-		// v2.1 returns nested option objects
-		const regOpts = t.registration_options || {};
-		const seedOpts = t.seeding_options || {};
-		const matchOpts = t.match_options || {};
-		const notifyOpts = t.notifications || {};
-		const doubleElimOpts = t.double_elimination_options || {};
-
-		// Invalidate tournament details cache
-		cacheDb.invalidateCache('tournamentDetails', tournamentId);
-		cacheDb.invalidateCache('tournaments', 'list');
-
-		res.json({
-			success: true,
-			message: 'Tournament updated successfully',
-			tournament: {
-				// Basic info
-				id: parseInt(tournamentData.id),
-				tournamentId: t.url,
-				name: t.name,
-				description: t.description || '',
-				game: t.game_name || '',
-				state: t.state,
-				tournamentType: t.tournament_type,
-				participants: t.participants_count || 0,
-				url: t.full_challonge_url,
-
-				// Schedule (v2.1 uses timestamps.starts_at or top-level starts_at)
-				startAt: t.timestamps?.starts_at || t.starts_at,
-				checkInDuration: regOpts.check_in_duration,
-
-				// Registration (from registration_options)
-				signupCap: regOpts.signup_cap,
-				openSignup: regOpts.open_signup || false,
-
-				// Format options
-				// v2.1 uses consolation_matches_target_rank in match_options (>= 3 = enabled)
-				holdThirdPlaceMatch: matchOpts.consolation_matches_target_rank != null && matchOpts.consolation_matches_target_rank >= 3,
-				// v2.1 uses double_elimination_options for grand_finals_modifier
-				grandFinalsModifier: doubleElimOpts.grand_finals_modifier || '',
-				sequentialPairings: seedOpts.sequential_pairings || false,
-				showRounds: t.show_rounds || false,
-				swissRounds: t.swiss_rounds || 0,
-
-				// Round Robin options
-				rankedBy: t.ranked_by || 'match wins',
-				rrPtsForMatchWin: t.rr_pts_for_match_win || '1.0',
-				rrPtsForMatchTie: t.rr_pts_for_match_tie || '0.5',
-				rrPtsForGameWin: t.rr_pts_for_game_win || '0.0',
-				rrPtsForGameTie: t.rr_pts_for_game_tie || '0.0',
-
-				// Swiss options
-				ptsForMatchWin: t.pts_for_match_win || '1.0',
-				ptsForMatchTie: t.pts_for_match_tie || '0.5',
-				ptsForBye: t.pts_for_bye || '1.0',
-				ptsForGameWin: t.pts_for_game_win || '0.0',
-				ptsForGameTie: t.pts_for_game_tie || '0.0',
-
-				// Display options (from seeding_options)
-				hideSeeds: seedOpts.hide_seeds || false,
-				hideForum: t.hide_forum || false,
-				privateTournament: t.private || false,
-
-				// Match settings (from match_options)
-				acceptAttachments: matchOpts.accept_attachments || false,
-				// NOTE: quickAdvance is NOT supported by Challonge v2.1 API
-
-				// Notifications (from notifications)
-				notifyMatchOpen: notifyOpts.upon_matches_open || false,
-				notifyTournamentEnd: notifyOpts.upon_tournament_ends || false,
-
-				// Group Stage
-				groupStageEnabled: t.group_stage_enabled || false,
-				groupStageOptions: t.group_stage_options ? {
-					stageType: t.group_stage_options.stage_type,
-					groupSize: t.group_stage_options.group_size,
-					participantCountToAdvance: t.group_stage_options.participant_count_to_advance_per_group,
-					rankedBy: t.group_stage_options.ranked_by
-				} : null
-			}
-		});
-	} catch (error) {
-		console.error('Update tournament error:', error.message);
-		console.error('Error response:', JSON.stringify(error.response?.data, null, 2));
-
-		let errorMessage = 'Failed to update tournament';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.join(', ');
-			} else if (typeof errors === 'object') {
-				errorMessage = Object.entries(errors)
-					.map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
-					.join('; ');
-			}
-		} else if (error.response?.status === 422) {
-			errorMessage = 'Invalid tournament data';
-		} else if (error.response?.status === 401) {
-			errorMessage = 'Unauthorized - check API key';
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response?.data || error.message
-		});
-	}
-});
-
-// Start a tournament (v2.1 API)
-app.post('/api/tournament/:tournamentId/start', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		// First check tournament state and participant count
-		const checkResponse = await challongeV2Request('GET', `/tournaments/${tournamentId}.json`);
-		const tournamentData = checkResponse.data.data;
-		const attrs = tournamentData.attributes;
-
-		// Validate tournament can be started
-		if (attrs.state !== 'pending') {
-			return res.status(400).json({
-				success: false,
-				error: `Tournament cannot be started - current state is "${attrs.state}"`
-			});
-		}
-
-		if (attrs.participants_count < 2) {
-			return res.status(400).json({
-				success: false,
-				error: `Tournament needs at least 2 participants to start (currently has ${attrs.participants_count})`
-			});
-		}
-
-		// Now start the tournament via v2.1 change_state endpoint
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/change_state.json`, {
-			data: {
-				type: 'TournamentState',
-				attributes: {
-					state: 'start'
-				}
-			}
-		});
-
-		const startedData = response.data.data;
-		const startedAttrs = startedData.attributes;
-
-		// Invalidate all caches for this tournament
-		cacheDb.invalidateTournamentCaches(tournamentId);
-		cacheDb.invalidateCache('tournaments', 'list');
-
-		// Trigger immediate rate mode check to switch to ACTIVE mode and start match polling
-		// This prevents the 2-hour delay before the next scheduled check
-		setTimeout(() => {
-			console.log('[Tournament Start] Triggering rate mode check after tournament start');
-			checkTournamentsAndUpdateMode();
-		}, 500);
-
-		// Send push notification for tournament start
-		broadcastPushNotification('tournament_started', {
-			title: 'Tournament Started',
-			body: `${startedAttrs.name} has begun!`,
-			data: {
-				type: 'tournament_started',
-				tournamentId,
-				name: startedAttrs.name
-			}
-		}).catch(err => console.error('[Push] Tournament start notification error:', err.message));
-
-		res.json({
-			success: true,
-			message: 'Tournament started',
-			tournament: {
-				name: startedAttrs.name,
-				state: startedAttrs.state
-			}
-		});
-	} catch (error) {
-		console.error('Start tournament error:', error.message);
-
-		// Try to extract more helpful error message
-		let errorMessage = 'Failed to start tournament';
-		if (error.response?.data?.errors) {
-			const errors = error.response.data.errors;
-			if (Array.isArray(errors)) {
-				errorMessage = errors.map(e => e.detail || e.title || e).join(', ');
-			}
-		} else if (error.response?.status === 422) {
-			errorMessage = 'Tournament cannot be started - check that it has enough participants and is in pending state';
-		} else if (error.response?.status === 400) {
-			errorMessage = 'Invalid request - tournament may not have enough participants';
-		}
-
-		res.status(error.response?.status || 500).json({
-			success: false,
-			error: errorMessage,
-			details: error.response?.data || error.message
-		});
-	}
-});
-
-// Reset a tournament (v2.1 API)
-app.post('/api/tournament/:tournamentId/reset', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		// Use v2.1 change_state endpoint with reset action
-		const response = await challongeV2Request('PUT', `/tournaments/${tournamentId}/change_state.json`, {
-			data: {
-				type: 'TournamentState',
-				attributes: {
-					state: 'reset'
-				}
-			}
-		});
-
-		const resetData = response.data.data;
-		const attrs = resetData.attributes;
-
-		// Invalidate all caches for this tournament
-		cacheDb.invalidateTournamentCaches(tournamentId);
-		cacheDb.invalidateCache('tournaments', 'list');
-
-		// Trigger rate mode check - tournament reset means it's no longer ACTIVE
-		setTimeout(() => {
-			console.log('[Tournament Reset] Triggering rate mode check after tournament reset');
-			checkTournamentsAndUpdateMode();
-		}, 500);
-
-		res.json({
-			success: true,
-			message: 'Tournament reset',
-			tournament: {
-				name: attrs.name,
-				state: attrs.state
-			}
-		});
-	} catch (error) {
-		console.error('Reset tournament error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to reset tournament',
-			details: error.response ? error.response.data : error.message
-		});
-	}
-});
-
-// Delete a tournament (v2.1 API)
-app.delete('/api/tournament/:tournamentId', requireAuthAPI, async (req, res) => {
-	const { tournamentId } = req.params;
-
-	try {
-		await challongeV2Request('DELETE', `/tournaments/${tournamentId}.json`);
-
-		// Invalidate all caches for this tournament
-		cacheDb.invalidateTournamentCaches(tournamentId);
-		cacheDb.invalidateCache('tournaments', 'list');
-
-		res.json({
-			success: true,
-			message: 'Tournament deleted'
-		});
-	} catch (error) {
-		console.error('Delete tournament error:', error.message);
-		res.status(500).json({
-			success: false,
-			error: 'Failed to delete tournament',
-			details: error.response ? error.response.data : error.message
+			error: 'Failed to get participant stats',
+			details: error.message
 		});
 	}
 });
@@ -9962,6 +6338,18 @@ app.post('/api/displays/register', async (req, res) => {
 
 		saveDisplays(displaysData);
 
+		// Broadcast display registration via WebSocket
+		io.emit('display:registered', {
+			display: {
+				id: displayId,
+				hostname,
+				ip: display.ip,
+				currentView: display.currentView,
+				status: 'online'
+			}
+		});
+		io.emit('displays:update', { action: 'registered', displayId });
+
 		// Get view configuration
 		const viewConfig = displaysData.viewMappings[display.assignedView] || displaysData.viewMappings.match;
 
@@ -10038,6 +6426,19 @@ app.post('/api/displays/:id/heartbeat', async (req, res) => {
 		};
 
 		saveDisplays(displaysData);
+
+		// Broadcast if display came online
+		if (previousStatus === 'offline') {
+			io.emit('display:updated', {
+				display: {
+					id: display.id,
+					hostname: display.hostname,
+					status: 'online',
+					currentView: display.currentView
+				}
+			});
+			io.emit('displays:update', { action: 'online', displayId: id });
+		}
 
 		res.json({ success: true });
 	} catch (error) {
@@ -10963,6 +7364,36 @@ app.post('/api/activity/external', (req, res) => {
 	});
 });
 
+// GET /api/announcements/active - Get active platform announcements for banner display
+// Available to all authenticated users
+app.get('/api/announcements/active', requireAuthAPI, (req, res) => {
+	try {
+		const sysDb = systemDb.getDb();
+
+		const announcements = sysDb.prepare(`
+			SELECT id, message, type, created_at, expires_at
+			FROM platform_announcements
+			WHERE is_active = 1
+			  AND (expires_at IS NULL OR expires_at > datetime('now'))
+			ORDER BY
+				CASE type WHEN 'alert' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+				created_at DESC
+		`).all();
+
+		res.json({
+			success: true,
+			announcements
+		});
+	} catch (error) {
+		console.error('[Announcements] Error fetching active announcements:', error);
+		// Return empty array on error to not break the banner
+		res.json({
+			success: true,
+			announcements: []
+		});
+	}
+});
+
 // Change own password
 app.post('/api/settings/change-password', requireAuthAPI, async (req, res) => {
 	const { currentPassword, newPassword } = req.body;
@@ -11388,11 +7819,6 @@ app.post('/api/templates/from-tournament', requireAuthAPI, (req, res) => {
 
 // Initialize analytics database on startup
 analyticsDb.initDatabase();
-
-// Initialize local DB services for tcc-custom
-const tournamentDb = require('./services/tournament-db');
-const matchDb = require('./services/match-db');
-const participantDb = require('./services/participant-db');
 
 // Initialize AI seeding service with local DB
 aiSeedingService.init({
