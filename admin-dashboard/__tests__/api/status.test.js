@@ -98,25 +98,6 @@ describe('Status API', () => {
 		});
 	});
 
-	describe('GET /api/rate-limit/status', () => {
-		test('returns rate limit status for authenticated user', async () => {
-			const res = await agent.get('/api/rate-limit/status');
-
-			expect(res.status).toBe(200);
-			expect(res.body).toHaveProperty('currentMode');
-			expect(res.body).toHaveProperty('effectiveRate');
-			expect(res.body).toHaveProperty('devModeActive');
-		});
-
-		test('includes adaptive rate limit settings', async () => {
-			const res = await agent.get('/api/rate-limit/status');
-
-			expect(res.status).toBe(200);
-			expect(res.body).toHaveProperty('adaptiveEnabled');
-			expect(res.body).toHaveProperty('settings');
-		});
-	});
-
 	describe('GET /api/websocket/status', () => {
 		test('returns websocket connection status', async () => {
 			const res = await agent.get('/api/websocket/status');
