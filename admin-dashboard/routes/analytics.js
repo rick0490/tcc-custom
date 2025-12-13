@@ -8,6 +8,9 @@
 const express = require('express');
 const router = express.Router();
 const PDFDocument = require('pdfkit');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:analytics');
 
 // Module dependencies (injected via init)
 let analyticsDb = null;
@@ -54,7 +57,7 @@ router.get('/games', async (req, res) => {
 			const games = analyticsDb.getAllGames();
 			res.json({ success: true, games });
 		} catch (error) {
-			console.error('Error fetching games:', error);
+			logger.error('games:list', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -62,15 +65,19 @@ router.get('/games', async (req, res) => {
 
 /**
  * GET /stats/overview
- * Get overview statistics
+ * Get overview statistics (filtered by user)
  */
 router.get('/stats/overview', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
-			const stats = analyticsDb.getOverviewStats();
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
+			const stats = analyticsDb.getOverviewStats(userId);
 			res.json({ success: true, ...stats });
 		} catch (error) {
-			console.error('Error fetching overview stats:', error);
+			logger.error('stats:overview', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -78,19 +85,24 @@ router.get('/stats/overview', async (req, res) => {
 
 /**
  * GET /stats/attendance
- * Get attendance statistics
+ * Get attendance statistics (filtered by user)
  */
 router.get('/stats/attendance', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { game: gameId, months = 6 } = req.query;
 			const stats = analyticsDb.getAttendanceStats(
+				userId,
 				gameId ? parseInt(gameId) : null,
 				parseInt(months)
 			);
 			res.json({ success: true, ...stats });
 		} catch (error) {
-			console.error('Error fetching attendance stats:', error);
+			logger.error('stats:attendance', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -98,15 +110,20 @@ router.get('/stats/attendance', async (req, res) => {
 
 /**
  * GET /rankings/:gameId
- * Get player rankings for a game
+ * Get player rankings for a game (filtered by user)
  */
 router.get('/rankings/:gameId', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { gameId } = req.params;
 			const { limit = 50, offset = 0, sortBy = 'elo' } = req.query;
 
 			const rankings = analyticsDb.getPlayerRankings(parseInt(gameId), {
+				userId,
 				limit: parseInt(limit),
 				offset: parseInt(offset),
 				sortBy
@@ -114,7 +131,7 @@ router.get('/rankings/:gameId', async (req, res) => {
 
 			res.json({ success: true, rankings });
 		} catch (error) {
-			console.error('Error fetching rankings:', error);
+			logger.error('rankings:get', error, { gameId: req.params.gameId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -122,11 +139,15 @@ router.get('/rankings/:gameId', async (req, res) => {
 
 /**
  * GET /players
- * Search players
+ * Search players (filtered by user)
  */
 router.get('/players', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { search = '', game: gameId, limit = 20 } = req.query;
 
 			if (!search) {
@@ -135,13 +156,14 @@ router.get('/players', async (req, res) => {
 
 			const players = analyticsDb.searchPlayers(
 				search,
+				userId,
 				gameId ? parseInt(gameId) : null,
 				parseInt(limit)
 			);
 
 			res.json({ success: true, players });
 		} catch (error) {
-			console.error('Error searching players:', error);
+			logger.error('players:search', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -149,15 +171,19 @@ router.get('/players', async (req, res) => {
 
 /**
  * GET /players/unmatched
- * Get unmatched players queue
+ * Get unmatched players queue (filtered by user)
  */
 router.get('/players/unmatched', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
-			const unmatched = analyticsDb.getUnmatchedPlayers();
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
+			const unmatched = analyticsDb.getUnmatchedPlayers(userId);
 			res.json({ success: true, unmatched });
 		} catch (error) {
-			console.error('Error fetching unmatched players:', error);
+			logger.error('players:unmatched', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -165,13 +191,17 @@ router.get('/players/unmatched', async (req, res) => {
 
 /**
  * GET /players/:playerId
- * Get player profile
+ * Get player profile (filtered by user)
  */
 router.get('/players/:playerId', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { playerId } = req.params;
-			const profile = analyticsDb.getPlayerProfile(parseInt(playerId));
+			const profile = analyticsDb.getPlayerProfile(parseInt(playerId), userId);
 
 			if (!profile) {
 				return res.status(404).json({ success: false, error: 'Player not found' });
@@ -179,7 +209,7 @@ router.get('/players/:playerId', async (req, res) => {
 
 			res.json({ success: true, ...profile });
 		} catch (error) {
-			console.error('Error fetching player profile:', error);
+			logger.error('players:profile', error, { playerId: req.params.playerId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -187,23 +217,28 @@ router.get('/players/:playerId', async (req, res) => {
 
 /**
  * GET /players/:player1Id/head-to-head/:player2Id
- * Get head-to-head record
+ * Get head-to-head record (filtered by user)
  */
 router.get('/players/:player1Id/head-to-head/:player2Id', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { player1Id, player2Id } = req.params;
 			const { game: gameId } = req.query;
 
 			const h2h = analyticsDb.getHeadToHead(
 				parseInt(player1Id),
 				parseInt(player2Id),
+				userId,
 				gameId ? parseInt(gameId) : null
 			);
 
 			res.json({ success: true, ...h2h });
 		} catch (error) {
-			console.error('Error fetching head-to-head:', error);
+			logger.error('players:headToHead', error, { player1Id: req.params.player1Id, player2Id: req.params.player2Id });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -211,11 +246,15 @@ router.get('/players/:player1Id/head-to-head/:player2Id', async (req, res) => {
 
 /**
  * PUT /players/:playerId/alias
- * Add alias to player
+ * Add alias to player (scoped to user)
  */
 router.put('/players/:playerId/alias', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { playerId } = req.params;
 			const { alias } = req.body;
 
@@ -223,7 +262,7 @@ router.put('/players/:playerId/alias', async (req, res) => {
 				return res.status(400).json({ success: false, error: 'Alias is required' });
 			}
 
-			const success = analyticsDb.addPlayerAlias(parseInt(playerId), alias);
+			const success = analyticsDb.addPlayerAlias(parseInt(playerId), alias, userId);
 
 			if (success && logActivity) {
 				logActivity('player_alias_added', req.session?.username || 'system', { playerId, alias });
@@ -231,7 +270,7 @@ router.put('/players/:playerId/alias', async (req, res) => {
 
 			res.json({ success });
 		} catch (error) {
-			console.error('Error adding alias:', error);
+			logger.error('players:alias', error, { playerId: req.params.playerId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -239,19 +278,23 @@ router.put('/players/:playerId/alias', async (req, res) => {
 
 /**
  * POST /players/merge
- * Merge players (admin only)
+ * Merge players (admin only, scoped to user)
  */
 router.post('/players/merge', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		requireAdmin(req, res, async () => {
 			try {
+				const userId = req.session?.userId;
+				if (!userId) {
+					return res.status(401).json({ success: false, error: 'User not authenticated' });
+				}
 				const { sourcePlayerId, targetPlayerId } = req.body;
 
 				if (!sourcePlayerId || !targetPlayerId) {
 					return res.status(400).json({ success: false, error: 'Both player IDs are required' });
 				}
 
-				analyticsDb.mergePlayers(parseInt(sourcePlayerId), parseInt(targetPlayerId));
+				analyticsDb.mergePlayers(parseInt(sourcePlayerId), parseInt(targetPlayerId), userId);
 
 				if (logActivity) {
 					logActivity('players_merged', req.session?.username || 'system', { sourcePlayerId, targetPlayerId });
@@ -259,7 +302,7 @@ router.post('/players/merge', async (req, res) => {
 
 				res.json({ success: true });
 			} catch (error) {
-				console.error('Error merging players:', error);
+				logger.error('players:merge', error, { sourcePlayerId: req.body.sourcePlayerId, targetPlayerId: req.body.targetPlayerId });
 				res.status(500).json({ success: false, error: error.message });
 			}
 		});
@@ -268,21 +311,25 @@ router.post('/players/merge', async (req, res) => {
 
 /**
  * POST /players/unmatched/:id/resolve
- * Resolve unmatched player
+ * Resolve unmatched player (scoped to user)
  */
 router.post('/players/unmatched/:id/resolve', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { id } = req.params;
 			const { playerId, createNew, newPlayerName } = req.body;
 
 			let resolvedPlayerId = playerId;
 
 			if (createNew && newPlayerName) {
-				resolvedPlayerId = analyticsDb.createPlayer(newPlayerName);
+				resolvedPlayerId = analyticsDb.createPlayer(newPlayerName, userId);
 			}
 
-			analyticsDb.resolveUnmatchedPlayer(parseInt(id), resolvedPlayerId ? parseInt(resolvedPlayerId) : null);
+			analyticsDb.resolveUnmatchedPlayer(parseInt(id), resolvedPlayerId ? parseInt(resolvedPlayerId) : null, userId);
 
 			if (logActivity) {
 				logActivity('unmatched_player_resolved', req.session?.username || 'system', { unmatchedId: id, playerId: resolvedPlayerId });
@@ -290,7 +337,7 @@ router.post('/players/unmatched/:id/resolve', async (req, res) => {
 
 			res.json({ success: true });
 		} catch (error) {
-			console.error('Error resolving unmatched player:', error);
+			logger.error('players:resolveUnmatched', error, { unmatchedId: req.params.id });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -298,14 +345,19 @@ router.post('/players/unmatched/:id/resolve', async (req, res) => {
 
 /**
  * GET /tournaments
- * Get archived tournaments
+ * Get archived tournaments (filtered by user)
  */
 router.get('/tournaments', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { game: gameId, limit = 50, offset = 0 } = req.query;
 
 			const tournaments = analyticsDb.getArchivedTournaments({
+				userId,
 				gameId: gameId ? parseInt(gameId) : null,
 				limit: parseInt(limit),
 				offset: parseInt(offset)
@@ -313,7 +365,7 @@ router.get('/tournaments', async (req, res) => {
 
 			res.json({ success: true, tournaments });
 		} catch (error) {
-			console.error('Error fetching archived tournaments:', error);
+			logger.error('tournaments:list', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -321,13 +373,17 @@ router.get('/tournaments', async (req, res) => {
 
 /**
  * GET /tournaments/:tournamentId
- * Get tournament details
+ * Get tournament details (filtered by user)
  */
 router.get('/tournaments/:tournamentId', async (req, res) => {
 	requireAuthAPI(req, res, () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { tournamentId } = req.params;
-			const data = analyticsDb.getTournamentById(parseInt(tournamentId));
+			const data = analyticsDb.getTournamentById(parseInt(tournamentId), userId);
 
 			if (!data) {
 				return res.status(404).json({ success: false, error: 'Tournament not found' });
@@ -335,7 +391,7 @@ router.get('/tournaments/:tournamentId', async (req, res) => {
 
 			res.json({ success: true, ...data });
 		} catch (error) {
-			console.error('Error fetching tournament details:', error);
+			logger.error('tournaments:get', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -343,11 +399,16 @@ router.get('/tournaments/:tournamentId', async (req, res) => {
 
 /**
  * GET /archive/status
- * Get archive status (which tournaments are archived vs not)
+ * Get archive status (which tournaments are archived vs not, filtered by user)
  */
 router.get('/archive/status', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
+
 			// Fetch completed tournaments from Challonge v2.1
 			const response = await challongeApi.challongeV2Request('GET', '/tournaments.json?page_size=100&state=complete');
 			const tournamentsData = response.data?.data || [];
@@ -365,12 +426,12 @@ router.get('/archive/status', async (req, res) => {
 					participantCount: t.attributes.participants_count
 				}));
 
-			// Check which are archived
+			// Check which are archived (scoped to user)
 			const archived = [];
 			const unarchived = [];
 
 			for (const t of challongeTournaments) {
-				if (analyticsDb.isTournamentArchived(t.url)) {
+				if (analyticsDb.isTournamentArchived(t.url, userId)) {
 					archived.push(t);
 				} else {
 					unarchived.push(t);
@@ -379,7 +440,7 @@ router.get('/archive/status', async (req, res) => {
 
 			res.json({ success: true, archived, unarchived });
 		} catch (error) {
-			console.error('Error fetching archive status:', error);
+			logger.error('archive:status', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -387,15 +448,19 @@ router.get('/archive/status', async (req, res) => {
 
 /**
  * POST /archive/:tournamentId
- * Archive a tournament
+ * Archive a tournament (scoped to user)
  */
 router.post('/archive/:tournamentId', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { tournamentId } = req.params; // Challonge URL slug
 
-			// Check if already archived
-			if (analyticsDb.isTournamentArchived(tournamentId)) {
+			// Check if already archived (scoped to user)
+			if (analyticsDb.isTournamentArchived(tournamentId, userId)) {
 				return res.status(400).json({ success: false, error: 'Tournament already archived' });
 			}
 
@@ -462,13 +527,13 @@ router.post('/archive/:tournamentId', async (req, res) => {
 			// Get or create game
 			const game = analyticsDb.getOrCreateGame(tournament.game_name || 'Unknown');
 
-			// Map Challonge participant IDs to our player IDs
+			// Map Challonge participant IDs to our player IDs (scoped to user)
 			const participantToPlayerMap = {};
 			const unmatchedParticipants = [];
 
 			for (const participant of participants) {
 				const name = participant.name || participant.display_name;
-				const match = analyticsDb.findPlayerByName(name);
+				const match = analyticsDb.findPlayerByName(name, userId);
 
 				if (match && match.matchType !== 'suggestion') {
 					participantToPlayerMap[participant.id] = match.player.id;
@@ -476,6 +541,7 @@ router.post('/archive/:tournamentId', async (req, res) => {
 					// Create new player but queue for potential manual merge
 					const newPlayerId = analyticsDb.createPlayer(
 						name,
+						userId,
 						participant.invite_email,
 						participant.challonge_username,
 						participant.misc?.includes('Instagram:') ? participant.misc.replace('Instagram:', '').trim() : null
@@ -491,6 +557,7 @@ router.post('/archive/:tournamentId', async (req, res) => {
 					// Create new player
 					const newPlayerId = analyticsDb.createPlayer(
 						name,
+						userId,
 						participant.invite_email,
 						participant.challonge_username,
 						participant.misc?.includes('Instagram:') ? participant.misc.replace('Instagram:', '').trim() : null
@@ -499,8 +566,9 @@ router.post('/archive/:tournamentId', async (req, res) => {
 				}
 			}
 
-			// Archive tournament
+			// Archive tournament (scoped to user)
 			const dbTournamentId = analyticsDb.archiveTournament({
+				userId,
 				challongeId: tournament.id,
 				challongeUrl: tournament.url,
 				name: tournament.name,
@@ -551,13 +619,13 @@ router.post('/archive/:tournamentId', async (req, res) => {
 				});
 			}
 
-			// Queue unmatched for review
+			// Queue unmatched for review (scoped to user)
 			for (const um of unmatchedParticipants) {
-				analyticsDb.addUnmatchedPlayer(dbTournamentId, um.name, um.suggestedMerge, 1 - (um.distance / 10));
+				analyticsDb.addUnmatchedPlayer(dbTournamentId, um.name, um.suggestedMerge, 1 - (um.distance / 10), userId);
 			}
 
-			// Update Elo ratings
-			analyticsDb.updateEloRatings(dbTournamentId, game.id);
+			// Update Elo ratings (scoped to user)
+			analyticsDb.updateEloRatings(dbTournamentId, game.id, userId);
 
 			if (logActivity) {
 				logActivity('tournament_archived', req.session?.username || 'system', {
@@ -579,7 +647,7 @@ router.post('/archive/:tournamentId', async (req, res) => {
 				}
 			});
 		} catch (error) {
-			console.error('Error archiving tournament:', error);
+			logger.error('archive:tournament', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -638,7 +706,7 @@ router.get('/upcoming-tournaments', async (req, res) => {
 
 			res.json({ success: true, tournaments });
 		} catch (error) {
-			console.error('Error fetching upcoming tournaments:', error);
+			logger.error('upcomingTournaments', error);
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -646,11 +714,15 @@ router.get('/upcoming-tournaments', async (req, res) => {
 
 /**
  * GET /seeding-suggestions/:tournamentId
- * Get seeding suggestions based on Elo rankings
+ * Get seeding suggestions based on Elo rankings (scoped to user)
  */
 router.get('/seeding-suggestions/:tournamentId', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session?.userId;
+			if (!userId) {
+				return res.status(401).json({ success: false, error: 'User not authenticated' });
+			}
 			const { tournamentId } = req.params;
 
 			// Fetch tournament info using v2.1
@@ -679,11 +751,11 @@ router.get('/seeding-suggestions/:tournamentId', async (req, res) => {
 			const gameName = tournament.game_name;
 			const game = gameName ? analyticsDb.getOrCreateGame(gameName) : null;
 
-			// Match participants to player records and get Elo
+			// Match participants to player records and get Elo (scoped to user)
 			const suggestions = [];
 			for (const participant of participants) {
 				const name = participant.name || participant.display_name;
-				const playerMatch = analyticsDb.findPlayerByName(name);
+				const playerMatch = analyticsDb.findPlayerByName(name, userId);
 
 				let elo = null;
 				let playerId = null;
@@ -693,14 +765,14 @@ router.get('/seeding-suggestions/:tournamentId', async (req, res) => {
 					playerId = playerMatch.player.id;
 					matchType = playerMatch.matchType;
 
-					// Get Elo for this game
+					// Get Elo for this game (scoped to user)
 					if (game) {
 						const db = analyticsDb.getDb();
 						const rating = db.prepare(`
 							SELECT elo_rating, matches_played, wins, losses
 							FROM player_ratings
-							WHERE player_id = ? AND game_id = ?
-						`).get(playerId, game.id);
+							WHERE player_id = ? AND game_id = ? AND user_id = ?
+						`).get(playerId, game.id, userId);
 
 						if (rating) {
 							elo = rating.elo_rating;
@@ -747,7 +819,7 @@ router.get('/seeding-suggestions/:tournamentId', async (req, res) => {
 				timestamp: new Date().toISOString()
 			});
 		} catch (error) {
-			console.error('Error getting seeding suggestions:', error);
+			logger.error('seedingSuggestions', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -798,7 +870,7 @@ router.post('/apply-seeding/:tournamentId', async (req, res) => {
 				failed: results.filter(r => !r.success).length
 			});
 		} catch (error) {
-			console.error('Error applying seeding:', error);
+			logger.error('applySeeding', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -816,7 +888,7 @@ function getAISeedingService() {
 		try {
 			aiSeedingService = require('../services/ai-seeding');
 		} catch (e) {
-			console.error('[Analytics Routes] AI seeding service not available:', e.message);
+			logger.warn('aiSeeding:unavailable', { error: e.message });
 		}
 	}
 	return aiSeedingService;
@@ -872,7 +944,7 @@ router.get('/ai-seeding/:tournamentId', async (req, res) => {
 
 			res.json(result);
 		} catch (error) {
-			console.error('Error getting AI seeding:', error);
+			logger.error('aiSeeding:get', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -919,7 +991,7 @@ router.post('/ai-seeding/:tournamentId/lock', async (req, res) => {
 				message: `${lockedSeeds.length} seed position(s) locked`
 			});
 		} catch (error) {
-			console.error('Error locking seeds:', error);
+			logger.error('aiSeeding:lock', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -979,7 +1051,7 @@ router.post('/ai-seeding/:tournamentId/apply', async (req, res) => {
 				message: `Applied ${applied} seeds${failed > 0 ? `, ${failed} failed` : ''}`
 			});
 		} catch (error) {
-			console.error('Error applying AI seeding:', error);
+			logger.error('aiSeeding:apply', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});

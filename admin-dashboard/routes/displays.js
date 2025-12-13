@@ -10,14 +10,53 @@ const router = express.Router();
 const path = require('path');
 const fsSync = require('fs');
 const { ACTIVITY_TYPES } = require('../constants');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:displays');
 
 // Dependencies injected via init()
 let activityLogger = null;
 let matchPolling = null;
 let pushNotifications = null;
+let io = null;
 
 // Displays file path
 const DISPLAYS_FILE = path.join(__dirname, '..', 'displays.json');
+
+// WebSocket event types
+const WS_EVENTS = {
+	DISPLAY_REGISTERED: 'display:registered',
+	DISPLAY_UPDATED: 'display:updated',
+	DISPLAY_OFFLINE: 'display:offline'
+};
+
+/**
+ * Broadcast display event via WebSocket
+ */
+function broadcastDisplay(eventType, data = {}) {
+	if (io) {
+		io.emit(eventType, data);
+		io.emit('displays:update', { action: eventType, ...data });
+	}
+}
+
+/**
+ * Verify display ownership for multi-tenant isolation
+ * @param {string} displayId - Display ID to check
+ * @param {number} userId - User ID from session
+ * @param {object} displaysData - Loaded displays data
+ * @returns {object} - { display } on success, { error, status } on failure
+ */
+function verifyDisplayOwnership(displayId, userId, displaysData) {
+	const display = displaysData.displays.find(d => d.id === displayId);
+	if (!display) {
+		return { error: 'Display not found', status: 404 };
+	}
+	if (display.userId !== userId) {
+		return { error: 'Access denied', status: 403 };
+	}
+	return { display };
+}
 
 /**
  * Initialize displays routes with dependencies
@@ -26,6 +65,7 @@ function init(deps) {
 	activityLogger = deps.activityLogger;
 	matchPolling = deps.matchPolling;
 	pushNotifications = deps.pushNotifications;
+	io = deps.io;
 }
 
 // Load displays from file
@@ -34,7 +74,7 @@ function loadDisplays() {
 		const data = fsSync.readFileSync(DISPLAYS_FILE, 'utf8');
 		return JSON.parse(data);
 	} catch (error) {
-		console.error('Error loading displays:', error);
+		logger.error('loadDisplays', error);
 		return { displays: [], viewMappings: {} };
 	}
 }
@@ -45,7 +85,7 @@ function saveDisplays(displaysData) {
 		fsSync.writeFileSync(DISPLAYS_FILE, JSON.stringify(displaysData, null, 2));
 		return true;
 	} catch (error) {
-		console.error('Error saving displays:', error);
+		logger.error('saveDisplays', error);
 		return false;
 	}
 }
@@ -55,7 +95,7 @@ function saveDisplays(displaysData) {
 // No auth required - Pi's register automatically
 // ============================================
 router.post('/register', async (req, res) => {
-	const { hostname, mac, ip, currentView } = req.body;
+	const { hostname, mac, ip, currentView, userId } = req.body;
 
 	if (!hostname || !mac) {
 		return res.status(400).json({
@@ -77,6 +117,10 @@ router.post('/register', async (req, res) => {
 			display.currentView = currentView || display.currentView;
 			display.lastHeartbeat = new Date().toISOString();
 			display.status = 'online';
+			// Update userId if provided (allows re-assignment to different tenant)
+			if (userId) {
+				display.userId = parseInt(userId, 10);
+			}
 		} else {
 			// Create new display
 			display = {
@@ -95,12 +139,24 @@ router.post('/register', async (req, res) => {
 					memoryUsage: 0
 				},
 				debugMode: false,
-				debugLogs: []
+				debugLogs: [],
+				userId: userId ? parseInt(userId, 10) : null
 			};
 			displaysData.displays.push(display);
 		}
 
 		saveDisplays(displaysData);
+
+		// Broadcast registration
+		broadcastDisplay(WS_EVENTS.DISPLAY_REGISTERED, {
+			display: {
+				id: displayId,
+				hostname,
+				ip: display.ip,
+				currentView: display.currentView,
+				status: 'online'
+			}
+		});
 
 		const viewConfig = displaysData.viewMappings[display.assignedView] || displaysData.viewMappings.match;
 
@@ -125,7 +181,7 @@ router.post('/register', async (req, res) => {
 // ============================================
 router.post('/:id/heartbeat', async (req, res) => {
 	const { id } = req.params;
-	const { uptimeSeconds, cpuTemp, memoryUsage, currentView, wifiQuality, wifiSignal, ip, externalIp, ssid, voltage, mac, hostname } = req.body;
+	const { uptimeSeconds, cpuTemp, memoryUsage, currentView, wifiQuality, wifiSignal, ip, externalIp, ssid, voltage, mac, hostname, userId } = req.body;
 
 	try {
 		const displaysData = loadDisplays();
@@ -167,6 +223,8 @@ router.post('/:id/heartbeat', async (req, res) => {
 		if (externalIp) display.externalIp = externalIp;
 		if (mac) display.mac = mac;
 		if (hostname) display.hostname = hostname;
+		// Update userId if provided (allows re-assignment to different tenant)
+		if (userId) display.userId = parseInt(userId, 10);
 		display.systemInfo = {
 			cpuTemp: cpuTemp || 0,
 			memoryUsage: memoryUsage || 0,
@@ -192,6 +250,18 @@ router.post('/:id/heartbeat', async (req, res) => {
 		display.cdpEnabled = cdpEnabled === true || cdpEnabled === 'true';
 
 		saveDisplays(displaysData);
+
+		// Broadcast update if display came online
+		if (previousStatus === 'offline') {
+			broadcastDisplay(WS_EVENTS.DISPLAY_UPDATED, {
+				display: {
+					id: display.id,
+					hostname: display.hostname,
+					status: 'online',
+					currentView: display.currentView
+				}
+			});
+		}
 
 		res.json({ success: true });
 	} catch (error) {
@@ -255,14 +325,17 @@ router.get('/:id/config', async (req, res) => {
 });
 
 // ============================================
-// GET /api/displays - List all displays
+// GET /api/displays - List displays for current user
 // Requires authentication
+// Multi-tenant: Returns only displays belonging to the authenticated user
 // ============================================
 router.get('/', async (req, res) => {
 	try {
 		const displaysData = loadDisplays();
 		const now = new Date();
+		const userId = req.session.userId;
 
+		// Update status for all displays (needed for activity logging)
 		displaysData.displays.forEach(display => {
 			const lastSeen = new Date(display.lastHeartbeat);
 			const timeSinceHeartbeat = now - lastSeen;
@@ -281,8 +354,8 @@ router.get('/', async (req, res) => {
 						});
 					}
 
-					// Send push notification
-					if (pushNotifications && pushNotifications.broadcastPushNotification) {
+					// Send push notification only to the display owner
+					if (pushNotifications && pushNotifications.broadcastPushNotification && display.userId) {
 						pushNotifications.broadcastPushNotification('display_disconnected', {
 							title: 'Display Disconnected',
 							body: `${display.hostname || 'Display'} (${display.currentView || 'unknown'}) went offline`,
@@ -293,7 +366,7 @@ router.get('/', async (req, res) => {
 								currentView: display.currentView,
 								lastSeen: display.lastHeartbeat
 							}
-						}).catch(err => console.error('[Push] Display offline notification error:', err.message));
+						}, display.userId).catch(err => console.error('[Push] Display offline notification error:', err.message));
 					}
 				}
 			}
@@ -301,9 +374,12 @@ router.get('/', async (req, res) => {
 
 		saveDisplays(displaysData);
 
+		// Filter displays by userId for multi-tenant isolation
+		const userDisplays = displaysData.displays.filter(d => d.userId === userId);
+
 		res.json({
 			success: true,
-			displays: displaysData.displays
+			displays: userDisplays
 		});
 	} catch (error) {
 		console.error('List displays error:', error);
@@ -317,6 +393,7 @@ router.get('/', async (req, res) => {
 // ============================================
 // PUT /api/displays/:id/config - Update display configuration
 // Requires authentication
+// Multi-tenant: Verifies display belongs to authenticated user
 // ============================================
 router.put('/:id/config', async (req, res) => {
 	const { id } = req.params;
@@ -341,14 +418,16 @@ router.put('/:id/config', async (req, res) => {
 
 	try {
 		const displaysData = loadDisplays();
-		const display = displaysData.displays.find(d => d.id === id);
 
-		if (!display) {
-			return res.status(404).json({
+		// Verify display ownership
+		const ownership = verifyDisplayOwnership(id, req.session.userId, displaysData);
+		if (ownership.error) {
+			return res.status(ownership.status).json({
 				success: false,
-				error: 'Display not found'
+				error: ownership.error
 			});
 		}
+		const display = ownership.display;
 
 		if (assignedView && !displaysData.viewMappings[assignedView]) {
 			return res.status(400).json({
@@ -415,21 +494,24 @@ router.put('/:id/config', async (req, res) => {
 // ============================================
 // POST /api/displays/:id/reboot - Reboot display
 // Requires authentication
+// Multi-tenant: Verifies display belongs to authenticated user
 // ============================================
 router.post('/:id/reboot', async (req, res) => {
 	const { id } = req.params;
 
 	try {
 		const displaysData = loadDisplays();
-		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 
-		if (displayIndex === -1) {
-			return res.status(404).json({
+		// Verify display ownership
+		const ownership = verifyDisplayOwnership(id, req.session.userId, displaysData);
+		if (ownership.error) {
+			return res.status(ownership.status).json({
 				success: false,
-				error: 'Display not found'
+				error: ownership.error
 			});
 		}
 
+		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 		const display = displaysData.displays[displayIndex];
 
 		displaysData.displays[displayIndex].pendingCommand = {
@@ -470,21 +552,24 @@ router.post('/:id/reboot', async (req, res) => {
 // ============================================
 // POST /api/displays/:id/shutdown - Shutdown display
 // Requires authentication
+// Multi-tenant: Verifies display belongs to authenticated user
 // ============================================
 router.post('/:id/shutdown', async (req, res) => {
 	const { id } = req.params;
 
 	try {
 		const displaysData = loadDisplays();
-		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 
-		if (displayIndex === -1) {
-			return res.status(404).json({
+		// Verify display ownership
+		const ownership = verifyDisplayOwnership(id, req.session.userId, displaysData);
+		if (ownership.error) {
+			return res.status(ownership.status).json({
 				success: false,
-				error: 'Display not found'
+				error: ownership.error
 			});
 		}
 
+		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 		const display = displaysData.displays[displayIndex];
 
 		displaysData.displays[displayIndex].pendingCommand = {
@@ -525,6 +610,7 @@ router.post('/:id/shutdown', async (req, res) => {
 // ============================================
 // POST /api/displays/:id/debug - Toggle debug mode
 // Requires authentication
+// Multi-tenant: Verifies display belongs to authenticated user
 // ============================================
 router.post('/:id/debug', async (req, res) => {
 	const { id } = req.params;
@@ -532,15 +618,17 @@ router.post('/:id/debug', async (req, res) => {
 
 	try {
 		const displaysData = loadDisplays();
-		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 
-		if (displayIndex === -1) {
-			return res.status(404).json({
+		// Verify display ownership
+		const ownership = verifyDisplayOwnership(id, req.session.userId, displaysData);
+		if (ownership.error) {
+			return res.status(ownership.status).json({
 				success: false,
-				error: 'Display not found'
+				error: ownership.error
 			});
 		}
 
+		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 		const display = displaysData.displays[displayIndex];
 		const previousState = display.debugMode || false;
 
@@ -664,6 +752,7 @@ router.post('/:id/logs', async (req, res) => {
 // ============================================
 // GET /api/displays/:id/logs - Get debug logs
 // Requires authentication
+// Multi-tenant: Verifies display belongs to authenticated user
 // ============================================
 router.get('/:id/logs', async (req, res) => {
 	const { id } = req.params;
@@ -671,14 +760,16 @@ router.get('/:id/logs', async (req, res) => {
 
 	try {
 		const displaysData = loadDisplays();
-		const display = displaysData.displays.find(d => d.id === id);
 
-		if (!display) {
-			return res.status(404).json({
+		// Verify display ownership
+		const ownership = verifyDisplayOwnership(id, req.session.userId, displaysData);
+		if (ownership.error) {
+			return res.status(ownership.status).json({
 				success: false,
-				error: 'Display not found'
+				error: ownership.error
 			});
 		}
+		const display = ownership.display;
 
 		let logs = display.debugLogs || [];
 
@@ -715,21 +806,24 @@ router.get('/:id/logs', async (req, res) => {
 // ============================================
 // DELETE /api/displays/:id/logs - Clear debug logs
 // Requires authentication
+// Multi-tenant: Verifies display belongs to authenticated user
 // ============================================
 router.delete('/:id/logs', async (req, res) => {
 	const { id } = req.params;
 
 	try {
 		const displaysData = loadDisplays();
-		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 
-		if (displayIndex === -1) {
-			return res.status(404).json({
+		// Verify display ownership
+		const ownership = verifyDisplayOwnership(id, req.session.userId, displaysData);
+		if (ownership.error) {
+			return res.status(ownership.status).json({
 				success: false,
-				error: 'Display not found'
+				error: ownership.error
 			});
 		}
 
+		const displayIndex = displaysData.displays.findIndex(d => d.id === id);
 		const display = displaysData.displays[displayIndex];
 		const logCount = display.debugLogs ? display.debugLogs.length : 0;
 

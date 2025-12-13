@@ -15,6 +15,10 @@
 	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
 	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
 	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Google Fonts -->
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 	<!-- Styles -->
 	<script src="https://cdn.tailwindcss.com"></script>
 	<link rel="stylesheet" href="css/style.css?v=16">
@@ -94,165 +98,6 @@
 		</div>
 	</div>
 
-	<!-- Module Status Overview -->
-	<section class="mb-6">
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-			<div class="flex items-center justify-between mb-4">
-				<div>
-					<h2 class="text-xl font-bold text-white">MagicMirror Modules</h2>
-					<p class="text-sm text-gray-400 mt-1">Core display services status</p>
-				</div>
-				<button id="refreshModuleStatusBtn" onclick="refreshModuleStatus()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-					<svg id="refreshModuleStatusIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-					</svg>
-					<span id="refreshModuleStatusText">Refresh</span>
-				</button>
-			</div>
-
-			<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-				<!-- Match Module -->
-				<div id="moduleMatch" class="bg-gray-750 rounded-lg p-4 border border-gray-600">
-					<div class="flex items-center gap-3 mb-3">
-						<div class="status-indicator bg-gray-500"></div>
-						<div>
-							<div class="font-semibold text-white">Match Display</div>
-							<div class="text-xs text-gray-400">Port 8080 / API 2052</div>
-						</div>
-					</div>
-					<div class="space-y-2 text-sm">
-						<div class="flex justify-between">
-							<span class="text-gray-400">Tournament:</span>
-							<span class="module-tournament text-white">--</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-400">Last Updated:</span>
-							<span class="module-updated text-white">--</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-400">Cache:</span>
-							<span id="matchCacheStatus" class="text-white">--</span>
-						</div>
-					</div>
-					<div class="mt-3 pt-3 border-t border-gray-600">
-						<button onclick="forceUpdateMatches()" id="forceUpdateBtn" class="w-full px-3 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded flex items-center justify-center gap-2">
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-							</svg>
-							Force Update
-						</button>
-					</div>
-				</div>
-
-				<!-- Bracket Module -->
-				<div id="moduleBracket" class="bg-gray-750 rounded-lg p-4 border border-gray-600">
-					<div class="flex items-center gap-3 mb-3">
-						<div class="status-indicator bg-gray-500"></div>
-						<div>
-							<div class="font-semibold text-white">Bracket Display</div>
-							<div class="text-xs text-gray-400">Port 8081 / API 2053</div>
-						</div>
-					</div>
-					<div class="space-y-2 text-sm">
-						<div class="flex justify-between">
-							<span class="text-gray-400">Bracket:</span>
-							<span class="module-bracket text-white truncate max-w-48">--</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-400">Last Updated:</span>
-							<span class="module-updated text-white">--</span>
-						</div>
-					</div>
-				</div>
-
-				<!-- Flyer Module -->
-				<div id="moduleFlyer" class="bg-gray-750 rounded-lg p-4 border border-gray-600">
-					<div class="flex items-center gap-3 mb-3">
-						<div class="status-indicator bg-gray-500"></div>
-						<div>
-							<div class="font-semibold text-white">Flyer Display</div>
-							<div class="text-xs text-gray-400">Port 8082 / API 2054</div>
-						</div>
-					</div>
-					<div class="space-y-2 text-sm">
-						<div class="flex justify-between">
-							<span class="text-gray-400">Flyer:</span>
-							<span class="module-flyer text-white">--</span>
-						</div>
-						<div class="flex justify-between">
-							<span class="text-gray-400">Last Updated:</span>
-							<span class="module-updated text-white">--</span>
-						</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="flex items-center justify-between mt-4 pt-4 border-t border-gray-700">
-				<span id="lastRefreshed" class="text-xs text-gray-500">Last checked: --</span>
-				<span class="text-xs text-gray-500">Auto-refresh: 5s</span>
-			</div>
-		</div>
-	</section>
-
-	<!-- Bracket Controls -->
-	<section class="mb-6">
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-			<div class="flex items-center justify-between mb-4">
-				<div>
-					<h2 class="text-xl font-bold text-white">Bracket Controls</h2>
-					<p class="text-sm text-gray-400 mt-1">Zoom, scroll, and focus the bracket display</p>
-				</div>
-				<div id="bracketControlStatus" class="flex items-center gap-2">
-					<div class="status-indicator bg-gray-500"></div>
-					<span class="text-sm text-gray-400">Checking...</span>
-				</div>
-			</div>
-
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-				<!-- Zoom Control -->
-				<div class="bg-gray-750 rounded-lg p-4 border border-gray-600">
-					<h3 class="font-semibold text-white mb-3">Zoom Level</h3>
-					<div class="space-y-3">
-						<div class="flex items-center gap-4">
-							<input type="range" id="bracketZoomSlider" min="0.3" max="3" step="0.1" value="1.0"
-								oninput="document.getElementById('bracketZoomValue').textContent = parseFloat(this.value).toFixed(1) + 'x'"
-								class="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500">
-							<span id="bracketZoomValue" class="text-white font-mono text-sm w-12 text-right">1.0x</span>
-						</div>
-						<div class="flex gap-2">
-							<button onclick="setBracketZoom(0.5)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">0.5x</button>
-							<button onclick="setBracketZoom(0.75)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">0.75x</button>
-							<button onclick="setBracketZoom(1.0)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">1.0x</button>
-							<button onclick="setBracketZoom(1.5)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">1.5x</button>
-							<button onclick="setBracketZoom(2.0)" class="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded text-white">2.0x</button>
-						</div>
-						<button onclick="applyBracketZoom()" class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded text-white text-sm font-medium">
-							Apply Zoom
-						</button>
-					</div>
-				</div>
-
-				</div>
-
-			<!-- Quick Actions Row -->
-			<div class="mt-4 flex flex-wrap gap-3">
-				<button onclick="resetBracketView()" class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded text-white text-sm font-medium flex items-center gap-2">
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-					</svg>
-					Reset View
-				</button>
-				<!-- Focus on Match removed - Challonge iframe doesn't support scrollToMatchIdentifier postMessage -->
-			</div>
-
-			<!-- Status Bar -->
-			<div class="mt-4 pt-4 border-t border-gray-700 flex items-center justify-between text-xs text-gray-500">
-				<span>Current zoom: <span id="currentZoomDisplay" class="text-white">1.0x</span></span>
-				<span>Bracket URL: <span id="currentBracketUrl" class="text-gray-400 truncate max-w-xs">--</span></span>
-			</div>
-		</div>
-	</section>
-
 	<!-- Registered Displays -->
 	<section class="mb-6">
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
@@ -326,10 +171,12 @@
 		</div>
 	</section>
 
+	<!-- Socket.IO for real-time updates -->
+	<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 	<script src="js/utils.js?v=3"></script>
 	<script src="js/nav.js?v=1"></script>
 	<script src="js/pwa.js?v=2"></script>
-	<script src="js/displays.js?v=14"></script>
+	<script src="js/displays.js?v=15"></script>
 	<script>
 		document.addEventListener('DOMContentLoaded', () => {
 			initNavigation('Displays');

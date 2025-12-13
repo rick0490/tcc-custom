@@ -1,20 +1,21 @@
 // Display Management Page JavaScript
 
 // State
-let moduleStatus = null;
 let displays = [];
-let statusRefreshInterval = null;
 let displaysRefreshInterval = null;
+let wsConnected = false;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
-	console.log('Display Management page loaded');
+	FrontendDebug.log('Displays', 'Initializing Display Management page');
 
 	// Initialize last updated timestamp
 	initLastUpdated('displaysLastUpdated', refreshDisplays, { prefix: 'Updated', thresholds: { fresh: 20, stale: 90 } });
 
-	await refreshModuleStatus();
 	await refreshDisplays();
+
+	// Initialize WebSocket for real-time updates
+	initWebSocket();
 
 	// Start polling with visibility awareness
 	startPolling();
@@ -26,204 +27,60 @@ document.addEventListener('DOMContentLoaded', async () => {
 	);
 });
 
-function startPolling() {
-	if (!statusRefreshInterval) {
-		statusRefreshInterval = setInterval(refreshModuleStatus, 10000);
+// WebSocket initialization
+function initWebSocket() {
+	if (!WebSocketManager.init()) {
+		FrontendDebug.warn('Displays', 'WebSocket not available, using polling');
+		return;
 	}
+
+	// Subscribe to display events
+	WebSocketManager.subscribeMany({
+		'displays:update': handleDisplayUpdate,
+		[WS_EVENTS.DISPLAY_REGISTERED]: handleDisplayEvent,
+		[WS_EVENTS.DISPLAY_UPDATED]: handleDisplayEvent,
+		[WS_EVENTS.DISPLAY_OFFLINE]: handleDisplayEvent
+	});
+
+	WebSocketManager.onConnection('connect', () => {
+		FrontendDebug.ws('Displays', 'WebSocket connected');
+		wsConnected = true;
+		// Reduce polling when connected
+		stopPolling();
+		startPolling(30000); // Slower polling when WS connected
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		FrontendDebug.ws('Displays', 'WebSocket disconnected');
+		wsConnected = false;
+		// Increase polling when disconnected
+		stopPolling();
+		startPolling(15000); // Back to faster polling
+	});
+}
+
+// Handle display update event
+function handleDisplayUpdate(data) {
+	FrontendDebug.ws('Displays', 'Update received', { action: data.action });
+	refreshDisplays();
+}
+
+// Handle specific display events
+function handleDisplayEvent(data) {
+	FrontendDebug.ws('Displays', 'Event received', data);
+	refreshDisplays();
+}
+
+function startPolling(displaysInterval = 15000) {
 	if (!displaysRefreshInterval) {
-		displaysRefreshInterval = setInterval(refreshDisplays, 15000);
+		displaysRefreshInterval = setInterval(refreshDisplays, displaysInterval);
 	}
 }
 
 function stopPolling() {
-	if (statusRefreshInterval) {
-		clearInterval(statusRefreshInterval);
-		statusRefreshInterval = null;
-	}
 	if (displaysRefreshInterval) {
 		clearInterval(displaysRefreshInterval);
 		displaysRefreshInterval = null;
-	}
-}
-
-// Refresh module status from API
-async function refreshModuleStatus() {
-	// Show loading state
-	const btn = document.getElementById('refreshModuleStatusBtn');
-	const icon = document.getElementById('refreshModuleStatusIcon');
-	const text = document.getElementById('refreshModuleStatusText');
-	if (btn) btn.disabled = true;
-	if (icon) icon.classList.add('animate-spin');
-	if (text) text.textContent = 'Refreshing...';
-
-	try {
-		const response = await fetch('/api/status');
-		if (!response.ok) {
-			if (response.status === 401) {
-				window.location.href = '/login.html';
-				return;
-			}
-			throw new Error(`HTTP ${response.status}`);
-		}
-
-		const data = await response.json();
-		if (data.success) {
-			moduleStatus = data.modules;
-			updateModuleCards();
-			updateLastRefreshed();
-		}
-	} catch (error) {
-		console.error('Failed to refresh module status:', error);
-	} finally {
-		// Reset loading state
-		if (btn) btn.disabled = false;
-		if (icon) icon.classList.remove('animate-spin');
-		if (text) text.textContent = 'Refresh';
-	}
-}
-
-// Update module status cards
-function updateModuleCards() {
-	if (!moduleStatus) return;
-
-	// Match module
-	updateModuleCard('moduleMatch', moduleStatus.match, 'tournament');
-
-	// Bracket module
-	updateModuleCard('moduleBracket', moduleStatus.bracket, 'bracket');
-
-	// Flyer module
-	updateModuleCard('moduleFlyer', moduleStatus.flyer, 'flyer');
-
-	// Also fetch cache status for match module
-	fetchMatchCacheStatus();
-}
-
-// Fetch and display match cache status
-async function fetchMatchCacheStatus() {
-	try {
-		const response = await fetch('/api/matches/cache-status');
-		if (!response.ok) return;
-
-		const data = await response.json();
-		const cacheStatusSpan = document.getElementById('matchCacheStatus');
-		if (!cacheStatusSpan) return;
-
-		if (data.hasCache) {
-			const ageSeconds = Math.round((data.cacheAgeMs || 0) / 1000);
-			let ageText = ageSeconds < 60 ? ageSeconds + 's' : Math.round(ageSeconds / 60) + 'm';
-
-			if (data.isStale) {
-				cacheStatusSpan.innerHTML = `<span class="text-red-400">Stale (${ageText} ago)</span>`;
-			} else {
-				cacheStatusSpan.innerHTML = `<span class="text-green-400">Fresh (${ageText} ago)</span>`;
-			}
-		} else {
-			cacheStatusSpan.textContent = 'No cache';
-		}
-
-		// Show polling status
-		if (data.pollingActive) {
-			cacheStatusSpan.innerHTML += ' <span class="text-blue-400">[Polling]</span>';
-		}
-	} catch (error) {
-		console.error('Failed to fetch cache status:', error);
-	}
-}
-
-// Force update match data from Challonge
-async function forceUpdateMatches() {
-	const btn = document.getElementById('forceUpdateBtn');
-	if (!btn) return;
-
-	// Disable button and show loading state
-	const originalContent = btn.innerHTML;
-	btn.disabled = true;
-	btn.innerHTML = `
-		<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-		</svg>
-		Updating...
-	`;
-
-	try {
-		const response = await csrfFetch('/api/matches/force-update', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' }
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			showAlert('Match data refreshed and pushed to displays', 'success');
-			// Refresh the cache status display
-			await fetchMatchCacheStatus();
-		} else {
-			showAlert(data.error || 'Failed to update match data', 'error');
-		}
-	} catch (error) {
-		console.error('Force update failed:', error);
-		showAlert('Failed to connect to server', 'error');
-	} finally {
-		// Restore button
-		btn.disabled = false;
-		btn.innerHTML = originalContent;
-	}
-}
-
-// Update individual module card
-function updateModuleCard(cardId, module, stateKey) {
-	const card = document.getElementById(cardId);
-	if (!card || !module) return;
-
-	const indicator = card.querySelector('.status-indicator');
-	const isOnline = module.status?.running === true;
-
-	// Update status indicator
-	indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500');
-	indicator.classList.add(isOnline ? 'bg-green-500' : 'bg-red-500');
-
-	// Update state info
-	const state = module.state || {};
-
-	if (stateKey === 'tournament') {
-		const tournamentSpan = card.querySelector('.module-tournament');
-		if (tournamentSpan) {
-			tournamentSpan.textContent = state.tournamentId || 'Not configured';
-		}
-	} else if (stateKey === 'bracket') {
-		const bracketSpan = card.querySelector('.module-bracket');
-		if (bracketSpan) {
-			// Show shortened bracket URL or "Not configured"
-			const url = state.bracketUrl;
-			if (url) {
-				// Extract tournament ID from URL for display
-				const match = url.match(/challonge\.com\/([^\/]+)/);
-				bracketSpan.textContent = match ? match[1] : url;
-				bracketSpan.title = url; // Full URL on hover
-			} else {
-				bracketSpan.textContent = 'Not configured';
-			}
-		}
-	} else if (stateKey === 'flyer') {
-		const flyerSpan = card.querySelector('.module-flyer');
-		if (flyerSpan) {
-			flyerSpan.textContent = state.flyer || 'None';
-		}
-	}
-
-	// Update last updated
-	const updatedSpan = card.querySelector('.module-updated');
-	if (updatedSpan && state.lastUpdated) {
-		updatedSpan.textContent = formatTimeAgo(state.lastUpdated);
-	}
-}
-
-// Update last refreshed timestamp
-function updateLastRefreshed() {
-	const el = document.getElementById('lastRefreshed');
-	if (el) {
-		el.textContent = `Last checked: ${getCurrentTimeCT()}`;
 	}
 }
 
@@ -259,7 +116,7 @@ async function refreshDisplays() {
 			setLastUpdated('displaysLastUpdated');
 		}
 	} catch (error) {
-		console.error('Failed to load displays:', error);
+		FrontendDebug.error('Displays', 'Failed to load displays', error);
 		renderNoDisplaysRegistered();
 	} finally {
 		// Reset loading state
@@ -699,455 +556,6 @@ window.toggleAdvancedSection = toggleAdvancedSection;
 // Note: escapeHtml, showAlert, formatTimeAgo are now in utils.js
 
 // ============================================================================
-// Bracket Control Functions
-// ============================================================================
-
-const BRACKET_API_URL = 'http://localhost:2053';
-let currentBracketZoom = 1.0;
-let bracketModuleOnline = false;
-
-// Initialize bracket controls on page load
-document.addEventListener('DOMContentLoaded', () => {
-	setupBracketZoomSlider();
-	refreshBracketStatus();
-});
-
-// Setup zoom slider event listener
-function setupBracketZoomSlider() {
-	const slider = document.getElementById('bracketZoomSlider');
-	const valueDisplay = document.getElementById('bracketZoomValue');
-
-	if (slider && valueDisplay) {
-		slider.addEventListener('input', (e) => {
-			const value = parseFloat(e.target.value);
-			valueDisplay.textContent = `${value.toFixed(1)}x`;
-		});
-	}
-}
-
-// Refresh bracket module status and current settings
-async function refreshBracketStatus() {
-	const statusContainer = document.getElementById('bracketControlStatus');
-	const zoomDisplay = document.getElementById('currentZoomDisplay');
-	const urlDisplay = document.getElementById('currentBracketUrl');
-
-	try {
-		const response = await fetch('/api/bracket/status');
-		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-		const data = await response.json();
-
-		if (data.success) {
-			bracketModuleOnline = true;
-			currentBracketZoom = data.zoomScale || 1.0;
-
-			// Update status indicator
-			if (statusContainer) {
-				statusContainer.innerHTML = `
-					<div class="status-indicator bg-green-500"></div>
-					<span class="text-sm text-green-400">Online</span>
-				`;
-			}
-
-			// Update zoom slider and display
-			const slider = document.getElementById('bracketZoomSlider');
-			const valueDisplay = document.getElementById('bracketZoomValue');
-			if (slider) {
-				slider.value = currentBracketZoom;
-			}
-			if (valueDisplay) {
-				valueDisplay.textContent = `${currentBracketZoom.toFixed(1)}x`;
-			}
-			if (zoomDisplay) {
-				zoomDisplay.textContent = `${currentBracketZoom.toFixed(1)}x`;
-			}
-
-			// Update bracket URL display
-			if (urlDisplay && data.bracketUrl) {
-				const match = data.bracketUrl.match(/challonge\.com\/([^\/]+)/);
-				urlDisplay.textContent = match ? match[1] : data.bracketUrl;
-				urlDisplay.title = data.bracketUrl;
-			} else if (urlDisplay) {
-				urlDisplay.textContent = 'Not configured';
-			}
-		}
-	} catch (error) {
-		console.error('Failed to get bracket status:', error);
-		bracketModuleOnline = false;
-
-		if (statusContainer) {
-			statusContainer.innerHTML = `
-				<div class="status-indicator bg-red-500"></div>
-				<span class="text-sm text-red-400">Offline</span>
-			`;
-		}
-	}
-}
-
-// Set bracket zoom to a specific value (updates slider AND applies zoom)
-async function setBracketZoom(zoomLevel) {
-	const slider = document.getElementById('bracketZoomSlider');
-	const valueDisplay = document.getElementById('bracketZoomValue');
-
-	// Update UI immediately
-	if (slider) {
-		slider.value = zoomLevel;
-	}
-	if (valueDisplay) {
-		valueDisplay.textContent = `${zoomLevel.toFixed(1)}x`;
-	}
-
-	// Also apply the zoom
-	try {
-		const response = await csrfFetch('/api/bracket/zoom', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ zoomScale: zoomLevel })
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			currentBracketZoom = zoomLevel;
-			const zoomDisplay = document.getElementById('currentZoomDisplay');
-			if (zoomDisplay) zoomDisplay.textContent = `${zoomLevel.toFixed(1)}x`;
-			showAlert(`Bracket zoom set to ${zoomLevel.toFixed(1)}x`, 'success');
-		} else {
-			showAlert(`Failed to set zoom: ${data.error}`, 'error');
-		}
-	} catch (error) {
-		showAlert(`Error setting zoom: ${error.message}`, 'error');
-	}
-}
-
-// Apply the current slider zoom to the bracket display
-async function applyBracketZoom() {
-	const slider = document.getElementById('bracketZoomSlider');
-	if (!slider) return;
-
-	const zoomScale = parseFloat(slider.value);
-
-	try {
-		const response = await csrfFetch('/api/bracket/zoom', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ zoomScale })
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			currentBracketZoom = zoomScale;
-			document.getElementById('currentZoomDisplay').textContent = `${zoomScale.toFixed(1)}x`;
-			showAlert(`Bracket zoom set to ${zoomScale.toFixed(1)}x`, 'success');
-		} else {
-			showAlert(`Failed to set zoom: ${data.error}`, 'error');
-		}
-	} catch (error) {
-		showAlert(`Error setting zoom: ${error.message}`, 'error');
-	}
-}
-
-// Focus on a specific match number or letter
-async function focusOnMatch() {
-	const matchInput = document.getElementById('bracketMatchInput');
-	const zoomCheckbox = document.getElementById('bracketZoomOnFocus');
-	const slider = document.getElementById('bracketZoomSlider');
-
-	if (!matchInput) return;
-
-	const inputValue = matchInput.value.trim();
-	if (!inputValue) {
-		showAlert('Please enter a match number (1-26) or letter (A-Z)', 'error');
-		return;
-	}
-
-	// Accept either number (1-26) or letter (A-Z)
-	// The API will convert numbers to letters (1=A, 2=B, etc.)
-	const isNumber = /^\d+$/.test(inputValue);
-	const isLetter = /^[a-zA-Z]$/i.test(inputValue);
-
-	if (!isNumber && !isLetter) {
-		showAlert('Please enter a match number (1-26) or letter (A-Z)', 'error');
-		return;
-	}
-
-	const payload = { matchIdentifier: inputValue };
-
-	// If zoom checkbox is checked, include zoom level
-	if (zoomCheckbox && zoomCheckbox.checked && slider) {
-		payload.zoomScale = parseFloat(slider.value);
-	}
-
-	try {
-		const response = await csrfFetch('/api/bracket/focus', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload)
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			// Show the letter identifier that was used
-			showAlert(`Focused on match ${data.matchIdentifier}`, 'success');
-			if (data.zoomScale) {
-				currentBracketZoom = data.zoomScale;
-				document.getElementById('currentZoomDisplay').textContent = `${data.zoomScale.toFixed(1)}x`;
-			}
-		} else {
-			showAlert(`Failed to focus: ${data.error}`, 'error');
-		}
-	} catch (error) {
-		showAlert(`Error: ${error.message}`, 'error');
-	}
-}
-
-// Reset bracket view to default (zoom 1.0, scroll to origin)
-async function resetBracketView() {
-	try {
-		const response = await csrfFetch('/api/bracket/reset', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({})
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			currentBracketZoom = 1.0;
-
-			// Update UI
-			const slider = document.getElementById('bracketZoomSlider');
-			const valueDisplay = document.getElementById('bracketZoomValue');
-			const zoomDisplay = document.getElementById('currentZoomDisplay');
-
-			if (slider) slider.value = 1.0;
-			if (valueDisplay) valueDisplay.textContent = '1.0x';
-			if (zoomDisplay) zoomDisplay.textContent = '1.0x';
-
-			showAlert('Bracket view reset to default', 'success');
-		} else {
-			showAlert(`Failed to reset view: ${data.error}`, 'error');
-		}
-	} catch (error) {
-		showAlert(`Error: ${error.message}`, 'error');
-	}
-}
-
-// Focus on the current "now playing" match (requires integration with match module)
-async function focusOnCurrentMatch() {
-	// First, get the current tournament and find underway matches
-	try {
-		// Get tournament state from match module
-		const statusResponse = await fetch('/api/status');
-		if (!statusResponse.ok) throw new Error('Failed to get status');
-
-		const statusData = await statusResponse.json();
-		const tournamentId = statusData.modules?.match?.state?.tournamentId;
-
-		if (!tournamentId) {
-			showAlert('No tournament configured', 'error');
-			return;
-		}
-
-		// Get matches to find ones that are underway
-		const matchResponse = await fetch(`/api/matches/${tournamentId}`);
-		if (!matchResponse.ok) throw new Error('Failed to get matches');
-
-		const matchData = await matchResponse.json();
-		if (!matchData.success || !matchData.matches) {
-			showAlert('No matches found', 'error');
-			return;
-		}
-
-		// Find matches that are underway (state: open + underwayAt !== null)
-		const underwayMatches = matchData.matches.filter(m =>
-			m.state === 'open' && m.underwayAt !== null
-		);
-
-		if (underwayMatches.length === 0) {
-			showAlert('No matches currently in progress', 'info');
-			return;
-		}
-
-		// Use the first underway match's letter identifier
-		// Challonge uses letter identifiers: A, B, C, etc.
-		const match = underwayMatches[0];
-		const matchIdentifier = match.identifier || match.suggestedPlayOrder || 'A';
-
-		// Focus on this match with current zoom level
-		const slider = document.getElementById('bracketZoomSlider');
-		const payload = {
-			matchIdentifier: matchIdentifier,
-			zoomScale: slider ? parseFloat(slider.value) : currentBracketZoom
-		};
-
-		const focusResponse = await csrfFetch('/api/bracket/focus', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload)
-		});
-
-		const focusData = await focusResponse.json();
-
-		if (focusData.success) {
-			showAlert(`Focused on current match (${focusData.matchIdentifier})`, 'success');
-		} else {
-			showAlert(`Failed to focus: ${focusData.error}`, 'error');
-		}
-	} catch (error) {
-		showAlert(`Error: ${error.message}`, 'error');
-	}
-}
-
-// ============================================================================
-// Ticker Message Functions
-// ============================================================================
-
-// Initialize ticker on page load
-document.addEventListener('DOMContentLoaded', () => {
-	setupTickerCharCount();
-});
-
-// Setup character counter for ticker message
-function setupTickerCharCount() {
-	const textarea = document.getElementById('tickerMessage');
-	const charCount = document.getElementById('tickerCharCount');
-
-	if (textarea && charCount) {
-		textarea.addEventListener('input', () => {
-			const len = textarea.value.length;
-			charCount.textContent = `${len}/200`;
-		});
-	}
-}
-
-// Set ticker message from preset button and send immediately
-async function setTickerPreset(message) {
-	console.log('setTickerPreset called with:', message);
-	const textarea = document.getElementById('tickerMessage');
-	const charCount = document.getElementById('tickerCharCount');
-	const durationInput = document.getElementById('tickerDuration');
-
-	// Update textarea for visual feedback
-	if (textarea) {
-		textarea.value = message;
-		if (charCount) {
-			charCount.textContent = `${message.length}/200`;
-		}
-	}
-
-	// Get duration and send immediately
-	const duration = durationInput ? (parseInt(durationInput.value, 10) || 5) : 5;
-
-	const statusEl = document.getElementById('tickerStatus');
-	if (statusEl) {
-		statusEl.innerHTML = `
-			<div class="spinner-small"></div>
-			<span class="text-sm text-yellow-400">Sending...</span>
-		`;
-	}
-
-	try {
-		const response = await csrfFetch('/api/ticker/send', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ message, duration })
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			showAlert('Message sent to display', 'success');
-
-			if (statusEl) {
-				statusEl.innerHTML = `<span class="text-sm text-green-400">Sent!</span>`;
-				setTimeout(() => {
-					statusEl.innerHTML = `<span class="text-sm text-gray-400">Ready</span>`;
-				}, 3000);
-			}
-		} else {
-			showAlert(`Failed to send: ${data.error}`, 'error');
-			if (statusEl) {
-				statusEl.innerHTML = `<span class="text-sm text-red-400">Failed</span>`;
-			}
-		}
-	} catch (error) {
-		showAlert(`Error: ${error.message}`, 'error');
-		if (statusEl) {
-			statusEl.innerHTML = `<span class="text-sm text-red-400">Error</span>`;
-		}
-	}
-}
-
-// Send ticker message to match display
-async function sendTickerMessage() {
-	const messageInput = document.getElementById('tickerMessage');
-	const durationInput = document.getElementById('tickerDuration');
-	const statusEl = document.getElementById('tickerStatus');
-
-	if (!messageInput || !durationInput) return;
-
-	const message = messageInput.value.trim();
-	const duration = parseInt(durationInput.value, 10) || 5;
-
-	if (!message) {
-		showAlert('Please enter a message', 'error');
-		return;
-	}
-
-	if (duration < 3 || duration > 30) {
-		showAlert('Duration must be between 3 and 30 seconds', 'error');
-		return;
-	}
-
-	// Update status
-	if (statusEl) {
-		statusEl.innerHTML = `
-			<div class="spinner-small"></div>
-			<span class="text-sm text-yellow-400">Sending...</span>
-		`;
-	}
-
-	try {
-		const response = await csrfFetch('/api/ticker/send', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ message, duration })
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			showAlert('Message sent to display', 'success');
-			messageInput.value = '';
-			document.getElementById('tickerCharCount').textContent = '0/200';
-
-			// Show sent status briefly
-			if (statusEl) {
-				statusEl.innerHTML = `
-					<span class="text-sm text-green-400">Sent!</span>
-				`;
-				setTimeout(() => {
-					statusEl.innerHTML = `<span class="text-sm text-gray-400">Ready</span>`;
-				}, 3000);
-			}
-		} else {
-			showAlert(`Failed to send: ${data.error}`, 'error');
-			if (statusEl) {
-				statusEl.innerHTML = `<span class="text-sm text-red-400">Failed</span>`;
-			}
-		}
-	} catch (error) {
-		showAlert(`Error: ${error.message}`, 'error');
-		if (statusEl) {
-			statusEl.innerHTML = `<span class="text-sm text-red-400">Error</span>`;
-		}
-	}
-}
-
-// ============================================================================
 // Debug Mode Functions
 // ============================================================================
 
@@ -1390,18 +798,10 @@ function downloadDebugLogs() {
 }
 
 // Export functions
-window.refreshModuleStatus = refreshModuleStatus;
 window.refreshDisplays = refreshDisplays;
 window.assignDisplayView = assignDisplayView;
 window.rebootDisplay = rebootDisplay;
 window.shutdownDisplay = shutdownDisplay;
-window.setBracketZoom = setBracketZoom;
-window.applyBracketZoom = applyBracketZoom;
-window.focusOnMatch = focusOnMatch;
-window.resetBracketView = resetBracketView;
-window.focusOnCurrentMatch = focusOnCurrentMatch;
-window.sendTickerMessage = sendTickerMessage;
-window.setTickerPreset = setTickerPreset;
 window.toggleDebugMode = toggleDebugMode;
 window.viewDebugLogs = viewDebugLogs;
 window.closeDebugLogsModal = closeDebugLogsModal;

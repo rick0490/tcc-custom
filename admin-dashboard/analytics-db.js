@@ -640,37 +640,39 @@ function levenshteinDistance(str1, str2) {
 }
 
 /**
- * Find matching player by name
+ * Find matching player by name (multi-tenant)
  * Returns { player, matchType } or null
+ * @param {string} name - Player name to search
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function findPlayerByName(name) {
+function findPlayerByName(name, userId) {
     const db = getDb();
     const normalized = normalizePlayerName(name);
 
-    if (!normalized) return null;
+    if (!normalized || !userId) return null;
 
-    // 1. Exact match on canonical name
+    // 1. Exact match on canonical name within user's player pool
     let player = db.prepare(`
-        SELECT * FROM players WHERE canonical_name = ?
-    `).get(normalized);
+        SELECT * FROM players WHERE canonical_name = ? AND user_id = ?
+    `).get(normalized, userId);
 
     if (player) {
         return { player, matchType: 'exact' };
     }
 
-    // 2. Exact match on alias
+    // 2. Exact match on alias within user's player pool
     const alias = db.prepare(`
         SELECT p.* FROM players p
         JOIN player_aliases a ON p.id = a.player_id
-        WHERE a.normalized_alias = ?
-    `).get(normalized);
+        WHERE a.normalized_alias = ? AND a.user_id = ?
+    `).get(normalized, userId);
 
     if (alias) {
         return { player: alias, matchType: 'alias' };
     }
 
-    // 3. Fuzzy match with Levenshtein distance
-    const allPlayers = db.prepare(`SELECT * FROM players`).all();
+    // 3. Fuzzy match with Levenshtein distance within user's player pool
+    const allPlayers = db.prepare(`SELECT * FROM players WHERE user_id = ?`).all(userId);
     let bestMatch = null;
     let bestDistance = Infinity;
 
@@ -695,32 +697,48 @@ function findPlayerByName(name) {
 }
 
 /**
- * Create a new player
+ * Create a new player (multi-tenant)
+ * @param {string} name - Player display name
+ * @param {number} userId - User ID for tenant isolation (required)
+ * @param {string} email - Optional email
+ * @param {string} challongeUsername - Optional Challonge username
+ * @param {string} instagram - Optional Instagram handle
  */
-function createPlayer(name, email = null, challongeUsername = null, instagram = null) {
+function createPlayer(name, userId, email = null, challongeUsername = null, instagram = null) {
     const db = getDb();
     const normalized = normalizePlayerName(name);
 
+    if (!userId) {
+        throw new Error('userId is required to create a player');
+    }
+
     const result = db.prepare(`
-        INSERT INTO players (canonical_name, display_name, email, challonge_username, instagram)
-        VALUES (?, ?, ?, ?, ?)
-    `).run(normalized, name, email, challongeUsername, instagram);
+        INSERT INTO players (canonical_name, display_name, email, challonge_username, instagram, user_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(normalized, name, email, challongeUsername, instagram, userId);
 
     return result.lastInsertRowid;
 }
 
 /**
- * Add alias to player
+ * Add alias to player (multi-tenant)
+ * @param {number} playerId - Player ID
+ * @param {string} alias - Alias to add
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function addPlayerAlias(playerId, alias) {
+function addPlayerAlias(playerId, alias, userId) {
     const db = getDb();
     const normalized = normalizePlayerName(alias);
 
+    if (!userId) {
+        throw new Error('userId is required to add player alias');
+    }
+
     try {
         db.prepare(`
-            INSERT INTO player_aliases (player_id, alias, normalized_alias)
-            VALUES (?, ?, ?)
-        `).run(playerId, alias, normalized);
+            INSERT INTO player_aliases (player_id, alias, normalized_alias, user_id)
+            VALUES (?, ?, ?, ?)
+        `).run(playerId, alias, normalized, userId);
         return true;
     } catch (e) {
         // Alias already exists
@@ -729,21 +747,38 @@ function addPlayerAlias(playerId, alias) {
 }
 
 /**
- * Merge two players (move all data from source to target)
+ * Merge two players (move all data from source to target, scoped to user)
+ * @param {number} sourcePlayerId - Player to merge from
+ * @param {number} targetPlayerId - Player to merge into
+ * @param {number} userId - User ID for tenant isolation
  */
-function mergePlayers(sourcePlayerId, targetPlayerId) {
+function mergePlayers(sourcePlayerId, targetPlayerId, userId) {
     const db = getDb();
 
+    if (!userId) {
+        throw new Error('userId is required for merging players');
+    }
+
+    // Verify both players belong to this user
+    const source = db.prepare(`SELECT display_name FROM players WHERE id = ? AND user_id = ?`).get(sourcePlayerId, userId);
+    const target = db.prepare(`SELECT id FROM players WHERE id = ? AND user_id = ?`).get(targetPlayerId, userId);
+
+    if (!source) {
+        throw new Error('Source player not found or does not belong to user');
+    }
+    if (!target) {
+        throw new Error('Target player not found or does not belong to user');
+    }
+
     const mergeTransaction = db.transaction(() => {
-        // Move aliases
+        // Move aliases (scoped to user)
         db.prepare(`
-            UPDATE OR IGNORE player_aliases SET player_id = ? WHERE player_id = ?
-        `).run(targetPlayerId, sourcePlayerId);
+            UPDATE OR IGNORE player_aliases SET player_id = ? WHERE player_id = ? AND user_id = ?
+        `).run(targetPlayerId, sourcePlayerId, userId);
 
         // Add source name as alias to target
-        const source = db.prepare(`SELECT display_name FROM players WHERE id = ?`).get(sourcePlayerId);
         if (source) {
-            addPlayerAlias(targetPlayerId, source.display_name);
+            addPlayerAlias(targetPlayerId, source.display_name, userId);
         }
 
         // Update tournament participants
@@ -757,12 +792,12 @@ function mergePlayers(sourcePlayerId, targetPlayerId) {
         db.prepare(`UPDATE matches SET winner_id = ? WHERE winner_id = ?`).run(targetPlayerId, sourcePlayerId);
         db.prepare(`UPDATE matches SET loser_id = ? WHERE loser_id = ?`).run(targetPlayerId, sourcePlayerId);
 
-        // Merge ratings (keep higher rating)
-        const sourceRatings = db.prepare(`SELECT * FROM player_ratings WHERE player_id = ?`).all(sourcePlayerId);
+        // Merge ratings (keep higher rating, scoped to user)
+        const sourceRatings = db.prepare(`SELECT * FROM player_ratings WHERE player_id = ? AND user_id = ?`).all(sourcePlayerId, userId);
         for (const sr of sourceRatings) {
             const targetRating = db.prepare(`
-                SELECT * FROM player_ratings WHERE player_id = ? AND game_id = ?
-            `).get(targetPlayerId, sr.game_id);
+                SELECT * FROM player_ratings WHERE player_id = ? AND game_id = ? AND user_id = ?
+            `).get(targetPlayerId, sr.game_id, userId);
 
             if (targetRating) {
                 // Merge: keep higher rating, sum stats
@@ -773,8 +808,8 @@ function mergePlayers(sourcePlayerId, targetPlayerId) {
                         matches_played = matches_played + ?,
                         wins = wins + ?,
                         losses = losses + ?
-                    WHERE player_id = ? AND game_id = ?
-                `).run(sr.elo_rating, sr.peak_rating, sr.matches_played, sr.wins, sr.losses, targetPlayerId, sr.game_id);
+                    WHERE player_id = ? AND game_id = ? AND user_id = ?
+                `).run(sr.elo_rating, sr.peak_rating, sr.matches_played, sr.wins, sr.losses, targetPlayerId, sr.game_id, userId);
             } else {
                 // Move rating to target
                 db.prepare(`UPDATE player_ratings SET player_id = ? WHERE id = ?`).run(targetPlayerId, sr.id);
@@ -784,8 +819,8 @@ function mergePlayers(sourcePlayerId, targetPlayerId) {
         // Update rating history
         db.prepare(`UPDATE rating_history SET player_id = ? WHERE player_id = ?`).run(targetPlayerId, sourcePlayerId);
 
-        // Delete source player
-        db.prepare(`DELETE FROM players WHERE id = ?`).run(sourcePlayerId);
+        // Delete source player (scoped to user)
+        db.prepare(`DELETE FROM players WHERE id = ? AND user_id = ?`).run(sourcePlayerId, userId);
     });
 
     mergeTransaction();
@@ -866,26 +901,38 @@ function getAllGames() {
 // ============================================
 
 /**
- * Check if tournament is already archived
+ * Check if tournament is already archived (scoped to user)
+ * @param {string} challongeUrl - Tournament URL slug
+ * @param {number} userId - User ID for tenant isolation
  */
-function isTournamentArchived(challongeUrl) {
+function isTournamentArchived(challongeUrl, userId) {
     const db = getDb();
-    const existing = db.prepare(`SELECT id FROM tournaments WHERE challonge_url = ?`).get(challongeUrl);
+    if (!userId) {
+        throw new Error('userId is required to check tournament archive status');
+    }
+    const existing = db.prepare(`SELECT id FROM tournaments WHERE challonge_url = ? AND user_id = ?`).get(challongeUrl, userId);
     return !!existing;
 }
 
 /**
- * Archive a tournament
+ * Archive a tournament (scoped to user)
+ * @param {Object} tournamentData - Tournament data to archive
+ * @param {number} tournamentData.userId - User ID for tenant isolation (required)
  */
 function archiveTournament(tournamentData) {
     const db = getDb();
 
+    if (!tournamentData.userId) {
+        throw new Error('userId is required to archive tournament');
+    }
+
     const result = db.prepare(`
         INSERT INTO tournaments (
-            challonge_id, challonge_url, name, game_id, tournament_type,
+            user_id, challonge_id, challonge_url, name, game_id, tournament_type,
             participant_count, started_at, completed_at, full_challonge_url
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
+        tournamentData.userId,
         tournamentData.challongeId,
         tournamentData.challongeUrl,
         tournamentData.name,
@@ -901,21 +948,31 @@ function archiveTournament(tournamentData) {
 }
 
 /**
- * Get archived tournaments with filters
+ * Get archived tournaments with filters (multi-tenant)
+ * @param {Object} options - Query options
+ * @param {number} options.userId - User ID for tenant isolation (required)
+ * @param {number} options.gameId - Optional game filter
+ * @param {number} options.limit - Max results (default 50)
+ * @param {number} options.offset - Offset for pagination
  */
 function getArchivedTournaments(options = {}) {
     const db = getDb();
-    const { gameId, limit = 50, offset = 0 } = options;
+    const { userId, gameId, limit = 50, offset = 0 } = options;
+
+    if (!userId) {
+        throw new Error('userId is required to get archived tournaments');
+    }
 
     let query = `
         SELECT t.*, g.name as game_name, g.short_code as game_short_code
         FROM tournaments t
         JOIN games g ON t.game_id = g.id
+        WHERE t.user_id = ?
     `;
-    const params = [];
+    const params = [userId];
 
     if (gameId) {
-        query += ` WHERE t.game_id = ?`;
+        query += ` AND t.game_id = ?`;
         params.push(gameId);
     }
 
@@ -926,17 +983,23 @@ function getArchivedTournaments(options = {}) {
 }
 
 /**
- * Get tournament by ID with full details
+ * Get tournament by ID with full details (multi-tenant)
+ * @param {number} tournamentId - Tournament ID
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function getTournamentById(tournamentId) {
+function getTournamentById(tournamentId, userId) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get tournament');
+    }
 
     const tournament = db.prepare(`
         SELECT t.*, g.name as game_name, g.short_code as game_short_code
         FROM tournaments t
         JOIN games g ON t.game_id = g.id
-        WHERE t.id = ?
-    `).get(tournamentId);
+        WHERE t.id = ? AND t.user_id = ?
+    `).get(tournamentId, userId);
 
     if (!tournament) return null;
 
@@ -1064,22 +1127,30 @@ function calculateEloChange(winnerRating, loserRating) {
 }
 
 /**
- * Get or create player rating for a game
+ * Get or create player rating for a game (multi-tenant)
+ * @param {number} playerId - Player ID
+ * @param {number} gameId - Game ID
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function getOrCreatePlayerRating(playerId, gameId) {
+function getOrCreatePlayerRating(playerId, gameId, userId) {
     const db = getDb();
 
+    if (!userId) {
+        throw new Error('userId is required to get/create player rating');
+    }
+
     let rating = db.prepare(`
-        SELECT * FROM player_ratings WHERE player_id = ? AND game_id = ?
-    `).get(playerId, gameId);
+        SELECT * FROM player_ratings WHERE player_id = ? AND game_id = ? AND user_id = ?
+    `).get(playerId, gameId, userId);
 
     if (!rating) {
         db.prepare(`
-            INSERT INTO player_ratings (player_id, game_id) VALUES (?, ?)
-        `).run(playerId, gameId);
+            INSERT INTO player_ratings (player_id, game_id, user_id) VALUES (?, ?, ?)
+        `).run(playerId, gameId, userId);
         rating = {
             player_id: playerId,
             game_id: gameId,
+            user_id: userId,
             elo_rating: ELO_INITIAL_RATING,
             peak_rating: ELO_INITIAL_RATING,
             matches_played: 0,
@@ -1092,11 +1163,18 @@ function getOrCreatePlayerRating(playerId, gameId) {
 }
 
 /**
- * Update Elo ratings for a tournament
+ * Update Elo ratings for a tournament (multi-tenant)
  * Process matches in order and update ratings
+ * @param {number} tournamentId - Tournament ID
+ * @param {number} gameId - Game ID
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function updateEloRatings(tournamentId, gameId) {
+function updateEloRatings(tournamentId, gameId, userId) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to update Elo ratings');
+    }
 
     // Get all completed matches for this tournament, ordered by completion time
     const matches = db.prepare(`
@@ -1109,8 +1187,8 @@ function updateEloRatings(tournamentId, gameId) {
         for (const match of matches) {
             if (!match.winner_id || !match.loser_id) continue;
 
-            const winnerRating = getOrCreatePlayerRating(match.winner_id, gameId);
-            const loserRating = getOrCreatePlayerRating(match.loser_id, gameId);
+            const winnerRating = getOrCreatePlayerRating(match.winner_id, gameId, userId);
+            const loserRating = getOrCreatePlayerRating(match.loser_id, gameId, userId);
 
             const { winnerChange, loserChange } = calculateEloChange(
                 winnerRating.elo_rating,
@@ -1120,7 +1198,7 @@ function updateEloRatings(tournamentId, gameId) {
             const newWinnerRating = winnerRating.elo_rating + winnerChange;
             const newLoserRating = Math.max(100, loserRating.elo_rating + loserChange);
 
-            // Update winner
+            // Update winner (with user_id filter for multi-tenant)
             db.prepare(`
                 UPDATE player_ratings SET
                     elo_rating = ?,
@@ -1128,18 +1206,18 @@ function updateEloRatings(tournamentId, gameId) {
                     matches_played = matches_played + 1,
                     wins = wins + 1,
                     last_active = CURRENT_TIMESTAMP
-                WHERE player_id = ? AND game_id = ?
-            `).run(newWinnerRating, newWinnerRating, match.winner_id, gameId);
+                WHERE player_id = ? AND game_id = ? AND user_id = ?
+            `).run(newWinnerRating, newWinnerRating, match.winner_id, gameId, userId);
 
-            // Update loser
+            // Update loser (with user_id filter for multi-tenant)
             db.prepare(`
                 UPDATE player_ratings SET
                     elo_rating = ?,
                     matches_played = matches_played + 1,
                     losses = losses + 1,
                     last_active = CURRENT_TIMESTAMP
-                WHERE player_id = ? AND game_id = ?
-            `).run(newLoserRating, match.loser_id, gameId);
+                WHERE player_id = ? AND game_id = ? AND user_id = ?
+            `).run(newLoserRating, match.loser_id, gameId, userId);
 
             // Record rating history for winner
             db.prepare(`
@@ -1163,11 +1241,21 @@ function updateEloRatings(tournamentId, gameId) {
 // ============================================
 
 /**
- * Get player rankings for a game
+ * Get player rankings for a game (multi-tenant)
+ * @param {number} gameId - Game ID
+ * @param {Object} options - Query options
+ * @param {number} options.userId - User ID for tenant isolation (required)
+ * @param {number} options.limit - Max results (default 50)
+ * @param {number} options.offset - Offset for pagination
+ * @param {string} options.sortBy - Sort field
  */
 function getPlayerRankings(gameId, options = {}) {
     const db = getDb();
-    const { limit = 50, offset = 0, sortBy = 'elo' } = options;
+    const { userId, limit = 50, offset = 0, sortBy = 'elo' } = options;
+
+    if (!userId) {
+        throw new Error('userId is required to get player rankings');
+    }
 
     let orderBy = 'pr.elo_rating DESC';
     switch (sortBy) {
@@ -1186,27 +1274,34 @@ function getPlayerRankings(gameId, options = {}) {
             (SELECT COUNT(DISTINCT tp.tournament_id)
              FROM tournament_participants tp
              JOIN tournaments t ON tp.tournament_id = t.id
-             WHERE tp.player_id = p.id AND t.game_id = ?) as attendance
+             WHERE tp.player_id = p.id AND t.game_id = ? AND t.user_id = ?) as attendance
         FROM players p
         JOIN player_ratings pr ON p.id = pr.player_id
-        WHERE pr.game_id = ? AND pr.matches_played > 0
+        WHERE pr.game_id = ? AND pr.matches_played > 0 AND pr.user_id = ?
         ORDER BY ${orderBy}
         LIMIT ? OFFSET ?
     `;
 
-    return db.prepare(query).all(gameId, gameId, limit, offset);
+    return db.prepare(query).all(gameId, userId, gameId, userId, limit, offset);
 }
 
 /**
- * Get player profile with all stats
+ * Get player profile with all stats (multi-tenant)
+ * @param {number} playerId - Player ID
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function getPlayerProfile(playerId) {
+function getPlayerProfile(playerId, userId) {
     const db = getDb();
 
-    const player = db.prepare(`SELECT * FROM players WHERE id = ?`).get(playerId);
+    if (!userId) {
+        throw new Error('userId is required to get player profile');
+    }
+
+    // Verify player belongs to this user
+    const player = db.prepare(`SELECT * FROM players WHERE id = ? AND user_id = ?`).get(playerId, userId);
     if (!player) return null;
 
-    // Get stats per game
+    // Get stats per game (filtered by user's ratings)
     const gameStats = db.prepare(`
         SELECT
             g.id as game_id, g.name as game_name, g.short_code,
@@ -1216,14 +1311,14 @@ function getPlayerProfile(playerId) {
             (SELECT COUNT(DISTINCT tp.tournament_id)
              FROM tournament_participants tp
              JOIN tournaments t ON tp.tournament_id = t.id
-             WHERE tp.player_id = ? AND t.game_id = g.id) as tournaments_attended
+             WHERE tp.player_id = ? AND t.game_id = g.id AND t.user_id = ?) as tournaments_attended
         FROM player_ratings pr
         JOIN games g ON pr.game_id = g.id
-        WHERE pr.player_id = ?
+        WHERE pr.player_id = ? AND pr.user_id = ?
         ORDER BY pr.matches_played DESC
-    `).all(playerId, playerId);
+    `).all(playerId, userId, playerId, userId);
 
-    // Get recent matches
+    // Get recent matches (only from user's tournaments)
     const recentMatches = db.prepare(`
         SELECT
             m.*,
@@ -1237,12 +1332,12 @@ function getPlayerProfile(playerId) {
         JOIN games g ON t.game_id = g.id
         LEFT JOIN players p1 ON m.player1_id = p1.id
         LEFT JOIN players p2 ON m.player2_id = p2.id
-        WHERE m.player1_id = ? OR m.player2_id = ?
+        WHERE (m.player1_id = ? OR m.player2_id = ?) AND t.user_id = ?
         ORDER BY m.completed_at DESC
         LIMIT 20
-    `).all(playerId, playerId, playerId);
+    `).all(playerId, playerId, playerId, userId);
 
-    // Get rating history
+    // Get rating history (only from user's tournaments)
     const ratingHistory = db.prepare(`
         SELECT
             rh.*,
@@ -1251,12 +1346,12 @@ function getPlayerProfile(playerId) {
         FROM rating_history rh
         JOIN tournaments t ON rh.tournament_id = t.id
         JOIN games g ON rh.game_id = g.id
-        WHERE rh.player_id = ?
+        WHERE rh.player_id = ? AND t.user_id = ?
         ORDER BY rh.recorded_at DESC
         LIMIT 50
-    `).all(playerId);
+    `).all(playerId, userId);
 
-    // Get tournament placements
+    // Get tournament placements (only from user's tournaments)
     const placements = db.prepare(`
         SELECT
             tp.final_rank, tp.seed,
@@ -1266,15 +1361,15 @@ function getPlayerProfile(playerId) {
         FROM tournament_participants tp
         JOIN tournaments t ON tp.tournament_id = t.id
         JOIN games g ON t.game_id = g.id
-        WHERE tp.player_id = ?
+        WHERE tp.player_id = ? AND t.user_id = ?
         ORDER BY t.completed_at DESC
         LIMIT 20
-    `).all(playerId);
+    `).all(playerId, userId);
 
-    // Get aliases
+    // Get aliases (filtered by user)
     const aliases = db.prepare(`
-        SELECT alias FROM player_aliases WHERE player_id = ?
-    `).all(playerId);
+        SELECT alias FROM player_aliases WHERE player_id = ? AND user_id = ?
+    `).all(playerId, userId);
 
     return {
         player,
@@ -1287,10 +1382,18 @@ function getPlayerProfile(playerId) {
 }
 
 /**
- * Get head-to-head record between two players
+ * Get head-to-head record between two players (multi-tenant)
+ * @param {number} player1Id - First player ID
+ * @param {number} player2Id - Second player ID
+ * @param {number} userId - User ID for tenant isolation (required)
+ * @param {number} gameId - Optional game filter
  */
-function getHeadToHead(player1Id, player2Id, gameId = null) {
+function getHeadToHead(player1Id, player2Id, userId, gameId = null) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get head-to-head');
+    }
 
     let query = `
         SELECT
@@ -1302,8 +1405,9 @@ function getHeadToHead(player1Id, player2Id, gameId = null) {
         JOIN tournaments t ON m.tournament_id = t.id
         JOIN games g ON t.game_id = g.id
         WHERE ((m.player1_id = ? AND m.player2_id = ?) OR (m.player1_id = ? AND m.player2_id = ?))
+        AND t.user_id = ?
     `;
-    const params = [player1Id, player2Id, player2Id, player1Id];
+    const params = [player1Id, player2Id, player2Id, player1Id, userId];
 
     if (gameId) {
         query += ` AND t.game_id = ?`;
@@ -1314,8 +1418,9 @@ function getHeadToHead(player1Id, player2Id, gameId = null) {
 
     const matches = db.prepare(query).all(...params);
 
-    const player1 = db.prepare(`SELECT * FROM players WHERE id = ?`).get(player1Id);
-    const player2 = db.prepare(`SELECT * FROM players WHERE id = ?`).get(player2Id);
+    // Verify players belong to this user
+    const player1 = db.prepare(`SELECT * FROM players WHERE id = ? AND user_id = ?`).get(player1Id, userId);
+    const player2 = db.prepare(`SELECT * FROM players WHERE id = ? AND user_id = ?`).get(player2Id, userId);
 
     let player1Wins = 0;
     let player2Wins = 0;
@@ -1337,43 +1442,49 @@ function getHeadToHead(player1Id, player2Id, gameId = null) {
 }
 
 /**
- * Get overview statistics
+ * Get overview statistics (multi-tenant)
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function getOverviewStats() {
+function getOverviewStats(userId) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get overview stats');
+    }
 
     const totals = db.prepare(`
         SELECT
-            (SELECT COUNT(*) FROM tournaments) as total_tournaments,
-            (SELECT COUNT(*) FROM players) as total_players,
-            (SELECT COUNT(*) FROM matches WHERE winner_id IS NOT NULL) as total_matches
-    `).get();
+            (SELECT COUNT(*) FROM tournaments WHERE user_id = ?) as total_tournaments,
+            (SELECT COUNT(*) FROM players WHERE user_id = ?) as total_players,
+            (SELECT COUNT(*) FROM matches m JOIN tournaments t ON m.tournament_id = t.id WHERE m.winner_id IS NOT NULL AND t.user_id = ?) as total_matches
+    `).get(userId, userId, userId);
 
     const gameBreakdown = db.prepare(`
         SELECT g.name, g.short_code, COUNT(t.id) as count
         FROM games g
-        LEFT JOIN tournaments t ON g.id = t.game_id
+        LEFT JOIN tournaments t ON g.id = t.game_id AND t.user_id = ?
         GROUP BY g.id
         ORDER BY count DESC
-    `).all();
+    `).all(userId);
 
     const recentTournaments = db.prepare(`
         SELECT t.*, g.name as game_name
         FROM tournaments t
         JOIN games g ON t.game_id = g.id
+        WHERE t.user_id = ?
         ORDER BY t.completed_at DESC
         LIMIT 5
-    `).all();
+    `).all(userId);
 
     const topPlayers = db.prepare(`
         SELECT p.display_name, g.name as game_name, pr.elo_rating
         FROM player_ratings pr
         JOIN players p ON pr.player_id = p.id
         JOIN games g ON pr.game_id = g.id
-        WHERE pr.matches_played >= 3
+        WHERE pr.matches_played >= 3 AND pr.user_id = ?
         ORDER BY pr.elo_rating DESC
         LIMIT 10
-    `).all();
+    `).all(userId);
 
     return {
         ...totals,
@@ -1384,16 +1495,23 @@ function getOverviewStats() {
 }
 
 /**
- * Get attendance statistics
+ * Get attendance statistics (multi-tenant)
+ * @param {number} userId - User ID for tenant isolation (required)
+ * @param {number} gameId - Optional game filter
+ * @param {number} months - Number of months to look back (default 6)
  */
-function getAttendanceStats(gameId = null, months = 6) {
+function getAttendanceStats(userId, gameId = null, months = 6) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get attendance stats');
+    }
 
     const cutoffDate = new Date();
     cutoffDate.setMonth(cutoffDate.getMonth() - months);
 
-    let whereClause = `WHERE t.completed_at >= ?`;
-    const params = [cutoffDate.toISOString()];
+    let whereClause = `WHERE t.completed_at >= ? AND t.user_id = ?`;
+    const params = [cutoffDate.toISOString(), userId];
 
     if (gameId) {
         whereClause += ` AND t.game_id = ?`;
@@ -1416,7 +1534,7 @@ function getAttendanceStats(gameId = null, months = 6) {
 
     const monthlyAttendance = db.prepare(monthlyQuery).all(...params);
 
-    // New vs returning players per month
+    // New vs returning players per month (scoped to user's tournaments)
     const newVsReturningQuery = `
         SELECT
             strftime('%Y-%m', t.completed_at) as month,
@@ -1425,14 +1543,14 @@ function getAttendanceStats(gameId = null, months = 6) {
             (SELECT MIN(t2.completed_at)
              FROM tournament_participants tp2
              JOIN tournaments t2 ON tp2.tournament_id = t2.id
-             WHERE tp2.player_id = tp.player_id) as first_tournament
+             WHERE tp2.player_id = tp.player_id AND t2.user_id = ?) as first_tournament
         FROM tournament_participants tp
         JOIN tournaments t ON tp.tournament_id = t.id
         JOIN players p ON tp.player_id = p.id
         ${whereClause}
     `;
 
-    const playerData = db.prepare(newVsReturningQuery).all(...params);
+    const playerData = db.prepare(newVsReturningQuery).all(userId, ...params);
 
     // Group by month and count new vs returning
     const newVsReturning = {};
@@ -1448,7 +1566,7 @@ function getAttendanceStats(gameId = null, months = 6) {
         }
     }
 
-    // Top attendees
+    // Top attendees (within user's tournaments)
     let topAttendeesQuery = `
         SELECT
             p.id, p.display_name,
@@ -1472,24 +1590,33 @@ function getAttendanceStats(gameId = null, months = 6) {
 }
 
 /**
- * Search players by name
+ * Search players by name (multi-tenant)
+ * @param {string} query - Search query
+ * @param {number} userId - User ID for tenant isolation (required)
+ * @param {number} gameId - Optional game filter
+ * @param {number} limit - Max results (default 20)
  */
-function searchPlayers(query, gameId = null, limit = 20) {
+function searchPlayers(query, userId, gameId = null, limit = 20) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to search players');
+    }
+
     const searchTerm = `%${query.toLowerCase()}%`;
 
     let sql = `
         SELECT DISTINCT p.*,
-            (SELECT pr.elo_rating FROM player_ratings pr WHERE pr.player_id = p.id LIMIT 1) as elo
+            (SELECT pr.elo_rating FROM player_ratings pr WHERE pr.player_id = p.id AND pr.user_id = ? LIMIT 1) as elo
         FROM players p
-        LEFT JOIN player_aliases pa ON p.id = pa.player_id
-        WHERE p.canonical_name LIKE ? OR p.display_name LIKE ? OR pa.alias LIKE ?
+        LEFT JOIN player_aliases pa ON p.id = pa.player_id AND pa.user_id = ?
+        WHERE p.user_id = ? AND (p.canonical_name LIKE ? OR p.display_name LIKE ? OR pa.alias LIKE ?)
     `;
-    const params = [searchTerm, searchTerm, searchTerm];
+    const params = [userId, userId, userId, searchTerm, searchTerm, searchTerm];
 
     if (gameId) {
-        sql += ` AND EXISTS (SELECT 1 FROM player_ratings pr WHERE pr.player_id = p.id AND pr.game_id = ?)`;
-        params.push(gameId);
+        sql += ` AND EXISTS (SELECT 1 FROM player_ratings pr WHERE pr.player_id = p.id AND pr.game_id = ? AND pr.user_id = ?)`;
+        params.push(gameId, userId);
     }
 
     sql += ` ORDER BY p.display_name LIMIT ?`;
@@ -1499,27 +1626,44 @@ function searchPlayers(query, gameId = null, limit = 20) {
 }
 
 /**
- * Get unmatched players queue
+ * Get unmatched players queue (scoped to user via tournament)
+ * @param {number} userId - User ID for tenant isolation
  */
-function getUnmatchedPlayers() {
+function getUnmatchedPlayers(userId) {
     const db = getDb();
+    if (!userId) {
+        throw new Error('userId is required to get unmatched players');
+    }
     return db.prepare(`
         SELECT up.*, t.name as tournament_name,
             sp.display_name as suggested_name
         FROM unmatched_players up
         JOIN tournaments t ON up.tournament_id = t.id
         LEFT JOIN players sp ON up.suggested_player_id = sp.id
-        WHERE up.resolved = 0
+        WHERE up.resolved = 0 AND t.user_id = ?
         ORDER BY up.created_at DESC
-    `).all();
+    `).all(userId);
 }
 
 /**
- * Add to unmatched queue
+ * Add to unmatched queue (userId used for verification)
+ * @param {number} tournamentId - Tournament ID
+ * @param {string} originalName - Original player name
+ * @param {number} suggestedPlayerId - Suggested player ID to merge with
+ * @param {number} similarityScore - Name similarity score
+ * @param {number} userId - User ID for tenant verification
  */
-function addUnmatchedPlayer(tournamentId, originalName, suggestedPlayerId = null, similarityScore = null) {
+function addUnmatchedPlayer(tournamentId, originalName, suggestedPlayerId = null, similarityScore = null, userId = null) {
     const db = getDb();
     const normalized = normalizePlayerName(originalName);
+
+    // Verify tournament belongs to user if userId provided
+    if (userId) {
+        const tournament = db.prepare(`SELECT id FROM tournaments WHERE id = ? AND user_id = ?`).get(tournamentId, userId);
+        if (!tournament) {
+            throw new Error('Tournament not found or does not belong to user');
+        }
+    }
 
     db.prepare(`
         INSERT INTO unmatched_players (tournament_id, original_name, normalized_name, suggested_player_id, similarity_score)
@@ -1528,16 +1672,35 @@ function addUnmatchedPlayer(tournamentId, originalName, suggestedPlayerId = null
 }
 
 /**
- * Resolve unmatched player
+ * Resolve unmatched player (scoped to user via tournament)
+ * @param {number} unmatchedId - Unmatched player record ID
+ * @param {number} playerId - Player ID to associate with
+ * @param {number} userId - User ID for tenant verification
  */
-function resolveUnmatchedPlayer(unmatchedId, playerId) {
+function resolveUnmatchedPlayer(unmatchedId, playerId, userId) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to resolve unmatched player');
+    }
+
+    // Verify unmatched player belongs to user's tournament
+    const unmatched = db.prepare(`
+        SELECT up.original_name, t.user_id
+        FROM unmatched_players up
+        JOIN tournaments t ON up.tournament_id = t.id
+        WHERE up.id = ?
+    `).get(unmatchedId);
+
+    if (!unmatched || unmatched.user_id !== userId) {
+        throw new Error('Unmatched player not found or does not belong to user');
+    }
+
     db.prepare(`UPDATE unmatched_players SET resolved = 1 WHERE id = ?`).run(unmatchedId);
 
-    // Optionally add as alias
-    const unmatched = db.prepare(`SELECT original_name FROM unmatched_players WHERE id = ?`).get(unmatchedId);
+    // Optionally add as alias (scoped to user)
     if (unmatched && playerId) {
-        addPlayerAlias(playerId, unmatched.original_name);
+        addPlayerAlias(playerId, unmatched.original_name, userId);
     }
 }
 
@@ -2006,10 +2169,21 @@ function getApiToken(tokenId) {
 // ============================================
 
 /**
- * Get Elo rating changes for all players in a tournament
+ * Get Elo rating changes for all players in a tournament (multi-tenant)
+ * @param {number} tournamentId - Tournament ID
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function getEloChangesForTournament(tournamentId) {
+function getEloChangesForTournament(tournamentId, userId) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get Elo changes');
+    }
+
+    // Verify tournament belongs to user
+    const tournament = db.prepare(`SELECT id FROM tournaments WHERE id = ? AND user_id = ?`).get(tournamentId, userId);
+    if (!tournament) return [];
+
     return db.prepare(`
         SELECT
             rh.player_id,
@@ -2026,17 +2200,24 @@ function getEloChangesForTournament(tournamentId) {
 }
 
 /**
- * Get new vs returning player counts for a tournament
+ * Get new vs returning player counts for a tournament (multi-tenant)
+ * @param {number} tournamentId - Tournament ID
+ * @param {number} userId - User ID for tenant isolation (required)
  */
-function getNewVsReturningPlayers(tournamentId) {
+function getNewVsReturningPlayers(tournamentId, userId) {
     const db = getDb();
 
+    if (!userId) {
+        throw new Error('userId is required to get new vs returning players');
+    }
+
     const tournament = db.prepare(`
-        SELECT id, game_id, started_at FROM tournaments WHERE id = ?
-    `).get(tournamentId);
+        SELECT id, game_id, started_at FROM tournaments WHERE id = ? AND user_id = ?
+    `).get(tournamentId, userId);
 
     if (!tournament) return { total: 0, new: 0, returning: 0, returnRate: 0 };
 
+    // Count returning players (scoped to user's tournaments)
     const result = db.prepare(`
         SELECT
             COUNT(DISTINCT tp.player_id) as total,
@@ -2048,11 +2229,12 @@ function getNewVsReturningPlayers(tournamentId) {
                     AND t2.game_id = ?
                     AND t2.started_at < ?
                     AND t2.id != ?
+                    AND t2.user_id = ?
                 ) > 0 THEN tp.player_id
             END) as returning_count
         FROM tournament_participants tp
         WHERE tp.tournament_id = ?
-    `).get(tournament.game_id, tournament.started_at, tournamentId, tournamentId);
+    `).get(tournament.game_id, tournament.started_at, tournamentId, userId, tournamentId);
 
     return {
         total: result.total,
@@ -2520,25 +2702,29 @@ function getAllNarrativesForTournament(tournamentId) {
 }
 
 /**
- * Get recent matchups between a set of players
+ * Get recent matchups between a set of players (multi-tenant)
  * Used to avoid repeat matchups in AI seeding
  * @param {Array<number>} playerIds - Array of player IDs to check
  * @param {number} gameId - Game ID to filter by
+ * @param {number} userId - User ID for tenant isolation (required)
  * @param {number} tournamentLimit - Number of recent tournaments to check (default 2)
  * @returns {Array} Array of {player1Id, player2Id, tournamentName, round, completedAt}
  */
-function getPlayerRecentMatchups(playerIds, gameId, tournamentLimit = 2) {
+function getPlayerRecentMatchups(playerIds, gameId, userId, tournamentLimit = 2) {
     const db = getDb();
 
     if (!playerIds || playerIds.length < 2) return [];
+    if (!userId) {
+        throw new Error('userId is required to get player recent matchups');
+    }
 
-    // Get the most recent tournaments for this game
+    // Get the most recent tournaments for this game (within user's tournaments)
     const recentTournaments = db.prepare(`
         SELECT id, name FROM tournaments
-        WHERE game_id = ?
+        WHERE game_id = ? AND user_id = ?
         ORDER BY completed_at DESC
         LIMIT ?
-    `).all(gameId, tournamentLimit);
+    `).all(gameId, userId, tournamentLimit);
 
     if (recentTournaments.length === 0) return [];
 
@@ -2574,34 +2760,44 @@ function getPlayerRecentMatchups(playerIds, gameId, tournamentLimit = 2) {
 }
 
 /**
- * Get tournament count for a player in a specific game
+ * Get tournament count for a player in a specific game (multi-tenant)
  * Used to identify new players (< 3 tournaments)
  * @param {number} playerId - Player ID
  * @param {number} gameId - Game ID
+ * @param {number} userId - User ID for tenant isolation (required)
  * @returns {number} Number of tournaments attended
  */
-function getPlayerTournamentCount(playerId, gameId) {
+function getPlayerTournamentCount(playerId, gameId, userId) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get player tournament count');
+    }
 
     const result = db.prepare(`
         SELECT COUNT(DISTINCT tp.tournament_id) as count
         FROM tournament_participants tp
         JOIN tournaments t ON tp.tournament_id = t.id
-        WHERE tp.player_id = ? AND t.game_id = ?
-    `).get(playerId, gameId);
+        WHERE tp.player_id = ? AND t.game_id = ? AND t.user_id = ?
+    `).get(playerId, gameId, userId);
 
     return result?.count || 0;
 }
 
 /**
- * Get recent tournament placements for a player
+ * Get recent tournament placements for a player (multi-tenant)
  * @param {number} playerId - Player ID
  * @param {number} gameId - Game ID
+ * @param {number} userId - User ID for tenant isolation (required)
  * @param {number} limit - Number of placements to return (default 5)
  * @returns {Array} Array of {tournamentName, finalRank, seed, participantCount, completedAt}
  */
-function getPlayerRecentPlacements(playerId, gameId, limit = 5) {
+function getPlayerRecentPlacements(playerId, gameId, userId, limit = 5) {
     const db = getDb();
+
+    if (!userId) {
+        throw new Error('userId is required to get player recent placements');
+    }
 
     return db.prepare(`
         SELECT
@@ -2612,35 +2808,40 @@ function getPlayerRecentPlacements(playerId, gameId, limit = 5) {
             t.completed_at
         FROM tournament_participants tp
         JOIN tournaments t ON tp.tournament_id = t.id
-        WHERE tp.player_id = ? AND t.game_id = ?
+        WHERE tp.player_id = ? AND t.game_id = ? AND t.user_id = ?
         ORDER BY t.completed_at DESC
         LIMIT ?
-    `).all(playerId, gameId, limit);
+    `).all(playerId, gameId, userId, limit);
 }
 
 /**
- * Get comprehensive player data for AI seeding
+ * Get comprehensive player data for AI seeding (multi-tenant)
  * @param {number} playerId - Player ID
  * @param {number} gameId - Game ID
+ * @param {number} userId - User ID for tenant isolation (required)
  * @returns {Object|null} Player data with ELO, stats, and history
  */
-function getPlayerSeedingData(playerId, gameId) {
+function getPlayerSeedingData(playerId, gameId, userId) {
     const db = getDb();
 
-    // Get player basic info
-    const player = db.prepare(`SELECT * FROM players WHERE id = ?`).get(playerId);
+    if (!userId) {
+        throw new Error('userId is required to get player seeding data');
+    }
+
+    // Get player basic info (verify belongs to user)
+    const player = db.prepare(`SELECT * FROM players WHERE id = ? AND user_id = ?`).get(playerId, userId);
     if (!player) return null;
 
-    // Get rating for this game
+    // Get rating for this game (user-scoped)
     const rating = db.prepare(`
-        SELECT * FROM player_ratings WHERE player_id = ? AND game_id = ?
-    `).get(playerId, gameId);
+        SELECT * FROM player_ratings WHERE player_id = ? AND game_id = ? AND user_id = ?
+    `).get(playerId, gameId, userId);
 
-    // Get tournament count
-    const tournamentCount = getPlayerTournamentCount(playerId, gameId);
+    // Get tournament count (user-scoped)
+    const tournamentCount = getPlayerTournamentCount(playerId, gameId, userId);
 
-    // Get recent placements
-    const recentPlacements = getPlayerRecentPlacements(playerId, gameId, 5);
+    // Get recent placements (user-scoped)
+    const recentPlacements = getPlayerRecentPlacements(playerId, gameId, userId, 5);
 
     return {
         playerId,
