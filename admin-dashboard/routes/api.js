@@ -17,6 +17,9 @@
 const express = require('express');
 const router = express.Router();
 const QRCode = require('qrcode');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:api');
 
 // Module dependencies (injected via init)
 let axios = null;
@@ -30,10 +33,7 @@ let analyticsDb = null;
 let webpush = null;
 let VAPID_PUBLIC_KEY = null;
 let VAPID_PRIVATE_KEY = null;
-
-// State and helper references (injected via init)
-let getRateLimitStatus = null;
-let checkTournamentsAndUpdateMode = null;
+let db = null;
 
 // Emergency mode state
 let emergencyModeState = {
@@ -42,12 +42,6 @@ let emergencyModeState = {
 	activatedBy: null,
 	reason: null
 };
-let enableDevMode = null;
-let disableDevMode = null;
-let updateRateMode = null;
-let RATE_MODES = null;
-let adaptiveRateState = null;
-let devModeState = null;
 let getWebSocketStatus = null;
 let fetchAndPushMatches = null;
 let matchDataCache = null;
@@ -79,16 +73,9 @@ function init(deps) {
 	webpush = deps.webpush;
 	VAPID_PUBLIC_KEY = deps.VAPID_PUBLIC_KEY;
 	VAPID_PRIVATE_KEY = deps.VAPID_PRIVATE_KEY;
+	db = deps.db;
 
 	// State and helper references
-	getRateLimitStatus = deps.getRateLimitStatus;
-	checkTournamentsAndUpdateMode = deps.checkTournamentsAndUpdateMode;
-	enableDevMode = deps.enableDevMode;
-	disableDevMode = deps.disableDevMode;
-	updateRateMode = deps.updateRateMode;
-	RATE_MODES = deps.RATE_MODES;
-	adaptiveRateState = deps.adaptiveRateState;
-	devModeState = deps.devModeState;
 	getWebSocketStatus = deps.getWebSocketStatus;
 	fetchAndPushMatches = deps.fetchAndPushMatches;
 	matchDataCache = deps.matchDataCache;
@@ -112,7 +99,7 @@ function init(deps) {
  */
 async function sendPushNotification(subscription, payload) {
 	if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-		console.warn('[Push] VAPID keys not configured, skipping notification');
+		logger.warn('push:vapidNotConfigured', { message: 'VAPID keys not configured, skipping notification' });
 		return { success: false, error: 'VAPID keys not configured' };
 	}
 
@@ -129,11 +116,11 @@ async function sendPushNotification(subscription, payload) {
 		analyticsDb.updateSubscriptionLastUsed(subscription.endpoint);
 		return { success: true };
 	} catch (error) {
-		console.error('[Push] Error sending notification:', error.message);
+		logger.error('push:send', error, { endpoint: subscription.endpoint?.substring(0, 50) });
 		// Remove invalid subscriptions (410 Gone or 404 Not Found)
 		if (error.statusCode === 410 || error.statusCode === 404) {
 			analyticsDb.deletePushSubscription(subscription.endpoint);
-			console.log('[Push] Removed invalid subscription:', subscription.endpoint.substring(0, 50));
+			logger.log('push:removedInvalidSubscription', { endpoint: subscription.endpoint?.substring(0, 50), statusCode: error.statusCode });
 		}
 		return { success: false, error: error.message };
 	}
@@ -193,132 +180,6 @@ router.get('/status', tokenOrSessionWrapper, async (req, res) => {
 });
 
 // ============================================
-// RATE LIMIT ENDPOINTS
-// ============================================
-
-/**
- * GET /rate-limit/status
- * Get current rate limit status
- */
-router.get('/rate-limit/status', authWrapper, (req, res) => {
-	res.json({
-		success: true,
-		...getRateLimitStatus()
-	});
-});
-
-/**
- * POST /rate-limit/check
- * Manually trigger tournament check for adaptive rate limiting
- */
-router.post('/rate-limit/check', authWrapper, async (req, res) => {
-	try {
-		await checkTournamentsAndUpdateMode();
-		res.json({
-			success: true,
-			message: 'Tournament check completed',
-			...getRateLimitStatus()
-		});
-	} catch (error) {
-		res.status(500).json({
-			success: false,
-			error: error.message
-		});
-	}
-});
-
-/**
- * POST /rate-limit/dev-mode/enable
- * Enable development mode (3-hour rate limit bypass)
- */
-router.post('/rate-limit/dev-mode/enable', authWrapper, adminWrapper, (req, res) => {
-	enableDevMode();
-
-	// Log who enabled it
-	logActivity(req.session.userId, req.session.username, 'dev_mode_enabled', {
-		expiresAt: new Date(devModeState.expiresAt).toISOString()
-	});
-
-	res.json({
-		success: true,
-		message: 'Development mode enabled for 3 hours',
-		...getRateLimitStatus()
-	});
-});
-
-/**
- * POST /rate-limit/dev-mode/disable
- * Disable development mode
- */
-router.post('/rate-limit/dev-mode/disable', authWrapper, adminWrapper, (req, res) => {
-	disableDevMode();
-
-	// Log who disabled it
-	logActivity(req.session.userId, req.session.username, 'dev_mode_disabled', {});
-
-	res.json({
-		success: true,
-		message: 'Development mode disabled',
-		...getRateLimitStatus()
-	});
-});
-
-/**
- * POST /rate-limit/mode
- * Set manual rate mode override
- */
-router.post('/rate-limit/mode', authWrapper, adminWrapper, (req, res) => {
-	const { mode } = req.body;
-
-	// Valid modes: IDLE, UPCOMING, ACTIVE, or null/auto to clear override
-	const validModes = ['IDLE', 'UPCOMING', 'ACTIVE', 'auto', null];
-
-	if (!validModes.includes(mode)) {
-		return res.status(400).json({
-			success: false,
-			error: 'Invalid mode. Valid modes: IDLE, UPCOMING, ACTIVE, or auto'
-		});
-	}
-
-	if (mode === 'auto' || mode === null) {
-		// Clear manual override
-		adaptiveRateState.manualOverride = null;
-		console.log('[Adaptive Rate] Manual override cleared - returning to automatic mode');
-
-		logActivity(req.session.userId, req.session.username, 'rate_mode_override_cleared', {});
-
-		// Trigger an immediate tournament check to set the correct mode
-		checkTournamentsAndUpdateMode();
-
-		res.json({
-			success: true,
-			message: 'Rate mode set to automatic',
-			...getRateLimitStatus()
-		});
-	} else {
-		// Set manual override
-		const modeObj = RATE_MODES[mode];
-		adaptiveRateState.manualOverride = modeObj;
-
-		// Apply the mode immediately
-		updateRateMode(modeObj);
-
-		console.log(`[Adaptive Rate] Manual override set to ${mode}`);
-
-		logActivity(req.session.userId, req.session.username, 'rate_mode_override_set', {
-			mode: mode,
-			effectiveRate: adaptiveRateState.effectiveRate
-		});
-
-		res.json({
-			success: true,
-			message: `Rate mode manually set to ${mode}`,
-			...getRateLimitStatus()
-		});
-	}
-});
-
-// ============================================
 // CACHE MANAGEMENT ENDPOINTS
 // ============================================
 
@@ -335,7 +196,7 @@ router.get('/cache/status', authWrapper, (req, res) => {
 			activeTournamentMode: false
 		});
 	} catch (error) {
-		console.error('[Cache API] Error getting cache status:', error.message);
+		logger.error('cache:getStatus', error);
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -365,7 +226,7 @@ router.post('/cache/invalidate', authWrapper, (req, res) => {
 			? `Cache invalidated for ${type}/${key}`
 			: `All ${type} cache invalidated`;
 
-		console.log(`[Cache API] ${message} by ${req.session.username}`);
+		logger.log('cache:invalidate', { type, key, username: req.session.username });
 		logActivity('cache_invalidate', 'system', `${message}`, req.session.username);
 
 		res.json({
@@ -373,7 +234,7 @@ router.post('/cache/invalidate', authWrapper, (req, res) => {
 			message
 		});
 	} catch (error) {
-		console.error('[Cache API] Error invalidating cache:', error.message);
+		logger.error('cache:invalidate', error, { type, key });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -389,7 +250,7 @@ router.post('/cache/clear', authWrapper, (req, res) => {
 	try {
 		const success = cacheDb.invalidateAllCache();
 
-		console.log(`[Cache API] All caches cleared by ${req.session.username}`);
+		logger.log('cache:clearAll', { username: req.session.username });
 		logActivity('cache_clear', 'system', 'All caches cleared', req.session.username);
 
 		res.json({
@@ -397,7 +258,7 @@ router.post('/cache/clear', authWrapper, (req, res) => {
 			message: 'All caches cleared successfully'
 		});
 	} catch (error) {
-		console.error('[Cache API] Error clearing all caches:', error.message);
+		logger.error('cache:clearAll', error);
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -420,7 +281,7 @@ router.get('/cache/tournament/:tournamentId', authWrapper, (req, res) => {
 			caches: summary
 		});
 	} catch (error) {
-		console.error('[Cache API] Error getting tournament cache summary:', error.message);
+		logger.error('cache:getTournamentSummary', error, { tournamentId: req.params.tournamentId });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -467,7 +328,7 @@ router.post('/notifications/subscribe', authWrapper, (req, res) => {
 		const userAgent = req.headers['user-agent'];
 		analyticsDb.savePushSubscription(req.session.userId, subscription, userAgent);
 
-		console.log(`[Push] Subscription saved for user ${req.session.username}`);
+		logger.log('push:subscriptionSaved', { username: req.session.username });
 		logActivity('push_subscribe', 'system', 'Push notifications enabled', req.session.username);
 
 		res.json({
@@ -475,7 +336,7 @@ router.post('/notifications/subscribe', authWrapper, (req, res) => {
 			message: 'Subscription saved successfully'
 		});
 	} catch (error) {
-		console.error('[Push] Error saving subscription:', error.message);
+		logger.error('push:saveSubscription', error, { username: req.session.username });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -497,7 +358,7 @@ router.delete('/notifications/unsubscribe', authWrapper, (req, res) => {
 			analyticsDb.deleteUserPushSubscriptions(req.session.userId);
 		}
 
-		console.log(`[Push] Subscription removed for user ${req.session.username}`);
+		logger.log('push:subscriptionRemoved', { username: req.session.username });
 		logActivity('push_unsubscribe', 'system', 'Push notifications disabled', req.session.username);
 
 		res.json({
@@ -505,7 +366,7 @@ router.delete('/notifications/unsubscribe', authWrapper, (req, res) => {
 			message: 'Unsubscribed successfully'
 		});
 	} catch (error) {
-		console.error('[Push] Error removing subscription:', error.message);
+		logger.error('push:removeSubscription', error, { username: req.session.username });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -529,7 +390,7 @@ router.get('/notifications/preferences', authWrapper, (req, res) => {
 			isSubscribed: subscriptions.length > 0
 		});
 	} catch (error) {
-		console.error('[Push] Error getting preferences:', error.message);
+		logger.error('push:getPreferences', error, { userId: req.session.userId });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -547,14 +408,14 @@ router.put('/notifications/preferences', authWrapper, (req, res) => {
 	try {
 		analyticsDb.saveNotificationPreferences(req.session.userId, preferences);
 
-		console.log(`[Push] Preferences updated for user ${req.session.username}`);
+		logger.log('push:preferencesUpdated', { username: req.session.username });
 
 		res.json({
 			success: true,
 			message: 'Preferences saved successfully'
 		});
 	} catch (error) {
-		console.error('[Push] Error saving preferences:', error.message);
+		logger.error('push:savePreferences', error, { userId: req.session.userId });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -600,7 +461,7 @@ router.post('/notifications/test', authWrapper, async (req, res) => {
 			message: `Test notification sent to ${sent} device(s)`
 		});
 	} catch (error) {
-		console.error('[Push] Error sending test notification:', error.message);
+		logger.error('push:sendTestNotification', error, { userId: req.session.userId });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -633,7 +494,7 @@ router.get('/websocket/status', authWrapper, (req, res) => {
  */
 router.post('/matches/force-update', authWrapper, async (req, res) => {
 	try {
-		console.log('[Force Update] Manually triggered by:', req.session.username);
+		logger.log('matches:forceUpdate', { triggeredBy: req.session.username });
 		await fetchAndPushMatches();
 
 		const cacheInfo = matchDataCache.timestamp ? {
@@ -648,7 +509,7 @@ router.post('/matches/force-update', authWrapper, async (req, res) => {
 			pollingActive: matchPollingState.isPolling
 		});
 	} catch (error) {
-		console.error('[Force Update] Error:', error.message);
+		logger.error('matches:forceUpdate', error, { triggeredBy: req.session.username });
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -661,7 +522,7 @@ router.post('/matches/force-update', authWrapper, async (req, res) => {
  * Get match cache status
  */
 router.get('/matches/cache-status', authWrapper, (req, res) => {
-	const stateFile = process.env.MATCH_STATE_FILE || '/root/tournament-control-center/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json';
+	const stateFile = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
 	let tournamentId = null;
 
 	try {
@@ -703,7 +564,7 @@ router.get('/bracket/status', async (req, res) => {
 		);
 		res.json(response.data);
 	} catch (error) {
-		console.error('Bracket status error:', error.message);
+		logger.error('bracket:getStatus', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to get bracket status',
@@ -734,7 +595,7 @@ router.post('/bracket/zoom', async (req, res) => {
 		);
 		res.json(response.data);
 	} catch (error) {
-		console.error('Bracket zoom error:', error.message);
+		logger.error('bracket:zoom', error, { zoomScale });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to set bracket zoom',
@@ -765,7 +626,7 @@ router.post('/bracket/focus', async (req, res) => {
 		);
 		res.json(response.data);
 	} catch (error) {
-		console.error('Bracket focus error:', error.message);
+		logger.error('bracket:focus', error, { matchIdentifier });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to focus on match',
@@ -789,7 +650,7 @@ router.post('/bracket/reset', async (req, res) => {
 		);
 		res.json(response.data);
 	} catch (error) {
-		console.error('Bracket reset error:', error.message);
+		logger.error('bracket:reset', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to reset bracket view',
@@ -820,7 +681,7 @@ router.post('/bracket/control', async (req, res) => {
 		);
 		res.json(response.data);
 	} catch (error) {
-		console.error('Bracket control error:', error.message);
+		logger.error('bracket:control', error, { command: req.body.command });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to send bracket control command',
@@ -872,7 +733,7 @@ router.post('/ticker/send', tokenOrSessionWrapper, async (req, res) => {
 		);
 	} catch (httpError) {
 		// HTTP failed but WebSocket broadcast succeeded - this is OK
-		console.warn(`[Ticker] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('ticker:httpFallbackFailed', { error: httpError.message });
 	}
 
 	res.json({
@@ -925,7 +786,7 @@ router.post('/audio/announce', authWrapper, async (req, res) => {
 		);
 	} catch (httpError) {
 		// HTTP failed but WebSocket broadcast succeeded - this is OK
-		console.warn(`[Audio] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('audio:httpFallbackFailed', { error: httpError.message });
 	}
 
 	if (logActivity) {
@@ -972,7 +833,7 @@ router.post('/timer/dq', authWrapper, async (req, res) => {
 		});
 	}
 
-	console.log(`[Timer] Starting DQ timer for ${tv}: ${timerDuration} seconds`);
+	logger.log('timer:dq:start', { tv, duration: timerDuration, matchId, playerId, playerName });
 
 	// If enhanced params provided, use server-side timer management
 	if (tournamentId && matchId) {
@@ -997,7 +858,7 @@ router.post('/timer/dq', authWrapper, async (req, res) => {
 			{ timeout: 5000 }
 		);
 	} catch (httpError) {
-		console.warn(`[Timer] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('timer:dq:httpFallbackFailed', { error: httpError.message });
 	}
 
 	res.json({
@@ -1059,7 +920,7 @@ router.post('/timer/tournament', authWrapper, async (req, res) => {
 		});
 	}
 
-	console.log(`[Timer] Starting tournament timer: ${timerDuration} seconds`);
+	logger.log('timer:tournament:start', { duration: timerDuration });
 
 	// Broadcast via WebSocket
 	io.emit('timer:tournament', {
@@ -1076,7 +937,7 @@ router.post('/timer/tournament', authWrapper, async (req, res) => {
 			{ timeout: 5000 }
 		);
 	} catch (httpError) {
-		console.warn(`[Timer] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('timer:tournament:httpFallbackFailed', { error: httpError.message });
 	}
 
 	res.json({
@@ -1109,7 +970,7 @@ router.post('/timer/hide', authWrapper, async (req, res) => {
 		});
 	}
 
-	console.log(`[Timer] Hiding timer: type=${type}, tv=${tv || 'N/A'}`);
+	logger.log('timer:hide', { type, tv });
 
 	// Broadcast via WebSocket
 	io.emit('timer:hide', {
@@ -1126,7 +987,7 @@ router.post('/timer/hide', authWrapper, async (req, res) => {
 			{ timeout: 5000 }
 		);
 	} catch (httpError) {
-		console.warn(`[Timer] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('timer:hide:httpFallbackFailed', { error: httpError.message });
 	}
 
 	res.json({
@@ -1170,7 +1031,7 @@ router.get('/qr/generate', authWrapper, async (req, res) => {
 			url: url
 		});
 	} catch (error) {
-		console.error('QR code generation error:', error);
+		logger.error('qr:generate', error, { url });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to generate QR code'
@@ -1204,7 +1065,7 @@ router.post('/qr/show', authWrapper, async (req, res) => {
 			}
 		});
 	} catch (error) {
-		console.error('QR code generation error:', error);
+		logger.error('qr:show:generate', error, { url });
 		return res.status(500).json({
 			success: false,
 			error: 'Failed to generate QR code'
@@ -1212,15 +1073,24 @@ router.post('/qr/show', authWrapper, async (req, res) => {
 	}
 
 	const qrDuration = duration ? Math.min(Math.max(duration, 10), 300) : null; // 10s-5min, or null for permanent
+	const userId = req.session?.userId;
 
-	// Broadcast via WebSocket
-	io.emit('qr:show', {
+	// Broadcast via WebSocket (multi-tenant)
+	const qrPayload = {
 		qrCode: qrDataUrl,
 		url: url,
 		label: label || 'Scan to Join',
 		duration: qrDuration,
 		timestamp: new Date().toISOString()
-	});
+	};
+
+	if (userId) {
+		io.to(`user:${userId}`).emit('qr:show', qrPayload);
+		logger.log('qr:show', `User-targeted to user:${userId}`);
+	} else {
+		io.emit('qr:show', qrPayload);
+		logger.log('qr:show', 'Global broadcast');
+	}
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -1230,7 +1100,7 @@ router.post('/qr/show', authWrapper, async (req, res) => {
 			{ timeout: 5000 }
 		);
 	} catch (httpError) {
-		console.warn(`[QR] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('qr:show:httpFallbackFailed', { error: httpError.message });
 	}
 
 	res.json({
@@ -1245,10 +1115,18 @@ router.post('/qr/show', authWrapper, async (req, res) => {
  * Hide QR code from match display
  */
 router.post('/qr/hide', authWrapper, async (req, res) => {
-	// Broadcast via WebSocket
-	io.emit('qr:hide', {
-		timestamp: new Date().toISOString()
-	});
+	const userId = req.session?.userId;
+
+	// Broadcast via WebSocket (multi-tenant)
+	const hidePayload = { timestamp: new Date().toISOString() };
+
+	if (userId) {
+		io.to(`user:${userId}`).emit('qr:hide', hidePayload);
+		logger.log('qr:hide', `User-targeted to user:${userId}`);
+	} else {
+		io.emit('qr:hide', hidePayload);
+		logger.log('qr:hide', 'Global broadcast');
+	}
 
 	// Also send via HTTP for backward compatibility
 	try {
@@ -1258,7 +1136,7 @@ router.post('/qr/hide', authWrapper, async (req, res) => {
 			{ timeout: 5000 }
 		);
 	} catch (httpError) {
-		console.warn(`[QR] HTTP push failed (WebSocket still worked): ${httpError.message}`);
+		logger.warn('qr:hide:httpFallbackFailed', { error: httpError.message });
 	}
 
 	res.json({
@@ -1320,14 +1198,12 @@ router.post('/emergency/activate', authWrapper, async (req, res) => {
 
 	// Log activity
 	if (logActivity) {
-		logActivity({
-			action: 'emergency_activated',
-			details: `Emergency mode activated by ${username}: ${reason || 'No reason provided'}`,
-			user: username
+		logActivity(req.session?.userId, username, 'emergency_activated', {
+			reason: reason || 'No reason provided'
 		});
 	}
 
-	console.log(`[EMERGENCY] Mode ACTIVATED by ${username}: ${reason || 'No reason'}`);
+	logger.warn('emergency:activated', { username, reason: reason || 'No reason provided' });
 
 	res.json({
 		success: true,
@@ -1368,14 +1244,12 @@ router.post('/emergency/deactivate', authWrapper, async (req, res) => {
 
 	// Log activity
 	if (logActivity) {
-		logActivity({
-			action: 'emergency_deactivated',
-			details: `Emergency mode deactivated by ${username} (was active since ${previousState.activatedAt})`,
-			user: username
+		logActivity(req.session?.userId, username, 'emergency_deactivated', {
+			previousActivatedAt: previousState.activatedAt
 		});
 	}
 
-	console.log(`[EMERGENCY] Mode DEACTIVATED by ${username}`);
+	logger.log('emergency:deactivated', { username, previousActivatedAt: previousState.activatedAt });
 
 	res.json({
 		success: true,
@@ -1407,7 +1281,7 @@ router.get('/ticker/schedule', authWrapper, (req, res) => {
 			scheduled: messages
 		});
 	} catch (error) {
-		console.error('[Ticker Schedule] Error getting schedule:', error);
+		logger.error('ticker:schedule:get', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to get scheduled messages'
@@ -1469,7 +1343,7 @@ router.post('/ticker/schedule', authWrapper, (req, res) => {
 			scheduled
 		});
 	} catch (error) {
-		console.error('[Ticker Schedule] Error scheduling message:', error);
+		logger.error('ticker:schedule:create', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to schedule message'
@@ -1501,7 +1375,7 @@ router.put('/ticker/schedule/:id', authWrapper, (req, res) => {
 			scheduled: updated
 		});
 	} catch (error) {
-		console.error('[Ticker Schedule] Error updating message:', error);
+		logger.error('ticker:schedule:update', error, { id: req.params.id });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to update scheduled message'
@@ -1539,7 +1413,7 @@ router.delete('/ticker/schedule/:id', authWrapper, (req, res) => {
 			message: 'Scheduled message deleted'
 		});
 	} catch (error) {
-		console.error('[Ticker Schedule] Error deleting message:', error);
+		logger.error('ticker:schedule:delete', error, { id: req.params.id });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to delete scheduled message'
@@ -1568,10 +1442,52 @@ router.delete('/ticker/schedule', authWrapper, (req, res) => {
 			message: 'All scheduled messages cleared'
 		});
 	} catch (error) {
-		console.error('[Ticker Schedule] Error clearing schedule:', error);
+		logger.error('ticker:schedule:clearAll', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to clear scheduled messages'
+		});
+	}
+});
+
+// ============================================
+// PLATFORM ANNOUNCEMENTS (Public for banner)
+// ============================================
+
+/**
+ * GET /announcements/active
+ * Get active announcements for banner display (available to all authenticated users)
+ */
+router.get('/announcements/active', authWrapper, (req, res) => {
+	try {
+		if (!db) {
+			return res.json({
+				success: true,
+				announcements: []
+			});
+		}
+
+		const sysDb = db.system.getDb();
+
+		const announcements = sysDb.prepare(`
+			SELECT id, message, type, created_at, expires_at
+			FROM platform_announcements
+			WHERE is_active = 1
+			  AND (expires_at IS NULL OR expires_at > datetime('now'))
+			ORDER BY
+				CASE type WHEN 'alert' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+				created_at DESC
+		`).all();
+
+		res.json({
+			success: true,
+			announcements
+		});
+	} catch (error) {
+		logger.error('announcements:active', error);
+		res.json({
+			success: true,
+			announcements: []
 		});
 	}
 });

@@ -3084,31 +3084,6 @@ app.get('/api/status', async (req, res) => {
 	}
 });
 
-// Get rate limit status
-app.get('/api/rate-limit/status', requireAuthAPI, (req, res) => {
-	res.json({
-		success: true,
-		...getRateLimitStatus()
-	});
-});
-
-// Manually trigger tournament check for adaptive rate limiting
-app.post('/api/rate-limit/check', requireAuthAPI, async (req, res) => {
-	try {
-		await checkTournamentsAndUpdateMode();
-		res.json({
-			success: true,
-			message: 'Tournament check completed',
-			...getRateLimitStatus()
-		});
-	} catch (error) {
-		res.status(500).json({
-			success: false,
-			error: error.message
-		});
-	}
-});
-
 // ==========================================
 // Cache Management API Endpoints
 // ==========================================
@@ -3495,88 +3470,6 @@ app.get('/api/matches/cache-status', requireAuthAPI, (req, res) => {
 		pollingActive: matchPollingState.isPolling,
 		lastPollTime: matchPollingState.lastPollTime
 	});
-});
-
-// Enable development mode (3-hour rate limit bypass)
-app.post('/api/rate-limit/dev-mode/enable', requireAuthAPI, requireAdmin, (req, res) => {
-	enableDevMode();
-
-	// Log who enabled it
-	logActivity(req.session.userId, req.session.username, 'dev_mode_enabled', {
-		expiresAt: new Date(devModeState.expiresAt).toISOString()
-	});
-
-	res.json({
-		success: true,
-		message: 'Development mode enabled for 3 hours',
-		...getRateLimitStatus()
-	});
-});
-
-// Disable development mode
-app.post('/api/rate-limit/dev-mode/disable', requireAuthAPI, requireAdmin, (req, res) => {
-	disableDevMode();
-
-	// Log who disabled it
-	logActivity(req.session.userId, req.session.username, 'dev_mode_disabled', {});
-
-	res.json({
-		success: true,
-		message: 'Development mode disabled',
-		...getRateLimitStatus()
-	});
-});
-
-// Set manual rate mode override
-app.post('/api/rate-limit/mode', requireAuthAPI, requireAdmin, (req, res) => {
-	const { mode } = req.body;
-
-	// Valid modes: IDLE, UPCOMING, ACTIVE, or null/auto to clear override
-	const validModes = ['IDLE', 'UPCOMING', 'ACTIVE', 'auto', null];
-
-	if (!validModes.includes(mode)) {
-		return res.status(400).json({
-			success: false,
-			error: 'Invalid mode. Valid modes: IDLE, UPCOMING, ACTIVE, or auto'
-		});
-	}
-
-	if (mode === 'auto' || mode === null) {
-		// Clear manual override
-		adaptiveRateState.manualOverride = null;
-		console.log('[Adaptive Rate] Manual override cleared - returning to automatic mode');
-
-		logActivity(req.session.userId, req.session.username, 'rate_mode_override_cleared', {});
-
-		// Trigger an immediate tournament check to set the correct mode
-		checkTournamentsAndUpdateMode();
-
-		res.json({
-			success: true,
-			message: 'Rate mode set to automatic',
-			...getRateLimitStatus()
-		});
-	} else {
-		// Set manual override
-		const modeObj = RATE_MODES[mode];
-		adaptiveRateState.manualOverride = modeObj;
-
-		// Apply the mode immediately
-		updateRateMode(modeObj);
-
-		console.log(`[Adaptive Rate] Manual override set to ${mode}`);
-
-		logActivity(req.session.userId, req.session.username, 'rate_mode_override_set', {
-			mode: mode,
-			effectiveRate: adaptiveRateState.effectiveRate
-		});
-
-		res.json({
-			success: true,
-			message: `Rate mode manually set to ${mode}`,
-			...getRateLimitStatus()
-		});
-	}
 });
 
 // Setup tournament on both modules (tcc-custom: uses local database)
