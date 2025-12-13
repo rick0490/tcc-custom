@@ -8,6 +8,7 @@ let statusRefreshInterval = null;
 let statsRefreshInterval = null;
 let piDisplaysInterval = null;
 let participantsLookup = {};
+let wsConnected = false;
 
 // DQ Timer state tracking for toggle functionality
 const dqTimerState = {
@@ -17,12 +18,13 @@ const dqTimerState = {
 
 // Initialize dashboard on page load
 document.addEventListener('DOMContentLoaded', async () => {
-	console.log('Tournament Admin Dashboard loaded');
+	FrontendDebug.log('Dashboard', 'Initializing dashboard...');
 
 	// Initialize last updated timestamps
 	initLastUpdated('lastRefreshed', refreshAllStatus, { prefix: 'Updated', thresholds: { fresh: 15, stale: 60 } });
 
 	// Load initial data
+	FrontendDebug.api('Dashboard', 'Loading initial data...');
 	await refreshAllStatus();
 	await loadActiveTournament();
 	await loadPiDisplays();
@@ -33,33 +35,161 @@ document.addEventListener('DOMContentLoaded', async () => {
 	// Initialize ticker character counter
 	initTickerCharCounter();
 
-	// Start auto-refresh intervals (optimized from 5s/10s to 10s/15s)
-	statusRefreshInterval = setInterval(refreshAllStatus, 10000);
-	statsRefreshInterval = setInterval(loadActiveTournament, 15000);
-	piDisplaysInterval = setInterval(loadPiDisplays, 15000); // Refresh Pi displays every 15s
+	// Initialize WebSocket for real-time updates
+	initWebSocket();
 
-	console.log('Dashboard initialization complete');
+	// Start auto-refresh intervals (optimized from 5s/10s to 10s/15s)
+	startPolling();
+
+	FrontendDebug.log('Dashboard', 'Initialization complete', { wsConnected });
 });
+
+// WebSocket initialization for real-time updates
+function initWebSocket() {
+	if (!WebSocketManager.init()) {
+		FrontendDebug.warn('Dashboard', 'WebSocket not available, using polling');
+		return;
+	}
+
+	// Subscribe to tournament events
+	WebSocketManager.subscribeMany({
+		[WS_EVENTS.TOURNAMENT_CREATED]: handleTournamentEvent,
+		[WS_EVENTS.TOURNAMENT_UPDATED]: handleTournamentEvent,
+		[WS_EVENTS.TOURNAMENT_DELETED]: handleTournamentEvent,
+		[WS_EVENTS.TOURNAMENT_STARTED]: handleTournamentEvent,
+		[WS_EVENTS.TOURNAMENT_RESET]: handleTournamentEvent,
+		[WS_EVENTS.TOURNAMENT_COMPLETED]: handleTournamentEvent,
+		'tournament:update': handleTournamentEvent,
+		'tournament:deployed': handleTournamentDeployed
+	});
+
+	// Subscribe to match events
+	WebSocketManager.subscribeMany({
+		[WS_EVENTS.MATCH_UPDATED]: handleMatchEvent,
+		[WS_EVENTS.MATCH_COMPLETED]: handleMatchEvent,
+		[WS_EVENTS.MATCH_UNDERWAY]: handleMatchEvent,
+		'matches:update': handleMatchEvent
+	});
+
+	// Subscribe to display events
+	WebSocketManager.subscribeMany({
+		[WS_EVENTS.DISPLAY_REGISTERED]: handleDisplayEvent,
+		[WS_EVENTS.DISPLAY_HEARTBEAT]: handleDisplayEvent,
+		'displays:update': handleDisplayEvent
+	});
+
+	// Subscribe to participant events
+	WebSocketManager.subscribeMany({
+		[WS_EVENTS.PARTICIPANT_ADDED]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANT_UPDATED]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANT_DELETED]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANT_CHECKIN]: handleParticipantEvent,
+		'participants:update': handleParticipantEvent
+	});
+
+	WebSocketManager.onConnection('connect', () => {
+		FrontendDebug.ws('Dashboard', 'WebSocket connected');
+		wsConnected = true;
+		// Reduce polling when connected
+		stopPolling();
+		startPolling(30000, 45000, 45000); // Slower polling when WS connected
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		FrontendDebug.ws('Dashboard', 'WebSocket disconnected');
+		wsConnected = false;
+		// Increase polling when disconnected
+		stopPolling();
+		startPolling(10000, 15000, 15000); // Back to normal polling
+	});
+}
+
+// Handle tournament events
+function handleTournamentEvent(data) {
+	FrontendDebug.ws('Dashboard', 'Tournament event received', data);
+	loadActiveTournament();
+	refreshAllStatus();
+}
+
+// Handle match events
+function handleMatchEvent(data) {
+	FrontendDebug.ws('Dashboard', 'Match event received', data);
+	// Refresh match stats and live matches
+	if (activeTournament?.tournamentId) {
+		loadMatchStats(activeTournament.tournamentId);
+		loadLiveMatches();
+	}
+}
+
+// Handle display events
+function handleDisplayEvent(data) {
+	FrontendDebug.ws('Dashboard', 'Display event received', data);
+	loadPiDisplays();
+	refreshAllStatus();
+}
+
+// Handle participant events
+function handleParticipantEvent(data) {
+	FrontendDebug.ws('Dashboard', 'Participant event received', data);
+	if (activeTournament?.tournamentId) {
+		loadParticipantStats(activeTournament.tournamentId);
+	}
+}
+
+// Handle tournament deployed event (from tournament page deploy button)
+async function handleTournamentDeployed(data) {
+	FrontendDebug.ws('Dashboard', 'Tournament deployed event received', data);
+	// Refresh status first to get updated state file, then load active tournament
+	await refreshAllStatus();
+	await loadActiveTournament();
+}
+
+// Start polling with configurable intervals
+function startPolling(statusInterval = 10000, tournamentInterval = 15000, displaysInterval = 15000) {
+	if (!statusRefreshInterval) {
+		statusRefreshInterval = setInterval(refreshAllStatus, statusInterval);
+	}
+	if (!statsRefreshInterval) {
+		statsRefreshInterval = setInterval(loadActiveTournament, tournamentInterval);
+	}
+	if (!piDisplaysInterval) {
+		piDisplaysInterval = setInterval(loadPiDisplays, displaysInterval);
+	}
+}
+
+// Stop all polling
+function stopPolling() {
+	if (statusRefreshInterval) {
+		clearInterval(statusRefreshInterval);
+		statusRefreshInterval = null;
+	}
+	if (statsRefreshInterval) {
+		clearInterval(statsRefreshInterval);
+		statsRefreshInterval = null;
+	}
+	if (piDisplaysInterval) {
+		clearInterval(piDisplaysInterval);
+		piDisplaysInterval = null;
+	}
+}
 
 // Setup Page Visibility API
 function setupVisibilityHandler() {
 	document.addEventListener('visibilitychange', () => {
 		if (document.hidden) {
-			// Pause polling
-			if (statusRefreshInterval) clearInterval(statusRefreshInterval);
-			if (statsRefreshInterval) clearInterval(statsRefreshInterval);
-			if (piDisplaysInterval) clearInterval(piDisplaysInterval);
-			statusRefreshInterval = null;
-			statsRefreshInterval = null;
-			piDisplaysInterval = null;
+			// Pause polling when tab hidden
+			stopPolling();
 		} else {
-			// Resume polling immediately
+			// Resume polling immediately when tab becomes visible
 			refreshAllStatus();
 			loadActiveTournament();
 			loadPiDisplays();
-			statusRefreshInterval = setInterval(refreshAllStatus, 10000);
-			statsRefreshInterval = setInterval(loadActiveTournament, 15000);
-			piDisplaysInterval = setInterval(loadPiDisplays, 15000);
+			// Use appropriate polling intervals based on WebSocket connection state
+			if (wsConnected) {
+				startPolling(30000, 45000, 45000); // Slower polling when WS connected
+			} else {
+				startPolling(10000, 15000, 15000); // Normal polling
+			}
 		}
 	});
 }
@@ -77,19 +207,13 @@ window.addEventListener('beforeunload', () => {
 
 // Refresh all system status
 async function refreshAllStatus() {
-	// Show loading state
-	const btn = document.getElementById('refreshAllStatusBtn');
-	const icon = document.getElementById('refreshAllStatusIcon');
-	const text = document.getElementById('refreshAllStatusText');
-	if (btn) btn.disabled = true;
-	if (icon) icon.classList.add('animate-spin');
-	if (text) text.textContent = 'Refreshing...';
-
+	FrontendDebug.api('Dashboard', 'Fetching system status...');
 	try {
 		const response = await fetch('/api/status', { timeout: 10000 });
 
 		if (!response.ok) {
 			if (response.status === 401) {
+				FrontendDebug.warn('Dashboard', 'Unauthorized - redirecting to login');
 				window.location.href = '/login.html';
 				return;
 			}
@@ -100,23 +224,23 @@ async function refreshAllStatus() {
 
 		if (data.success) {
 			currentStatus = data;
+			FrontendDebug.api('Dashboard', 'Status fetched successfully', {
+				matchOnline: data.modules?.match?.status?.running,
+				bracketOnline: data.modules?.bracket?.status?.running,
+				flyerOnline: data.modules?.flyer?.status?.running
+			});
 			updateStatusCards(data);
 		}
 	} catch (error) {
-		console.error('Status refresh failed:', error);
+		FrontendDebug.error('Dashboard', 'Status refresh failed', error.message);
 		updateStatusCards(null);
-	} finally {
-		// Reset loading state
-		if (btn) btn.disabled = false;
-		if (icon) icon.classList.remove('animate-spin');
-		if (text) text.textContent = 'Refresh Now';
 	}
 
 	// Update last refreshed timestamp
 	setLastUpdated('lastRefreshed');
 
-	// Also refresh rate limit status
-	loadRateLimitStatus();
+	// Also refresh database status
+	loadDatabaseStatus();
 }
 
 // Update the compact status cards
@@ -185,9 +309,10 @@ function updateStatusCards(data) {
 			if (tournamentName) {
 				bracketEl.textContent = tournamentName;
 			} else if (bracketState?.bracketUrl) {
-				// Fallback: extract tournament ID from URL
-				const match = bracketState.bracketUrl.match(/challonge\.com\/([^\/]+)/);
-				bracketEl.textContent = match ? match[1] : 'configured';
+				// Fallback: extract tournament slug from URL
+				const urlParts = bracketState.bracketUrl.split('/');
+				const slug = urlParts[urlParts.length - 1] || urlParts[urlParts.length - 2];
+				bracketEl.textContent = slug || 'configured';
 			} else {
 				bracketEl.textContent = '--';
 			}
@@ -217,15 +342,23 @@ function updateStatusCards(data) {
 
 // Load active tournament info
 async function loadActiveTournament() {
+	FrontendDebug.api('Dashboard', 'Loading active tournament...');
 	try {
 		const response = await fetch('/api/tournaments?days=30');
-		if (!response.ok) return;
+		if (!response.ok) {
+			FrontendDebug.warn('Dashboard', 'Tournament fetch failed', response.status);
+			return;
+		}
 
 		const data = await response.json();
-		if (!data.success) return;
+		if (!data.success) {
+			FrontendDebug.warn('Dashboard', 'Tournament fetch returned success=false');
+			return;
+		}
 
 		const inProgress = data.tournaments?.inProgress || [];
 		const pending = data.tournaments?.pending || [];
+		FrontendDebug.api('Dashboard', 'Tournaments loaded', { inProgress: inProgress.length, pending: pending.length });
 
 		// Check if there's an active tournament from status
 		let activeTournamentId = null;
@@ -244,9 +377,15 @@ async function loadActiveTournament() {
 
 		// Store the active tournament globally
 		activeTournament = tournament || null;
+		FrontendDebug.state('Dashboard', 'Active tournament set', {
+			id: activeTournament?.tournamentId,
+			name: activeTournament?.name,
+			state: activeTournament?.state
+		});
 
 		// Clear participants lookup if tournament changed
 		if (activeTournament?.tournamentId !== previousTournamentId) {
+			FrontendDebug.state('Dashboard', 'Tournament changed, clearing participant lookup');
 			participantsLookup = {};
 		}
 
@@ -262,7 +401,7 @@ async function loadActiveTournament() {
 			await loadMatchStats(activeTournamentId);
 		}
 	} catch (error) {
-		console.error('Failed to load tournament:', error);
+		FrontendDebug.error('Dashboard', 'Failed to load tournament', error.message);
 	}
 }
 
@@ -555,14 +694,14 @@ async function loadLiveMatches() {
 		const data = await response.json();
 		if (!data.success || !data.matches) return;
 
-		// Filter for in-progress matches (underwayAt set but not complete)
+		// Filter for in-progress matches (state = 'underway')
 		const liveMatches = data.matches.filter(m =>
-			m.state === 'open' && m.underwayAt != null
+			m.state === 'underway'
 		);
 
-		// Filter for upcoming matches (open, not underway, has both players)
+		// Filter for upcoming matches (open, has both players)
 		const upcomingMatches = data.matches.filter(m =>
-			m.state === 'open' && m.underwayAt == null && m.player1Id && m.player2Id
+			m.state === 'open' && m.player1Id && m.player2Id
 		).slice(0, 5); // Show top 5
 
 		// Render live matches
@@ -658,9 +797,11 @@ function formatElapsedTime(timestamp) {
 // ========================================
 
 // Load connected Pi displays
+// Hides section if: no displays registered OR all displays offline (multi-tenant)
 async function loadPiDisplays() {
 	const grid = document.getElementById('piDisplaysGrid');
 	const countEl = document.getElementById('piDisplaysCount');
+	const section = document.getElementById('piDisplaysSection');
 
 	if (!grid) return;
 
@@ -672,32 +813,37 @@ async function loadPiDisplays() {
 		}
 
 		const data = await response.json();
+		const displays = data.success ? (data.displays || []) : [];
 
-		if (!data.success || !data.displays || data.displays.length === 0) {
-			grid.innerHTML = `
-				<div class="text-gray-500 text-sm col-span-full text-center py-8">
-					No displays connected. Set up a Pi with the setup script to get started.
-				</div>
-			`;
-			if (countEl) countEl.textContent = '0 displays';
-			return;
+		// Determine visibility: hide if no displays OR all displays offline
+		const hasDisplays = displays.length > 0;
+		const anyOnline = displays.some(d => d.status === 'online');
+		const shouldShow = hasDisplays && anyOnline;
+
+		// Show/hide section based on display status
+		if (section) {
+			if (shouldShow) {
+				section.classList.remove('hidden');
+			} else {
+				section.classList.add('hidden');
+				return; // No need to render content if hidden
+			}
 		}
 
 		// Update count
-		const onlineCount = data.displays.filter(d => d.status === 'online').length;
+		const onlineCount = displays.filter(d => d.status === 'online').length;
 		if (countEl) {
-			countEl.textContent = `${onlineCount}/${data.displays.length} online`;
+			countEl.textContent = `${onlineCount}/${displays.length} online`;
 		}
 
 		// Render display cards
-		grid.innerHTML = data.displays.map(display => renderPiDisplayCard(display)).join('');
+		grid.innerHTML = displays.map(display => renderPiDisplayCard(display)).join('');
 	} catch (error) {
 		console.error('Failed to load Pi displays:', error);
-		grid.innerHTML = `
-			<div class="text-red-400 text-sm col-span-full text-center py-4">
-				Failed to load displays
-			</div>
-		`;
+		// On error, hide section
+		if (section) {
+			section.classList.add('hidden');
+		}
 	}
 }
 
@@ -1042,19 +1188,20 @@ async function startTournamentTimer() {
 }
 
 // ========================================
-// RATE LIMIT STATUS FUNCTIONS
+// DATABASE STATUS FUNCTIONS
 // ========================================
 
-// Load and display rate limit status
-async function loadRateLimitStatus() {
-	const modeEl = document.getElementById('rateLimitMode');
-	const effectiveEl = document.getElementById('rateLimitEffective');
-	const indicatorEl = document.getElementById('rateLimitModeIndicator');
+// Load and display database status
+async function loadDatabaseStatus() {
+	const statusEl = document.getElementById('databaseStatus');
+	const countEl = document.getElementById('databaseTournamentCount');
+	const indicatorEl = document.getElementById('databaseStatusIndicator');
 
-	if (!modeEl || !effectiveEl) return;
+	if (!statusEl || !countEl) return;
 
 	try {
-		const response = await fetch('/api/rate-limit/status');
+		// Use existing /api/status endpoint which checks DB connectivity
+		const response = await fetch('/api/status');
 		if (!response.ok) {
 			if (response.status === 401) return;
 			throw new Error(`HTTP ${response.status}`);
@@ -1063,42 +1210,47 @@ async function loadRateLimitStatus() {
 		const data = await response.json();
 
 		if (data.success) {
-			// Update mode display
-			let modeText = data.currentMode;
-			if (data.devModeActive) {
-				modeText = 'DEV MODE';
-			} else if (!data.adaptiveEnabled) {
-				modeText = 'Manual';
-			}
-			modeEl.textContent = modeText;
-
-			// Update effective rate
-			if (data.devModeActive) {
-				effectiveEl.textContent = 'Unlimited';
-				effectiveEl.className = 'text-sm font-medium text-yellow-400';
-			} else {
-				effectiveEl.textContent = `${data.effectiveRate} req/min`;
-				effectiveEl.className = 'text-sm font-medium text-white';
-			}
-
-			// Update indicator color based on mode
+			statusEl.textContent = 'Connected';
 			if (indicatorEl) {
-				indicatorEl.classList.remove('bg-gray-500', 'online', 'offline');
-				if (data.devModeActive) {
-					indicatorEl.classList.add('bg-yellow-400');
-				} else if (data.currentMode === 'ACTIVE') {
-					indicatorEl.classList.add('bg-green-400');
-				} else if (data.currentMode === 'UPCOMING') {
-					indicatorEl.classList.add('bg-yellow-400');
+				indicatorEl.classList.remove('bg-gray-500', 'offline');
+				indicatorEl.classList.add('online');
+			}
+
+			// Get tournament count from local DB
+			try {
+				const tournamentsRes = await fetch('/api/tournaments');
+				if (tournamentsRes.ok) {
+					const tournamentsData = await tournamentsRes.json();
+					let activeCount = 0;
+
+					// Handle grouped response format {pending: [], inProgress: [], completed: []}
+					if (tournamentsData.tournaments && typeof tournamentsData.tournaments === 'object') {
+						const t = tournamentsData.tournaments;
+						if (Array.isArray(t)) {
+							// Flat array format
+							activeCount = t.filter(t => t.state !== 'complete').length;
+						} else {
+							// Grouped format - count pending and inProgress
+							activeCount = (t.pending?.length || 0) + (t.inProgress?.length || 0);
+						}
+					}
+
+					countEl.textContent = activeCount > 0 ? `${activeCount} active` : 'None';
 				} else {
-					indicatorEl.classList.add('bg-gray-400');
+					countEl.textContent = '--';
 				}
+			} catch {
+				countEl.textContent = '--';
 			}
 		}
 	} catch (error) {
-		console.error('Failed to load rate limit status:', error);
-		modeEl.textContent = 'Error';
-		effectiveEl.textContent = '--';
+		console.error('Failed to load database status:', error);
+		statusEl.textContent = 'Offline';
+		countEl.textContent = '--';
+		if (indicatorEl) {
+			indicatorEl.classList.remove('bg-gray-500', 'online');
+			indicatorEl.classList.add('offline');
+		}
 	}
 }
 
@@ -1119,7 +1271,8 @@ async function showBracketQR() {
 		return;
 	}
 
-	const bracketUrl = `https://challonge.com/${activeTournament.tournamentId}`;
+	// Use local bracket URL (tournament ID for QR code)
+	const bracketUrl = `${window.location.origin}/tournament.html?id=${activeTournament.tournamentId}`;
 	await showQRCode(bracketUrl, 'View Bracket');
 }
 
@@ -1433,6 +1586,20 @@ function formatActivityMessage(entry) {
 		case 'tournament_complete':
 			return `Tournament <strong>${escapeHtml(details.name || '')}</strong> completed`;
 
+		// Flyer actions
+		case 'flyer_upload':
+			return `<strong>${username}</strong> uploaded flyer <strong>${escapeHtml(details.filename || '')}</strong>`;
+		case 'flyer_delete':
+			return `<strong>${username}</strong> deleted flyer <strong>${escapeHtml(details.filename || '')}</strong>`;
+		case 'flyer_set_active':
+			return `<strong>${username}</strong> set active flyer to <strong>${escapeHtml(details.flyer || '')}</strong>`;
+
+		// Emergency actions
+		case 'emergency_activated':
+			return `<strong>${username}</strong> activated emergency mode${details.reason ? `: ${escapeHtml(details.reason)}` : ''}`;
+		case 'emergency_deactivated':
+			return `<strong>${username}</strong> deactivated emergency mode`;
+
 		// System actions
 		case 'dev_mode_enabled':
 			return `<strong>${username}</strong> enabled dev mode`;
@@ -1524,24 +1691,52 @@ function loadMoreActivity() {
 	renderActivityList();
 }
 
+// Shared AudioContext - only created after user interaction
+let sharedAudioContext = null;
+let userHasInteracted = false;
+
+// Initialize audio context after user interaction
+function initAudioContext() {
+	if (sharedAudioContext) return;
+	try {
+		sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+		userHasInteracted = true;
+	} catch (e) {
+		// Audio not supported
+	}
+}
+
+// Set up user interaction listener (runs once)
+document.addEventListener('click', initAudioContext, { once: true });
+document.addEventListener('keydown', initAudioContext, { once: true });
+
 // Play notification sound using Web Audio API
 function playNotificationSound() {
+	// Only play if user has interacted and audio context exists
+	if (!userHasInteracted || !sharedAudioContext) {
+		return;
+	}
+
 	try {
-		const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-		const oscillator = audioContext.createOscillator();
-		const gainNode = audioContext.createGain();
+		// Resume context if suspended
+		if (sharedAudioContext.state === 'suspended') {
+			sharedAudioContext.resume();
+		}
+
+		const oscillator = sharedAudioContext.createOscillator();
+		const gainNode = sharedAudioContext.createGain();
 
 		oscillator.connect(gainNode);
-		gainNode.connect(audioContext.destination);
+		gainNode.connect(sharedAudioContext.destination);
 
 		oscillator.frequency.value = 800;
 		oscillator.type = 'sine';
 		gainNode.gain.value = 0.1;
 
 		oscillator.start();
-		oscillator.stop(audioContext.currentTime + 0.1);
+		oscillator.stop(sharedAudioContext.currentTime + 0.1);
 	} catch (e) {
-		// Audio not supported, ignore
+		// Audio error, ignore silently
 	}
 }
 
@@ -1841,7 +2036,7 @@ window.copyTournamentId = copyTournamentId;
 window.quickStartTournament = quickStartTournament;
 window.setTickerPreset = setTickerPreset;
 window.sendTickerMessage = sendTickerMessage;
-window.loadRateLimitStatus = loadRateLimitStatus;
+window.loadDatabaseStatus = loadDatabaseStatus;
 window.startDQTimer = startDQTimer;
 window.hideDQTimer = hideDQTimer;
 window.toggleDQTimer = toggleDQTimer;
