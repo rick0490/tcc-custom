@@ -2040,7 +2040,11 @@ isVideoFile(filename)  // Check if file is MP4
 
 ### Games (games.html, games.js)
 
-**Purpose:** Game configuration management with inline editing
+**Purpose:** Game configuration management with inline editing (multi-tenant)
+
+**Multi-Tenant:** Games are isolated per user_id. Each user has their own set of games.
+
+**Storage:** SQLite database (`system.db`) with `games` and `game_configs` tables (replaces `game-configs.json`)
 
 **Sections:**
 - Game Cards Grid (card per game showing name, key, stats, expand for rules/prizes)
@@ -2049,7 +2053,11 @@ isVideoFile(filename)  // Check if file is MP4
 
 **Key Functions:**
 ```javascript
-loadGames()              // Load game configs from API (30s polling)
+loadGames()              // Load game configs from API (tenant-filtered)
+initWebSocket()          // Initialize WebSocket for real-time updates
+handleGameCreated(data)  // Handle games:created WebSocket event
+handleGameUpdated(data)  // Handle games:updated WebSocket event
+handleGameDeleted(data)  // Handle games:deleted WebSocket event
 renderGamesList()        // Render game cards with stats
 openAddGameModal()       // Open modal for new game
 openEditGameModal(key)   // Open modal with existing game data
@@ -2058,31 +2066,77 @@ saveGame(event)          // Create or update game via API
 addRuleRow()             // Add dynamic rule input row
 addPrizeRow()            // Add dynamic prize input row
 addInfoRow()             // Add dynamic info input row
-removeRow(btn, type)     // Remove rule/prize/info row
 confirmDelete(key)       // Delete game with confirmation
 ```
 
-**Game Config Structure:**
+**Database Schema:**
+```sql
+-- games table (system.db)
+CREATE TABLE games (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,     -- Tenant isolation
+    game_key TEXT NOT NULL,       -- Unique per user (e.g., 'ssbu', 'mkw')
+    name TEXT NOT NULL,
+    short_name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, game_key),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- game_configs table (system.db)
+CREATE TABLE game_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL UNIQUE,
+    rules_json TEXT,              -- Array of {title, description}
+    prizes_json TEXT,             -- Array of prize objects
+    additional_info_json TEXT,    -- Array of strings
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+);
+```
+
+**API Response Structure:**
 ```javascript
 {
+  id: 1,
+  gameKey: "ssbu",
   name: "Super Smash Bros. Ultimate",
   shortName: "SSBU",
   rules: [
     { title: "Tournament Format", description: "Single Elimination..." }
   ],
   prizes: [
-    { place: 1, position: "1st Place", emoji: "...", amount: 30, gradient: "...", extras: [] }
+    { place: 1, position: "1st Place", emoji: "", amount: 30, gradient: "...", extras: [] }
   ],
-  additionalInfo: ["Entry is FREE...", "BYOC..."]
+  additionalInfo: ["Entry is FREE...", "BYOC..."],
+  isDefault: false,
+  userId: 1,
+  createdAt: "2025-12-13T..."
 }
 ```
 
+**WebSocket Events:**
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `games:created` | Server → Client | Game object |
+| `games:updated` | Server → Client | Game object |
+| `games:deleted` | Server → Client | `{ gameKey, name }` |
+
 **Features:**
-- 30-second polling with Page Visibility API (pauses when tab hidden)
+- Multi-tenant: Games isolated per user via `user_id` column
+- Real-time WebSocket updates (user-targeted via `io.to('user:${userId}')`)
+- Adaptive polling (30s when WS connected, 15s when disconnected)
+- Page Visibility API (pauses polling when tab hidden)
 - Inline editing of rules, prizes, and additional info
 - Dynamic add/remove rows for rules, prizes, and info
-- Hot-reload to tournament-signup (via chokidar file watcher)
 - Cannot delete 'default' game configuration
+- Superadmin can view all games with `?all=true` query param
+
+**Migration Script:**
+```bash
+# Migrate existing game-configs.json to database
+node admin-dashboard/scripts/migrate-games-to-db.js [--dry-run] [--user-id=N]
+```
 
 ### Sponsors (sponsors.html, sponsors.js)
 

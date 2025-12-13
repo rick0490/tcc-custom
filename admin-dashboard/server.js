@@ -643,6 +643,7 @@ localRoutes.participants.init({ participantDb, tournamentDb, readStateFile, io }
 localRoutes.stations.init({ io });
 localRoutes.flyers.init({ axios, requireAuthAPI, logActivity, io });
 localRoutes.sponsors.init({ axios, io, requireAuthAPI, sponsorService, logActivity });
+localRoutes.games.setSocketIO(io);
 
 // Mount local database routes (replaces Challonge API)
 // Mount at both singular and plural paths for frontend compatibility
@@ -653,6 +654,7 @@ app.use('/api/participants', localRoutes.participants);
 app.use('/api/stations', localRoutes.stations);
 app.use('/api/flyers', localRoutes.flyers);
 app.use('/api/sponsors', localRoutes.sponsors);
+app.use('/api/games', localRoutes.games);
 
 // Signup routes (public - no auth required)
 app.use('/api/auth', localRoutes.signup);
@@ -2669,48 +2671,8 @@ const ALLOWED_FLYER_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.mp4'];
 const ALLOWED_SPONSOR_MIMETYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'];
 const ALLOWED_SPONSOR_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
 
-// ============================================
-// Game Configuration Management
-// ============================================
-const GAME_CONFIGS_FILE = path.join(__dirname, 'game-configs.json');
-const SIGNUP_GAME_CONFIGS_FILE = path.join(__dirname, '..', 'tournament-signup', 'game-configs.json');
-
-// Game config helper functions
-function loadGameConfigs() {
-	try {
-		const data = fsSync.readFileSync(GAME_CONFIGS_FILE, 'utf8');
-		return JSON.parse(data);
-	} catch (error) {
-		console.error('[Game Configs] Error loading:', error.message);
-		return {
-			default: {
-				name: 'Tournament',
-				shortName: '',
-				rules: [],
-				prizes: [],
-				additionalInfo: []
-			}
-		};
-	}
-}
-
-function saveGameConfigs(configs) {
-	// Write to admin-dashboard (master copy)
-	fsSync.writeFileSync(GAME_CONFIGS_FILE, JSON.stringify(configs, null, 2));
-
-	// Write to tournament-signup (for hot-reload)
-	try {
-		fsSync.writeFileSync(SIGNUP_GAME_CONFIGS_FILE, JSON.stringify(configs, null, 2));
-		console.log('[Game Configs] Synced to signup app');
-	} catch (error) {
-		console.error('[Game Configs] Failed to sync to signup app:', error.message);
-	}
-}
-
-function validateGameKey(key) {
-	// Only allow lowercase alphanumeric and underscores
-	return /^[a-z][a-z0-9_]*$/.test(key) && key.length <= 30;
-}
+// NOTE: Game configuration is now multi-tenant via routes/games.js and system.db
+// The old game-configs.json file-based storage has been replaced with database storage
 
 // Sponsor state file path
 const SPONSORS_DIR = path.join(__dirname, 'sponsors');
@@ -3773,7 +3735,7 @@ app.post('/api/flyer/update', async (req, res) => {
 
 		// Log activity
 		if (typeof logActivity === 'function') {
-			logActivity('flyer_set_active', req.session?.username || 'system', {
+			logActivity(req.session?.userId, req.session?.username || 'system', 'flyer_set_active', {
 				flyer: flyer,
 				userId: userId
 			});
@@ -4507,10 +4469,8 @@ app.post('/api/emergency/activate', requireAuthAPI, async (req, res) => {
 	}
 
 	// Log activity
-	logActivity({
-		action: 'emergency_activated',
-		details: `Emergency mode activated by ${username}: ${reason || 'No reason provided'}`,
-		user: username
+	logActivity(userId, username, 'emergency_activated', {
+		reason: reason || 'No reason provided'
 	});
 
 	console.log(`[EMERGENCY] Mode ACTIVATED by ${username}: ${reason || 'No reason'}${userId ? ` (user:${userId})` : ''}`);
@@ -4551,10 +4511,8 @@ app.post('/api/emergency/deactivate', requireAuthAPI, async (req, res) => {
 	}, userId);
 
 	// Log activity
-	logActivity({
-		action: 'emergency_deactivated',
-		details: `Emergency mode deactivated by ${username} (was active since ${previousState.activatedAt})`,
-		user: username
+	logActivity(userId, username, 'emergency_deactivated', {
+		previousActivatedAt: previousState.activatedAt
 	});
 
 	console.log(`[EMERGENCY] Mode DEACTIVATED by ${username}`);
@@ -5978,217 +5936,6 @@ app.get('/api/sponsors/:id/report/pdf', requireAuthAPI, async (req, res) => {
 	// Redirect to main report endpoint with sponsorId
 	req.query.sponsorId = req.params.id;
 	res.redirect(`/api/sponsors/report/pdf?sponsorId=${req.params.id}&${new URLSearchParams(req.query).toString()}`);
-});
-
-// ============================================
-// Game Configuration API Endpoints
-// ============================================
-
-// GET /api/games - List all games with configs
-app.get('/api/games', requireAuthAPI, (req, res) => {
-	try {
-		const configs = loadGameConfigs();
-		const games = Object.entries(configs).map(([key, config]) => ({
-			gameKey: key,
-			name: config.name || key,
-			shortName: config.shortName || '',
-			rules: config.rules || [],
-			prizes: config.prizes || [],
-			additionalInfo: config.additionalInfo || [],
-			isDefault: key === 'default'
-		}));
-
-		res.json({
-			success: true,
-			games,
-			totalGames: games.length
-		});
-	} catch (error) {
-		console.error('[Game Configs] Error listing games:', error);
-		res.status(500).json({ success: false, error: error.message });
-	}
-});
-
-// GET /api/games/:gameKey - Get single game config
-app.get('/api/games/:gameKey', requireAuthAPI, (req, res) => {
-	try {
-		const { gameKey } = req.params;
-		const configs = loadGameConfigs();
-
-		if (!configs[gameKey]) {
-			return res.status(404).json({ success: false, error: 'Game not found' });
-		}
-
-		res.json({
-			success: true,
-			gameKey,
-			config: configs[gameKey]
-		});
-	} catch (error) {
-		console.error('[Game Configs] Error getting game:', error);
-		res.status(500).json({ success: false, error: error.message });
-	}
-});
-
-// POST /api/games - Create new game
-app.post('/api/games', requireAuthAPI, requireAdmin, (req, res) => {
-	try {
-		const { gameKey, name, shortName, rules, prizes, additionalInfo } = req.body;
-
-		if (!gameKey || !name) {
-			return res.status(400).json({ success: false, error: 'gameKey and name are required' });
-		}
-
-		if (!validateGameKey(gameKey)) {
-			return res.status(400).json({
-				success: false,
-				error: 'Invalid game key. Use lowercase letters, numbers, and underscores only. Must start with a letter.'
-			});
-		}
-
-		const configs = loadGameConfigs();
-
-		if (configs[gameKey]) {
-			return res.status(400).json({ success: false, error: 'Game key already exists' });
-		}
-
-		// Create new game config
-		configs[gameKey] = {
-			name: name.trim(),
-			shortName: (shortName || '').trim(),
-			rules: rules || [],
-			prizes: prizes || [
-				{ place: 1, position: '1st Place', emoji: '', amount: 30, gradient: 'linear-gradient(135deg, #f6d365 0%, #fda085 100%)', extras: [] },
-				{ place: 2, position: '2nd Place', emoji: '', amount: 20, gradient: 'linear-gradient(135deg, #c0c0c0 0%, #909090 100%)', extras: [] },
-				{ place: 3, position: '3rd Place', emoji: '', amount: 10, gradient: 'linear-gradient(135deg, #cd7f32 0%, #8b5a2b 100%)', extras: [] }
-			],
-			additionalInfo: additionalInfo || []
-		};
-
-		saveGameConfigs(configs);
-
-		logActivity(req.session.userId, req.session.username, 'create_game', {
-			gameKey,
-			name: configs[gameKey].name
-		});
-
-		console.log(`[Game Configs] Created game: ${gameKey}`);
-
-		res.json({
-			success: true,
-			message: 'Game created successfully',
-			gameKey,
-			config: configs[gameKey]
-		});
-	} catch (error) {
-		console.error('[Game Configs] Error creating game:', error);
-		res.status(500).json({ success: false, error: error.message });
-	}
-});
-
-// PUT /api/games/:gameKey - Update game config
-app.put('/api/games/:gameKey', requireAuthAPI, requireAdmin, (req, res) => {
-	try {
-		const { gameKey } = req.params;
-		const { name, shortName, rules, prizes, additionalInfo, newGameKey } = req.body;
-
-		const configs = loadGameConfigs();
-
-		if (!configs[gameKey]) {
-			return res.status(404).json({ success: false, error: 'Game not found' });
-		}
-
-		// Handle rename
-		if (newGameKey && newGameKey !== gameKey) {
-			if (gameKey === 'default') {
-				return res.status(400).json({ success: false, error: 'Cannot rename the default game' });
-			}
-
-			if (!validateGameKey(newGameKey)) {
-				return res.status(400).json({
-					success: false,
-					error: 'Invalid new game key. Use lowercase letters, numbers, and underscores only.'
-				});
-			}
-
-			if (configs[newGameKey]) {
-				return res.status(400).json({ success: false, error: 'New game key already exists' });
-			}
-
-			// Move config to new key
-			configs[newGameKey] = configs[gameKey];
-			delete configs[gameKey];
-
-			console.log(`[Game Configs] Renamed game: ${gameKey} -> ${newGameKey}`);
-		}
-
-		const targetKey = newGameKey || gameKey;
-
-		// Update fields if provided
-		if (name !== undefined) configs[targetKey].name = name.trim();
-		if (shortName !== undefined) configs[targetKey].shortName = shortName.trim();
-		if (rules !== undefined) configs[targetKey].rules = rules;
-		if (prizes !== undefined) configs[targetKey].prizes = prizes;
-		if (additionalInfo !== undefined) configs[targetKey].additionalInfo = additionalInfo;
-
-		saveGameConfigs(configs);
-
-		logActivity(req.session.userId, req.session.username, 'update_game', {
-			gameKey: targetKey,
-			name: configs[targetKey].name,
-			renamed: newGameKey && newGameKey !== gameKey ? { from: gameKey, to: newGameKey } : undefined
-		});
-
-		console.log(`[Game Configs] Updated game: ${targetKey}`);
-
-		res.json({
-			success: true,
-			message: 'Game updated successfully',
-			gameKey: targetKey,
-			config: configs[targetKey]
-		});
-	} catch (error) {
-		console.error('[Game Configs] Error updating game:', error);
-		res.status(500).json({ success: false, error: error.message });
-	}
-});
-
-// DELETE /api/games/:gameKey - Delete game
-app.delete('/api/games/:gameKey', requireAuthAPI, requireAdmin, (req, res) => {
-	try {
-		const { gameKey } = req.params;
-
-		if (gameKey === 'default') {
-			return res.status(400).json({ success: false, error: 'Cannot delete the default game' });
-		}
-
-		const configs = loadGameConfigs();
-
-		if (!configs[gameKey]) {
-			return res.status(404).json({ success: false, error: 'Game not found' });
-		}
-
-		const deletedName = configs[gameKey].name;
-		delete configs[gameKey];
-
-		saveGameConfigs(configs);
-
-		logActivity(req.session.userId, req.session.username, 'delete_game', {
-			gameKey,
-			name: deletedName
-		});
-
-		console.log(`[Game Configs] Deleted game: ${gameKey}`);
-
-		res.json({
-			success: true,
-			message: 'Game deleted successfully',
-			deletedGameKey: gameKey
-		});
-	} catch (error) {
-		console.error('[Game Configs] Error deleting game:', error);
-		res.status(500).json({ success: false, error: error.message });
-	}
 });
 
 // ============================================

@@ -1,9 +1,10 @@
 // Games Configuration Management
-// Handles CRUD operations for game rulesets
+// Handles CRUD operations for game rulesets (multi-tenant)
 
 let games = {};
 let deleteGameKey = null;
 let pollingInterval = null;
+let wsConnected = false;
 
 // Default prize gradients
 const PRIZE_GRADIENTS = {
@@ -16,14 +17,82 @@ const PRIZE_GRADIENTS = {
 document.addEventListener('DOMContentLoaded', () => {
 	loadGames();
 	initLastUpdated('gamesLastUpdated', loadGames, { prefix: 'Updated' });
+	initWebSocket();
 	startPolling();
 	setupVisibilityHandler(startPolling, stopPolling);
 });
 
+// Initialize WebSocket for real-time updates
+function initWebSocket() {
+	if (!WebSocketManager || !WebSocketManager.init) {
+		console.warn('[Games] WebSocket not available, using polling');
+		return;
+	}
+
+	if (!WebSocketManager.init()) {
+		console.warn('[Games] WebSocket init failed, using polling');
+		return;
+	}
+
+	// Subscribe to game events
+	WebSocketManager.subscribeMany({
+		'games:created': handleGameCreated,
+		'games:updated': handleGameUpdated,
+		'games:deleted': handleGameDeleted
+	});
+
+	// Adjust polling based on connection state
+	WebSocketManager.onConnection('connect', () => {
+		wsConnected = true;
+		FrontendDebug?.log?.('Games', 'WebSocket connected');
+		stopPolling();
+		startPolling(60000); // Slower polling when WS connected
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		wsConnected = false;
+		FrontendDebug?.warn?.('Games', 'WebSocket disconnected');
+		stopPolling();
+		startPolling(15000); // Faster polling when disconnected
+	});
+}
+
+// Handle game created event
+function handleGameCreated(data) {
+	FrontendDebug?.ws?.('Games', 'Game created', data);
+	if (data && data.gameKey) {
+		games[data.gameKey] = data;
+		renderGamesGrid();
+		updateGameCount();
+		setLastUpdated('gamesLastUpdated');
+	}
+}
+
+// Handle game updated event
+function handleGameUpdated(data) {
+	FrontendDebug?.ws?.('Games', 'Game updated', data);
+	if (data && data.gameKey) {
+		games[data.gameKey] = data;
+		renderGamesGrid();
+		setLastUpdated('gamesLastUpdated');
+	}
+}
+
+// Handle game deleted event
+function handleGameDeleted(data) {
+	FrontendDebug?.ws?.('Games', 'Game deleted', data);
+	if (data && data.gameKey) {
+		delete games[data.gameKey];
+		renderGamesGrid();
+		updateGameCount();
+		setLastUpdated('gamesLastUpdated');
+	}
+}
+
 // Start polling for updates
-function startPolling() {
+function startPolling(interval = 30000) {
 	if (pollingInterval) return;
-	pollingInterval = setInterval(loadGames, 30000);
+	pollingInterval = setInterval(loadGames, interval);
 }
 
 // Stop polling
