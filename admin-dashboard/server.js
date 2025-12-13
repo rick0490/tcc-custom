@@ -2798,10 +2798,11 @@ function startSponsorRotation() {
 		}
 	});
 
-	// Broadcast initial sponsor:show to display all sponsors
+	// Broadcast initial sponsor:show to display all sponsors (multi-tenant)
 	if (Object.keys(initialSponsors).length > 0) {
-		io.emit('sponsor:show', { sponsors: initialSponsors, duration: 0 });
-		console.log(`[Sponsors] Initial show: ${Object.keys(initialSponsors).join(', ')}`);
+		const activeUserId = state.activeUserId || null;
+		broadcastToUser('sponsor:show', { sponsors: initialSponsors, duration: 0 }, activeUserId);
+		console.log(`[Sponsors] Initial show: ${Object.keys(initialSponsors).join(', ')}${activeUserId ? ` (user:${activeUserId})` : ''}`);
 
 		// HTTP fallback to MagicMirror modules
 		const matchUrl = process.env.MATCH_API_URL || 'http://localhost:2052';
@@ -2856,9 +2857,10 @@ function rotateSponsor(position) {
 	saveSponsorState(state);
 
 	const nextSponsor = sponsors[nextIndex];
-	console.log(`[Sponsors] Rotating ${position}: ${nextSponsor.name}`);
+	const activeUserId = state.activeUserId || null;
+	console.log(`[Sponsors] Rotating ${position}: ${nextSponsor.name}${activeUserId ? ` (user:${activeUserId})` : ''}`);
 
-	// Broadcast rotation event
+	// Broadcast rotation event (multi-tenant)
 	const sponsorData = {
 		id: nextSponsor.id,
 		filename: nextSponsor.filename,
@@ -2874,7 +2876,7 @@ function rotateSponsor(position) {
 	};
 
 	const transitionDelay = state.config.rotationTransition || 500;
-	io.emit('sponsor:rotate', { position, sponsor: sponsorData, transitionDelay });
+	broadcastToUser('sponsor:rotate', { position, sponsor: sponsorData, transitionDelay }, activeUserId);
 
 	// HTTP fallback to MagicMirror modules
 	const matchUrl = process.env.MATCH_API_URL || 'http://localhost:2052';
@@ -2938,6 +2940,7 @@ function stopSponsorTimerView() {
 
 async function showAllActiveSponsorsForTimer() {
 	const state = loadSponsorState();
+	const activeUserId = state.activeUserId || null;
 	const positions = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'top-banner', 'bottom-banner'];
 	const sponsorData = {};
 
@@ -2961,10 +2964,10 @@ async function showAllActiveSponsorsForTimer() {
 	});
 
 	if (Object.keys(sponsorData).length > 0) {
-		console.log(`[Sponsors] Timer View: Showing ${Object.keys(sponsorData).length} sponsor(s)`);
+		console.log(`[Sponsors] Timer View: Showing ${Object.keys(sponsorData).length} sponsor(s)${activeUserId ? ` (user:${activeUserId})` : ''}`);
 
-		// Broadcast via WebSocket
-		io.emit('sponsor:show', { sponsors: sponsorData, duration: 0 });
+		// Broadcast via WebSocket (multi-tenant)
+		broadcastToUser('sponsor:show', { sponsors: sponsorData, duration: 0 }, activeUserId);
 
 		// Also send via HTTP to MagicMirror modules (for displays without WebSocket)
 		const matchEnabled = state.config.displays?.match !== false;
@@ -2995,13 +2998,14 @@ async function showAllActiveSponsorsForTimer() {
 }
 
 async function hideAllSponsorsForTimer() {
-	console.log('[Sponsors] Timer View: Hiding all sponsors');
+	const state = loadSponsorState();
+	const activeUserId = state.activeUserId || null;
+	console.log(`[Sponsors] Timer View: Hiding all sponsors${activeUserId ? ` (user:${activeUserId})` : ''}`);
 
-	// Broadcast via WebSocket
-	io.emit('sponsor:hide', { all: true });
+	// Broadcast via WebSocket (multi-tenant)
+	broadcastToUser('sponsor:hide', { all: true }, activeUserId);
 
 	// Also send via HTTP to MagicMirror modules (for displays without WebSocket)
-	const state = loadSponsorState();
 	const matchEnabled = state.config.displays?.match !== false;
 	const bracketEnabled = state.config.displays?.bracket !== false;
 
@@ -4465,6 +4469,7 @@ app.get('/api/emergency/status', requireTokenOrSessionAuth, (req, res) => {
 app.post('/api/emergency/activate', requireAuthAPI, async (req, res) => {
 	const { reason } = req.body;
 	const username = req.session?.user?.username || 'unknown';
+	const userId = req.session?.userId;
 
 	if (emergencyModeState.active) {
 		return res.json({
@@ -4480,21 +4485,24 @@ app.post('/api/emergency/activate', requireAuthAPI, async (req, res) => {
 		reason: reason || 'Emergency stop activated'
 	};
 
-	// Broadcast emergency state to all connected clients and displays
-	io.emit('emergency:activated', {
+	// Broadcast emergency state (multi-tenant)
+	broadcastToUser('emergency:activated', {
 		...emergencyModeState,
 		timestamp: new Date().toISOString()
-	});
+	}, userId);
 
-	// Cancel all active DQ timers
-	const activeTimerKeys = Object.keys(activeDQTimers);
+	// Cancel all active DQ timers for this user
+	const activeTimerKeys = Array.from(activeDQTimers.keys());
 	for (const key of activeTimerKeys) {
-		const timer = activeDQTimers[key];
-		if (timer && timer.timeout) {
-			clearTimeout(timer.timeout);
-			clearInterval(timer.warningInterval);
-			io.emit('timer:dq:cancelled', { key, tv: timer.tv });
-			delete activeDQTimers[key];
+		const timer = activeDQTimers.get(key);
+		if (timer) {
+			// Only cancel timers belonging to this user (or all if no userId filter)
+			if (!userId || timer.userId === userId) {
+				if (timer.timeoutId) clearTimeout(timer.timeoutId);
+				if (timer.warningTimeoutId) clearTimeout(timer.warningTimeoutId);
+				broadcastToUser('timer:dq:cancelled', { key, tv: timer.tv }, timer.userId);
+				activeDQTimers.delete(key);
+			}
 		}
 	}
 
@@ -4505,7 +4513,7 @@ app.post('/api/emergency/activate', requireAuthAPI, async (req, res) => {
 		user: username
 	});
 
-	console.log(`[EMERGENCY] Mode ACTIVATED by ${username}: ${reason || 'No reason'}`);
+	console.log(`[EMERGENCY] Mode ACTIVATED by ${username}: ${reason || 'No reason'}${userId ? ` (user:${userId})` : ''}`);
 
 	res.json({
 		success: true,
@@ -4517,6 +4525,7 @@ app.post('/api/emergency/activate', requireAuthAPI, async (req, res) => {
 // Deactivate emergency mode - resumes normal operation
 app.post('/api/emergency/deactivate', requireAuthAPI, async (req, res) => {
 	const username = req.session?.user?.username || 'unknown';
+	const userId = req.session?.userId;
 
 	if (!emergencyModeState.active) {
 		return res.json({
@@ -4534,12 +4543,12 @@ app.post('/api/emergency/deactivate', requireAuthAPI, async (req, res) => {
 		reason: null
 	};
 
-	// Broadcast emergency deactivation to all clients
-	io.emit('emergency:deactivated', {
+	// Broadcast emergency deactivation (multi-tenant)
+	broadcastToUser('emergency:deactivated', {
 		deactivatedBy: username,
 		previousState,
 		timestamp: new Date().toISOString()
-	});
+	}, userId);
 
 	// Log activity
 	logActivity({
@@ -5160,11 +5169,11 @@ app.post('/api/sponsors/show', requireAuthAPI, async (req, res) => {
 			};
 		});
 
-		// Broadcast via WebSocket
-		io.emit('sponsor:show', {
+		// Broadcast via WebSocket (multi-tenant)
+		broadcastToUser('sponsor:show', {
 			sponsors: sponsorData,
 			duration: duration > 0 ? Math.min(Math.max(duration, 10), 3600) : 0
-		});
+		}, userId);
 
 		// Also send via HTTP to MagicMirror modules
 		const matchEnabled = state.config.displays?.match !== false;
@@ -5192,7 +5201,7 @@ app.post('/api/sponsors/show', requireAuthAPI, async (req, res) => {
 			}
 		}
 
-		console.log(`[Sponsors] Showing ${Object.keys(sponsorData).length} sponsor(s)`);
+		console.log(`[Sponsors] Showing ${Object.keys(sponsorData).length} sponsor(s)${userId ? ` (user:${userId})` : ''}`);
 
 		res.json({
 			success: true,
@@ -5208,10 +5217,11 @@ app.post('/api/sponsors/show', requireAuthAPI, async (req, res) => {
 app.post('/api/sponsors/hide', requireAuthAPI, async (req, res) => {
 	try {
 		const { position, all = true } = req.body;
+		const userId = req.session?.userId;
 		const state = loadSponsorState();
 
-		// Broadcast hide via WebSocket
-		io.emit('sponsor:hide', { position, all: all || !position });
+		// Broadcast hide via WebSocket (multi-tenant)
+		broadcastToUser('sponsor:hide', { position, all: all || !position }, userId);
 
 		// Also send via HTTP to MagicMirror modules
 		const matchEnabled = state.config.displays?.match !== false;
@@ -5239,7 +5249,7 @@ app.post('/api/sponsors/hide', requireAuthAPI, async (req, res) => {
 			}
 		}
 
-		console.log(`[Sponsors] Hidden: ${position || 'all'}`);
+		console.log(`[Sponsors] Hidden: ${position || 'all'}${userId ? ` (user:${userId})` : ''}`);
 
 		res.json({ success: true, message: 'Sponsors hidden' });
 	} catch (error) {
