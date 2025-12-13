@@ -7,6 +7,9 @@
 
 const express = require('express');
 const router = express.Router();
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:matches');
 
 // Local services
 const tournamentDb = require('../services/tournament-db');
@@ -18,6 +21,7 @@ const bracketEngine = require('../services/bracket-engine');
 let activityLogger = null;
 let pushNotifications = null;
 let io = null;
+let discordNotify = null;
 
 /**
  * Initialize matches routes with dependencies
@@ -26,6 +30,13 @@ function init(deps) {
     activityLogger = deps.activityLogger;
     pushNotifications = deps.pushNotifications;
     io = deps.io;
+}
+
+/**
+ * Set Discord notification service (called after init when discordNotify is available)
+ */
+function setDiscordNotify(service) {
+    discordNotify = service;
 }
 
 // Helper to get user info from request
@@ -37,9 +48,22 @@ function getUserInfo(req) {
 }
 
 // Helper to broadcast match updates
+// Emits both events:
+// - 'match:updated' for single match changes (admin dashboard pages)
+// - 'matches:update' with full array (match display + command center)
 function broadcastMatchUpdate(tournamentId, data) {
     if (io) {
-        io.emit('matches:update', { tournamentId, ...data });
+        // Emit single-match event for admin pages
+        io.emit('match:updated', { tournamentId, ...data });
+
+        // Also emit full matches array for match display and command center
+        const matches = matchDb.getByTournament(tournamentId);
+        const transformedMatches = matches.map(m => transformMatch(m));
+        io.emit('matches:update', {
+            tournamentId,
+            matches: transformedMatches,
+            match: data.match  // Include single match for incremental updates
+        });
     }
 }
 
@@ -91,7 +115,7 @@ router.get('/:tournamentId', async (req, res) => {
             source: 'local'
         });
     } catch (error) {
-        console.error('[Matches] List error:', error);
+        logger.error('list', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -127,7 +151,7 @@ router.get('/:tournamentId/stats', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('[Matches] Stats error:', error);
+        logger.error('stats', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -155,7 +179,7 @@ router.get('/:tournamentId/:matchId', async (req, res) => {
             match: transformMatch(match)
         });
     } catch (error) {
-        console.error('[Matches] Get error:', error);
+        logger.error('get', error, { matchId: req.params.matchId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -188,7 +212,13 @@ router.post('/:tournamentId/:matchId/underway', async (req, res) => {
         const updatedMatch = matchDb.markUnderway(match.id);
         const user = getUserInfo(req);
 
-        console.log(`[Matches] Marked underway: ${updatedMatch.identifier} by ${user.username}`);
+        logger.log('underway', {
+            matchId: match.id,
+            identifier: updatedMatch.identifier,
+            player1: updatedMatch.player1_name,
+            player2: updatedMatch.player2_name,
+            user: user.username
+        });
 
         // Log activity
         if (activityLogger) {
@@ -397,10 +427,12 @@ router.post('/:tournamentId/:matchId/winner', async (req, res) => {
             });
         }
 
-        const updatedMatch = matchDb.setWinner(match.id, parseInt(winnerId), {
-            player1_score: parseInt(player1Score) || 0,
-            player2_score: parseInt(player2Score) || 0
-        });
+        // Pass scores only if provided (null otherwise for winner-only declaration)
+        const scores = {};
+        if (player1Score !== undefined) scores.player1_score = parseInt(player1Score);
+        if (player2Score !== undefined) scores.player2_score = parseInt(player2Score);
+
+        const updatedMatch = matchDb.setWinner(match.id, parseInt(winnerId), scores);
 
         const user = getUserInfo(req);
 
@@ -420,6 +452,16 @@ router.post('/:tournamentId/:matchId/winner', async (req, res) => {
             action: 'winner',
             match: transformMatch(updatedMatch)
         });
+
+        // Send Discord notification
+        if (discordNotify) {
+            const tournament = tournamentDb.getById(match.tournament_id);
+            if (tournament) {
+                discordNotify.notifyMatchComplete(tournament.user_id, updatedMatch, tournament).catch(err => {
+                    logger.error('discordNotifyMatchComplete', err, { matchId: match.id });
+                });
+            }
+        }
 
         res.json({
             success: true,
@@ -563,6 +605,13 @@ router.post('/:tournamentId/:matchId/station', async (req, res) => {
         const updatedMatch = stationId
             ? matchDb.setStation(match.id, parseInt(stationId))
             : matchDb.clearStation(match.id);
+
+        // Auto-mark as underway when assigning to a station (if not already underway)
+        if (stationId && !match.underway_at) {
+            matchDb.markUnderway(match.id);
+            // Re-fetch to get updated underway_at for response
+            Object.assign(updatedMatch, matchDb.getById(match.id));
+        }
 
         const user = getUserInfo(req);
 
@@ -741,6 +790,43 @@ router.post('/:tournamentId/batch-scores', async (req, res) => {
 });
 
 // ============================================
+// POST /:tournamentId/auto-assign - Trigger auto-assign stations
+// ============================================
+router.post('/:tournamentId/auto-assign', async (req, res) => {
+    try {
+        const tournament = getTournament(req.params.tournamentId);
+        if (!tournament) {
+            return res.status(404).json({
+                success: false,
+                error: 'Tournament not found'
+            });
+        }
+
+        const assignments = matchDb.autoAssignStations(tournament.id);
+
+        if (assignments.length > 0) {
+            // Broadcast update
+            broadcastMatchUpdate(tournament.id, {
+                action: 'auto_assign',
+                assignments
+            });
+        }
+
+        res.json({
+            success: true,
+            assigned: assignments.length,
+            assignments
+        });
+    } catch (error) {
+        console.error('[Matches] Auto-assign error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// ============================================
 // Helper: Transform match for API response
 // ============================================
 function transformMatch(m) {
@@ -777,4 +863,5 @@ function transformMatch(m) {
 
 // Export
 router.init = init;
+router.setDiscordNotify = setDiscordNotify;
 module.exports = router;

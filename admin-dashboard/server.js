@@ -31,6 +31,7 @@ const stationDb = require('./services/station-db');
 const sponsorService = require('./services/sponsor');
 const bracketEngine = require('./services/bracket-engine');
 const bracketRenderer = require('./services/bracket-renderer');
+const discordNotify = require('./services/discord-notify');
 
 // PDF Report Color Palette
 const PDF_COLORS = {
@@ -7118,6 +7119,10 @@ app.get('/api/settings/defaults', requireAuthAPI, (req, res) => {
 	});
 });
 
+// Mount settings routes for Discord integration (routes not in server.js)
+// This handles /api/settings/discord, /api/settings/discord/test, etc.
+app.use('/api/settings', localRoutes.settings);
+
 // ============================================
 // SYSTEM MONITORING API ENDPOINTS (ADMIN ONLY)
 // ============================================
@@ -7502,6 +7507,26 @@ tournamentNarratorService.init({
 		logActivity
 	}
 });
+
+// Initialize Discord notification service
+discordNotify.init({
+	io,
+	activityLogger: {
+		log: logActivity
+	}
+});
+
+// Initialize settings routes with Discord notification service
+localRoutes.settings.init({
+	rateLimiter: null,  // Not used in tcc-custom
+	broadcastPushNotification,
+	discordNotify
+});
+
+// Set Discord notification service on routes that need it
+localRoutes.tournaments.setDiscordNotify(discordNotify);
+localRoutes.matches.setDiscordNotify(discordNotify);
+localRoutes.participants.setDiscordNotify(discordNotify);
 
 // Get all games with tournament counts
 app.get('/api/analytics/games', requireAuthAPI, (req, res) => {

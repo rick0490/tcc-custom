@@ -240,6 +240,34 @@ function initDatabase() {
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
 
+        -- Discord integration settings (per-user, multi-tenant)
+        CREATE TABLE IF NOT EXISTS discord_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            integration_type TEXT DEFAULT 'webhook' CHECK(integration_type IN ('webhook', 'bot')),
+            webhook_url_encrypted TEXT,
+            webhook_iv TEXT,
+            bot_token_encrypted TEXT,
+            bot_token_iv TEXT,
+            channel_id TEXT,
+            guild_id TEXT,
+            notify_tournament_start INTEGER DEFAULT 1,
+            notify_tournament_complete INTEGER DEFAULT 1,
+            notify_match_complete INTEGER DEFAULT 1,
+            notify_participant_signup INTEGER DEFAULT 1,
+            notify_participant_checkin INTEGER DEFAULT 1,
+            notify_dq_timer INTEGER DEFAULT 1,
+            mention_role_id TEXT,
+            embed_color TEXT DEFAULT '#5865F2',
+            include_bracket_link INTEGER DEFAULT 1,
+            is_enabled INTEGER DEFAULT 0,
+            last_test_at DATETIME,
+            last_error TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         -- Indexes
         CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
@@ -259,6 +287,8 @@ function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_sponsor_impression_stats_sponsor ON sponsor_impression_stats(sponsor_id);
         CREATE INDEX IF NOT EXISTS idx_sponsor_impression_stats_date ON sponsor_impression_stats(stat_date);
         CREATE INDEX IF NOT EXISTS idx_platform_announcements_active ON platform_announcements(is_active, expires_at);
+        CREATE INDEX IF NOT EXISTS idx_discord_settings_user ON discord_settings(user_id);
+        CREATE INDEX IF NOT EXISTS idx_discord_settings_enabled ON discord_settings(is_enabled);
     `);
 
     console.log('[System DB] Database initialized at', DB_PATH);
@@ -1262,6 +1292,120 @@ function cleanupOldImpressions(daysToKeep = 90) {
     return result.changes;
 }
 
+// =============================================================================
+// DISCORD SETTINGS HELPERS
+// =============================================================================
+
+/**
+ * Get Discord settings for a user
+ * @param {number} userId - User ID
+ * @returns {Object|null} Discord settings or null if not configured
+ */
+function getDiscordSettings(userId) {
+    return getDb().prepare('SELECT * FROM discord_settings WHERE user_id = ?').get(userId);
+}
+
+/**
+ * Save Discord settings (create or update)
+ * @param {number} userId - User ID
+ * @param {Object} data - Settings data to save
+ * @returns {Object} Updated settings
+ */
+function saveDiscordSettings(userId, data) {
+    const existing = getDiscordSettings(userId);
+    const now = new Date().toISOString();
+
+    if (existing) {
+        // Build dynamic update query
+        const updates = [];
+        const params = [];
+
+        const allowedFields = [
+            'integration_type', 'webhook_url_encrypted', 'webhook_iv',
+            'bot_token_encrypted', 'bot_token_iv', 'channel_id', 'guild_id',
+            'notify_tournament_start', 'notify_tournament_complete',
+            'notify_match_complete', 'notify_participant_signup',
+            'notify_participant_checkin', 'notify_dq_timer',
+            'mention_role_id', 'embed_color', 'include_bracket_link',
+            'is_enabled', 'last_test_at', 'last_error'
+        ];
+
+        for (const field of allowedFields) {
+            if (data[field] !== undefined) {
+                updates.push(`${field} = ?`);
+                params.push(data[field]);
+            }
+        }
+
+        if (updates.length > 0) {
+            updates.push('updated_at = ?');
+            params.push(now);
+            params.push(userId);
+
+            getDb().prepare(`
+                UPDATE discord_settings SET ${updates.join(', ')} WHERE user_id = ?
+            `).run(...params);
+        }
+    } else {
+        // Insert new record with defaults
+        const fields = ['user_id'];
+        const values = [userId];
+        const placeholders = ['?'];
+
+        const allowedFields = [
+            'integration_type', 'webhook_url_encrypted', 'webhook_iv',
+            'bot_token_encrypted', 'bot_token_iv', 'channel_id', 'guild_id',
+            'notify_tournament_start', 'notify_tournament_complete',
+            'notify_match_complete', 'notify_participant_signup',
+            'notify_participant_checkin', 'notify_dq_timer',
+            'mention_role_id', 'embed_color', 'include_bracket_link',
+            'is_enabled', 'last_test_at', 'last_error'
+        ];
+
+        for (const field of allowedFields) {
+            if (data[field] !== undefined) {
+                fields.push(field);
+                values.push(data[field]);
+                placeholders.push('?');
+            }
+        }
+
+        fields.push('created_at', 'updated_at');
+        values.push(now, now);
+        placeholders.push('?', '?');
+
+        getDb().prepare(`
+            INSERT INTO discord_settings (${fields.join(', ')})
+            VALUES (${placeholders.join(', ')})
+        `).run(...values);
+    }
+
+    return getDiscordSettings(userId);
+}
+
+/**
+ * Delete Discord settings for a user
+ * @param {number} userId - User ID
+ * @returns {boolean} True if deleted, false if not found
+ */
+function deleteDiscordSettings(userId) {
+    const result = getDb().prepare('DELETE FROM discord_settings WHERE user_id = ?').run(userId);
+    return result.changes > 0;
+}
+
+/**
+ * Get all users with Discord notifications enabled
+ * @returns {Array} Array of Discord settings with user info
+ */
+function getEnabledDiscordUsers() {
+    return getDb().prepare(`
+        SELECT ds.*, u.username
+        FROM discord_settings ds
+        JOIN users u ON ds.user_id = u.id
+        WHERE ds.is_enabled = 1
+    `).all();
+}
+
 module.exports = {
     // Core functions
     initDatabase,
@@ -1341,5 +1485,11 @@ module.exports = {
     getSponsorImpressionTotals,
     getAllSponsorImpressionStats,
     getSponsorImpressions,
-    cleanupOldImpressions
+    cleanupOldImpressions,
+
+    // Discord Settings
+    getDiscordSettings,
+    saveDiscordSettings,
+    deleteDiscordSettings,
+    getEnabledDiscordUsers
 };

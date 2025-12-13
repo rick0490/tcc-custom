@@ -3,10 +3,15 @@
  *
  * Tournament management API endpoints using local database.
  * Replaces Challonge API integration with custom bracket engine.
+ * Supports multi-tenant isolation via req.tenantId.
  */
 
 const express = require('express');
 const router = express.Router();
+const { createLogger } = require('../services/debug-logger');
+const { getTenantFilter, validateTenantAccess } = require('../middleware/tenant');
+
+const logger = createLogger('routes:tournaments');
 
 // Local services
 const tournamentDb = require('../services/tournament-db');
@@ -17,6 +22,7 @@ const bracketEngine = require('../services/bracket-engine');
 // Dependencies injected via init()
 let pushNotifications = null;
 let io = null;
+let discordNotify = null;
 
 /**
  * Initialize tournaments routes with dependencies
@@ -24,17 +30,31 @@ let io = null;
 function init(deps) {
     pushNotifications = deps.pushNotifications;
     io = deps.io;
+    discordNotify = deps.discordNotify;
 }
 
-// Helper to broadcast tournament updates
-function broadcastTournamentUpdate(tournamentId, data) {
+// WebSocket event types (must match frontend WS_EVENTS)
+const WS_EVENTS = {
+    TOURNAMENT_CREATED: 'tournament:created',
+    TOURNAMENT_UPDATED: 'tournament:updated',
+    TOURNAMENT_DELETED: 'tournament:deleted',
+    TOURNAMENT_STARTED: 'tournament:started',
+    TOURNAMENT_RESET: 'tournament:reset',
+    TOURNAMENT_COMPLETED: 'tournament:completed'
+};
+
+// Helper to broadcast tournament updates with specific event types
+function broadcastTournament(eventType, tournament, extra = {}) {
     if (io) {
-        io.emit('tournament:update', { tournamentId, ...data });
+        io.emit(eventType, { tournament, ...extra });
+        // Also emit generic update for backward compatibility
+        io.emit('tournament:update', { tournamentId: tournament?.id, action: eventType, ...extra });
     }
 }
 
 // ============================================
 // GET /api/tournaments - List all tournaments
+// Filtered by tenant (user_id) unless superadmin viewing all
 // ============================================
 router.get('/', async (req, res) => {
     try {
@@ -53,16 +73,28 @@ router.get('/', async (req, res) => {
             filters.game_id = parseInt(gameId);
         }
 
-        const tournaments = tournamentDb.list(filters);
+        // Get tenant filter (null for superadmin viewing all, userId otherwise)
+        const tenantFilter = getTenantFilter(req);
+
+        const tournaments = tournamentDb.list(filters, tenantFilter);
+        const transformed = tournaments.map(t => transformTournament(t));
+
+        // Group tournaments by state for frontend
+        const grouped = {
+            pending: transformed.filter(t => t.state === 'pending' || t.state === 'checking_in'),
+            inProgress: transformed.filter(t => t.state === 'underway' || t.state === 'awaiting_review'),
+            completed: transformed.filter(t => t.state === 'complete')
+        };
 
         res.json({
             success: true,
-            tournaments: tournaments.map(t => transformTournament(t)),
+            tournaments: grouped,
             count: tournaments.length,
-            source: 'local'
+            source: 'local',
+            tenantFiltered: tenantFilter !== null
         });
     } catch (error) {
-        console.error('[Tournaments] List error:', error);
+        logger.error('list', error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -75,21 +107,28 @@ router.get('/', async (req, res) => {
 // ============================================
 router.post('/create', async (req, res) => {
     try {
+        // Frontend sends camelCase, we map to snake_case for database
         const {
             name,
-            game_name,
-            tournament_type = 'double_elimination',
+            gameName,
+            tournamentType,
             description,
-            starts_at,
-            signup_cap,
-            open_signup,
-            check_in_duration,
-            hold_third_place_match,
-            grand_finals_modifier,
-            swiss_rounds,
-            ranked_by,
-            hide_seeds,
-            sequential_pairings
+            startAt,
+            signupCap,
+            openSignup,
+            checkInDuration,
+            holdThirdPlaceMatch,
+            grandFinalsModifier,
+            swissRounds,
+            rankedBy,
+            hideSeeds,
+            sequentialPairings,
+            showRounds,
+            autoAssign,
+            byeStrategy,
+            compactBracket,
+            seedingSource,
+            seedingConfig
         } = req.body;
 
         if (!name) {
@@ -99,25 +138,59 @@ router.post('/create', async (req, res) => {
             });
         }
 
-        // Create tournament
+        // Normalize tournament type: "single elimination" -> "single_elimination"
+        const normalizedType = (tournamentType || 'double_elimination')
+            .toLowerCase()
+            .replace(/\s+/g, '_');
+
+        // Create tournament with snake_case field names for database
+        // Pass userId for tenant isolation (req.tenantId set by tenant middleware)
+        const userId = req.tenantId || req.session?.userId || null;
+
+        // Build format settings JSON for bracket-specific options
+        const formatSettings = {};
+        if (byeStrategy && byeStrategy !== 'traditional') {
+            formatSettings.byeStrategy = byeStrategy;
+        }
+        if (compactBracket) {
+            formatSettings.compactBracket = true;
+        }
+        if (seedingSource && seedingSource !== 'manual') {
+            formatSettings.seedingSource = seedingSource;
+            if (seedingConfig) {
+                formatSettings.seedingConfig = seedingConfig;
+            }
+        }
+
         const tournament = tournamentDb.create({
             name,
-            game_name,
-            tournament_type,
+            game_name: gameName,
+            tournament_type: normalizedType,
             description,
-            starts_at,
-            signup_cap,
-            open_signup: !!open_signup,
-            check_in_duration,
-            hold_third_place_match: !!hold_third_place_match,
-            grand_finals_modifier,
-            swiss_rounds,
-            ranked_by,
-            hide_seeds: !!hide_seeds,
-            sequential_pairings: !!sequential_pairings
+            starts_at: startAt,
+            signup_cap: signupCap,
+            open_signup: !!openSignup,
+            check_in_duration: checkInDuration,
+            hold_third_place_match: !!holdThirdPlaceMatch,
+            grand_finals_modifier: grandFinalsModifier,
+            swiss_rounds: swissRounds,
+            ranked_by: rankedBy,
+            hide_seeds: !!hideSeeds,
+            sequential_pairings: !!sequentialPairings,
+            show_rounds: !!showRounds,
+            auto_assign: !!autoAssign,
+            format_settings_json: Object.keys(formatSettings).length > 0 ? formatSettings : null
+        }, userId);
+
+        logger.log('create:success', {
+            id: tournament.id,
+            name: tournament.name,
+            urlSlug: tournament.url_slug,
+            type: tournament.tournament_type
         });
 
-        console.log(`[Tournaments] Created: ${tournament.name} (${tournament.url_slug})`);
+        // Broadcast creation
+        broadcastTournament(WS_EVENTS.TOURNAMENT_CREATED, transformTournament(tournament));
 
         res.json({
             success: true,
@@ -125,7 +198,7 @@ router.post('/create', async (req, res) => {
             message: 'Tournament created successfully'
         });
     } catch (error) {
-        console.error('[Tournaments] Create error:', error);
+        logger.error('create', error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -135,6 +208,7 @@ router.post('/create', async (req, res) => {
 
 // ============================================
 // GET /api/tournaments/:tournamentId - Get tournament details
+// Validates tenant access unless public or superadmin viewing all
 // ============================================
 router.get('/:tournamentId', async (req, res) => {
     try {
@@ -152,6 +226,14 @@ router.get('/:tournamentId', async (req, res) => {
             });
         }
 
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
+            });
+        }
+
         const stats = tournamentDb.getStats(tournament.id);
 
         res.json({
@@ -160,7 +242,7 @@ router.get('/:tournamentId', async (req, res) => {
             stats
         });
     } catch (error) {
-        console.error('[Tournaments] Get error:', error);
+        logger.error('get', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -170,6 +252,7 @@ router.get('/:tournamentId', async (req, res) => {
 
 // ============================================
 // PUT /api/tournaments/:tournamentId - Update tournament
+// Validates tenant access
 // ============================================
 router.put('/:tournamentId', async (req, res) => {
     try {
@@ -186,24 +269,126 @@ router.put('/:tournamentId', async (req, res) => {
             });
         }
 
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
+            });
+        }
+
         // Only allow updates for pending tournaments
-        if (tournament.state !== 'pending') {
+        const isPending = tournament.state === 'pending' || tournament.state === 'checking_in';
+        if (!isPending) {
             return res.status(400).json({
                 success: false,
                 error: `Cannot update tournament in ${tournament.state} state`
             });
         }
 
-        const updatedTournament = tournamentDb.update(tournament.id, req.body);
+        // Map camelCase from frontend to snake_case for database
+        const {
+            name,
+            gameName,
+            tournamentType,
+            description,
+            startAt,
+            signupCap,
+            openSignup,
+            checkInDuration,
+            holdThirdPlaceMatch,
+            grandFinalsModifier,
+            swissRounds,
+            rankedBy,
+            hideSeeds,
+            sequentialPairings,
+            showRounds,
+            autoAssign,
+            privateTournament,
+            byeStrategy,
+            compactBracket,
+            seedingSource,
+            seedingConfig
+        } = req.body;
 
-        console.log(`[Tournaments] Updated: ${updatedTournament.name}`);
+        // Build update object with snake_case keys
+        const updateData = {};
+
+        if (name !== undefined) updateData.name = name;
+        if (gameName !== undefined) updateData.game_name = gameName;
+        if (description !== undefined) updateData.description = description;
+        if (startAt !== undefined) updateData.starts_at = startAt;
+        if (signupCap !== undefined) updateData.signup_cap = signupCap;
+        if (openSignup !== undefined) updateData.open_signup = !!openSignup;
+        if (checkInDuration !== undefined) updateData.check_in_duration = checkInDuration;
+        if (holdThirdPlaceMatch !== undefined) updateData.hold_third_place_match = !!holdThirdPlaceMatch;
+        if (grandFinalsModifier !== undefined) updateData.grand_finals_modifier = grandFinalsModifier;
+        if (swissRounds !== undefined) updateData.swiss_rounds = swissRounds;
+        if (rankedBy !== undefined) updateData.ranked_by = rankedBy;
+        if (hideSeeds !== undefined) updateData.hide_seeds = !!hideSeeds;
+        if (sequentialPairings !== undefined) updateData.sequential_pairings = !!sequentialPairings;
+        if (showRounds !== undefined) updateData.show_rounds = !!showRounds;
+        if (autoAssign !== undefined) updateData.auto_assign = !!autoAssign;
+        if (privateTournament !== undefined) updateData.private = !!privateTournament;
+
+        // Tournament type can only be changed for pending tournaments
+        if (tournamentType !== undefined && isPending) {
+            // Normalize: "single elimination" -> "single_elimination"
+            updateData.tournament_type = tournamentType.toLowerCase().replace(/\s+/g, '_');
+        }
+
+        // Handle format settings updates
+        if (byeStrategy !== undefined || compactBracket !== undefined || seedingSource !== undefined) {
+            // Get existing format settings or start fresh
+            const existingSettings = tournament.format_settings || {};
+            const formatSettings = { ...existingSettings };
+
+            if (byeStrategy !== undefined) {
+                if (byeStrategy === 'traditional' || !byeStrategy) {
+                    delete formatSettings.byeStrategy;
+                } else {
+                    formatSettings.byeStrategy = byeStrategy;
+                }
+            }
+            if (compactBracket !== undefined) {
+                if (!compactBracket) {
+                    delete formatSettings.compactBracket;
+                } else {
+                    formatSettings.compactBracket = true;
+                }
+            }
+            if (seedingSource !== undefined) {
+                if (seedingSource === 'manual' || !seedingSource) {
+                    delete formatSettings.seedingSource;
+                    delete formatSettings.seedingConfig;
+                } else {
+                    formatSettings.seedingSource = seedingSource;
+                    if (seedingConfig) {
+                        formatSettings.seedingConfig = seedingConfig;
+                    }
+                }
+            }
+
+            updateData.format_settings_json = Object.keys(formatSettings).length > 0 ? formatSettings : null;
+        }
+
+        const updatedTournament = tournamentDb.update(tournament.id, updateData);
+
+        logger.log('update:success', {
+            id: updatedTournament.id,
+            name: updatedTournament.name,
+            fields: Object.keys(updateData)
+        });
+
+        // Broadcast update
+        broadcastTournament(WS_EVENTS.TOURNAMENT_UPDATED, transformTournament(updatedTournament));
 
         res.json({
             success: true,
             tournament: transformTournament(updatedTournament)
         });
     } catch (error) {
-        console.error('[Tournaments] Update error:', error);
+        logger.error('update', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -213,6 +398,7 @@ router.put('/:tournamentId', async (req, res) => {
 
 // ============================================
 // POST /api/tournaments/:tournamentId/start - Start tournament
+// Validates tenant access
 // ============================================
 router.post('/:tournamentId/start', async (req, res) => {
     try {
@@ -229,6 +415,14 @@ router.post('/:tournamentId/start', async (req, res) => {
             });
         }
 
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
+            });
+        }
+
         // Check if can start
         const canStartResult = tournamentDb.canStart(tournament.id);
         if (!canStartResult.canStart) {
@@ -241,14 +435,27 @@ router.post('/:tournamentId/start', async (req, res) => {
         // Get participants
         const participants = participantDb.getActiveByTournament(tournament.id);
 
-        // Generate bracket
-        const bracket = bracketEngine.generate(tournament.tournament_type, participants, {
+        // Build bracket options from tournament settings and format_settings
+        const bracketOptions = {
             hold_third_place_match: tournament.hold_third_place_match,
             grand_finals_modifier: tournament.grand_finals_modifier,
             sequential_pairings: tournament.sequential_pairings,
             swiss_rounds: tournament.swiss_rounds,
             ranked_by: tournament.ranked_by
-        });
+        };
+
+        // Include format settings (byeStrategy, compactBracket, etc.)
+        if (tournament.format_settings) {
+            if (tournament.format_settings.byeStrategy) {
+                bracketOptions.byeStrategy = tournament.format_settings.byeStrategy;
+            }
+            if (tournament.format_settings.compactBracket) {
+                bracketOptions.compactBracket = tournament.format_settings.compactBracket;
+            }
+        }
+
+        // Generate bracket
+        const bracket = bracketEngine.generate(tournament.tournament_type, participants, bracketOptions);
 
         // Create matches in database
         const matchIds = matchDb.bulkCreate(tournament.id, bracket.matches);
@@ -275,12 +482,16 @@ router.post('/:tournamentId/start', async (req, res) => {
         // Update tournament state
         const updatedTournament = tournamentDb.updateState(tournament.id, 'underway');
 
-        console.log(`[Tournaments] Started: ${updatedTournament.name} with ${matchIds.length} matches`);
+        logger.log('start:success', {
+            id: updatedTournament.id,
+            name: updatedTournament.name,
+            type: updatedTournament.tournament_type,
+            participantCount: participants.length,
+            matchCount: matchIds.length
+        });
 
         // Broadcast update
-        broadcastTournamentUpdate(tournament.id, {
-            action: 'started',
-            tournament: transformTournament(updatedTournament),
+        broadcastTournament(WS_EVENTS.TOURNAMENT_STARTED, transformTournament(updatedTournament), {
             matchCount: matchIds.length
         });
 
@@ -293,6 +504,19 @@ router.post('/:tournamentId/start', async (req, res) => {
             });
         }
 
+        // Send Discord notification
+        if (discordNotify) {
+            discordNotify.notifyTournamentStart(tournament.user_id, updatedTournament).catch(err => {
+                logger.error('discordNotifyStart', err, { tournamentId: tournament.id });
+            });
+        }
+
+        // Auto-assign stations to first round matches if enabled
+        const autoAssigned = matchDb.autoAssignStations(tournament.id);
+        if (autoAssigned.length > 0) {
+            logger.log('start:autoAssigned', { count: autoAssigned.length, assignments: autoAssigned });
+        }
+
         res.json({
             success: true,
             tournament: transformTournament(updatedTournament),
@@ -303,7 +527,7 @@ router.post('/:tournamentId/start', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('[Tournaments] Start error:', error);
+        logger.error('start', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -313,6 +537,7 @@ router.post('/:tournamentId/start', async (req, res) => {
 
 // ============================================
 // POST /api/tournaments/:tournamentId/reset - Reset tournament
+// Validates tenant access
 // ============================================
 router.post('/:tournamentId/reset', async (req, res) => {
     try {
@@ -329,6 +554,14 @@ router.post('/:tournamentId/reset', async (req, res) => {
             });
         }
 
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
+            });
+        }
+
         const canResetResult = tournamentDb.canReset(tournament.id);
         if (!canResetResult.canReset) {
             return res.status(400).json({
@@ -336,6 +569,15 @@ router.post('/:tournamentId/reset', async (req, res) => {
                 error: canResetResult.reason
             });
         }
+
+        // Clear station match assignments first (foreign key constraint)
+        const stationDb = require('../services/station-db');
+        const stations = stationDb.getByTournament(tournament.id);
+        stations.forEach(s => {
+            if (s.current_match_id) {
+                stationDb.clearMatch(s.id);
+            }
+        });
 
         // Delete all matches
         const deletedMatches = matchDb.deleteByTournament(tournament.id);
@@ -353,13 +595,29 @@ router.post('/:tournamentId/reset', async (req, res) => {
             completed_at: null
         });
 
-        console.log(`[Tournaments] Reset: ${updatedTournament.name} (${deletedMatches} matches deleted)`);
-
-        // Broadcast update
-        broadcastTournamentUpdate(tournament.id, {
-            action: 'reset',
-            tournament: transformTournament(updatedTournament)
+        logger.log('reset:success', {
+            id: updatedTournament.id,
+            name: updatedTournament.name,
+            deletedMatches
         });
+
+        // Broadcast tournament reset event
+        broadcastTournament(WS_EVENTS.TOURNAMENT_RESET, transformTournament(updatedTournament), {
+            deletedMatches
+        });
+
+        // Immediately broadcast empty matches to clear match display
+        // This ensures instant update instead of waiting for polling cycle
+        if (io) {
+            io.emit('matches:update', {
+                tournamentId: updatedTournament.url_slug,
+                matches: [],
+                podium: { isComplete: false },
+                timestamp: new Date().toISOString(),
+                source: 'reset'
+            });
+            logger.log('reset:matchesBroadcast', { tournamentId: updatedTournament.url_slug });
+        }
 
         res.json({
             success: true,
@@ -367,7 +625,7 @@ router.post('/:tournamentId/reset', async (req, res) => {
             deletedMatches
         });
     } catch (error) {
-        console.error('[Tournaments] Reset error:', error);
+        logger.error('reset', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -377,6 +635,7 @@ router.post('/:tournamentId/reset', async (req, res) => {
 
 // ============================================
 // POST /api/tournaments/:tournamentId/complete - Finalize tournament
+// Validates tenant access
 // ============================================
 router.post('/:tournamentId/complete', async (req, res) => {
     try {
@@ -390,6 +649,14 @@ router.post('/:tournamentId/complete', async (req, res) => {
             return res.status(404).json({
                 success: false,
                 error: 'Tournament not found'
+            });
+        }
+
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
             });
         }
 
@@ -430,12 +697,15 @@ router.post('/:tournamentId/complete', async (req, res) => {
         // Update tournament state
         const updatedTournament = tournamentDb.updateState(tournament.id, 'complete');
 
-        console.log(`[Tournaments] Completed: ${updatedTournament.name}`);
+        logger.log('complete:success', {
+            id: updatedTournament.id,
+            name: updatedTournament.name,
+            matchCount: matches.length,
+            participantCount: participants.length
+        });
 
         // Broadcast update
-        broadcastTournamentUpdate(tournament.id, {
-            action: 'completed',
-            tournament: transformTournament(updatedTournament),
+        broadcastTournament(WS_EVENTS.TOURNAMENT_COMPLETED, transformTournament(updatedTournament), {
             rankings: ranks
         });
 
@@ -454,13 +724,29 @@ router.post('/:tournamentId/complete', async (req, res) => {
             });
         }
 
+        // Send Discord notification with standings
+        if (discordNotify) {
+            // Build standings array from ranks
+            const standings = Object.entries(ranks)
+                .map(([participantId, rank]) => {
+                    const participant = participants.find(p => p.id === parseInt(participantId));
+                    return { rank, name: participant?.name || 'Unknown', participantId: parseInt(participantId) };
+                })
+                .sort((a, b) => a.rank - b.rank)
+                .slice(0, 8); // Top 8 for Discord
+
+            discordNotify.notifyTournamentComplete(tournament.user_id, updatedTournament, standings).catch(err => {
+                logger.error('discordNotifyComplete', err, { tournamentId: tournament.id });
+            });
+        }
+
         res.json({
             success: true,
             tournament: transformTournament(updatedTournament),
             rankings: ranks
         });
     } catch (error) {
-        console.error('[Tournaments] Complete error:', error);
+        logger.error('complete', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -470,6 +756,7 @@ router.post('/:tournamentId/complete', async (req, res) => {
 
 // ============================================
 // DELETE /api/tournaments/:tournamentId - Delete tournament
+// Validates tenant access
 // ============================================
 router.delete('/:tournamentId', async (req, res) => {
     try {
@@ -486,6 +773,14 @@ router.delete('/:tournamentId', async (req, res) => {
             });
         }
 
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
+            });
+        }
+
         const name = tournament.name;
         const deleted = tournamentDb.delete(tournament.id);
 
@@ -496,12 +791,12 @@ router.delete('/:tournamentId', async (req, res) => {
             });
         }
 
-        console.log(`[Tournaments] Deleted: ${name}`);
+        logger.log('delete:success', { id: tournament.id, name });
 
         // Broadcast update
-        broadcastTournamentUpdate(tournament.id, {
-            action: 'deleted',
-            tournamentId: tournament.id
+        broadcastTournament(WS_EVENTS.TOURNAMENT_DELETED, null, {
+            tournamentId: tournament.id,
+            name
         });
 
         res.json({
@@ -509,7 +804,7 @@ router.delete('/:tournamentId', async (req, res) => {
             message: `Tournament "${name}" deleted successfully`
         });
     } catch (error) {
-        console.error('[Tournaments] Delete error:', error);
+        logger.error('delete', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -555,7 +850,7 @@ router.get('/:tournamentId/bracket', async (req, res) => {
             bracket: visualizationData
         });
     } catch (error) {
-        console.error('[Tournaments] Bracket error:', error);
+        logger.error('bracket', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -596,7 +891,7 @@ router.get('/:tournamentId/standings', async (req, res) => {
             standings
         });
     } catch (error) {
-        console.error('[Tournaments] Standings error:', error);
+        logger.error('standings', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -659,7 +954,11 @@ router.post('/:tournamentId/swiss/next-round', async (req, res) => {
         // Create matches in database
         const matchIds = matchDb.bulkCreate(tournament.id, newMatches);
 
-        console.log(`[Tournaments] Swiss round ${nextRound} generated with ${matchIds.length} matches`);
+        logger.log('swissNextRound:success', {
+            tournamentId: tournament.id,
+            round: nextRound,
+            matchCount: matchIds.length
+        });
 
         res.json({
             success: true,
@@ -668,7 +967,7 @@ router.post('/:tournamentId/swiss/next-round', async (req, res) => {
             matches: newMatches
         });
     } catch (error) {
-        console.error('[Tournaments] Swiss next round error:', error);
+        logger.error('swissNextRound', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -680,6 +979,9 @@ router.post('/:tournamentId/swiss/next-round', async (req, res) => {
 // Helper: Transform tournament for API response
 // ============================================
 function transformTournament(t) {
+    // Extract format settings or use defaults
+    const formatSettings = t.format_settings || {};
+
     return {
         id: t.id,
         tournamentId: t.url_slug,
@@ -705,10 +1007,21 @@ function transformTournament(t) {
         rankedBy: t.ranked_by || 'match wins',
         hideSeeds: !!t.hide_seeds,
         privateTournament: !!t.private,
-        source: 'local'
+        source: 'local',
+        // Format settings (new bracket options)
+        byeStrategy: formatSettings.byeStrategy || 'traditional',
+        compactBracket: !!formatSettings.compactBracket,
+        seedingSource: formatSettings.seedingSource || 'manual',
+        seedingConfig: formatSettings.seedingConfig || null
     };
+}
+
+// Set Discord notification service (called after init when discordNotify is available)
+function setDiscordNotify(service) {
+    discordNotify = service;
 }
 
 // Export
 router.init = init;
+router.setDiscordNotify = setDiscordNotify;
 module.exports = router;
