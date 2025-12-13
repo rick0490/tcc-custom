@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Platform Admin - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Platform administration and superuser tools">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Google Fonts -->
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=16">
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+	<style>
+		.platform-tab {
+			padding: 0.5rem 1rem;
+			border-radius: 0.375rem;
+			transition: all 0.2s;
+			color: var(--text-muted);
+			background: transparent;
+			white-space: nowrap;
+		}
+		.platform-tab:hover {
+			background: var(--bg-tertiary);
+			color: var(--text-primary);
+		}
+		.platform-tab.active {
+			background: var(--accent-blue);
+			color: #FFFFFF;
+		}
+		.stat-card {
+			background: var(--bg-secondary);
+			border: 1px solid var(--border-color);
+			border-radius: 0.5rem;
+			padding: 1rem;
+		}
+		.stat-value {
+			font-size: 1.5rem;
+			font-weight: 700;
+			color: var(--text-primary);
+		}
+		.stat-label {
+			font-size: 0.875rem;
+			color: var(--text-muted);
+		}
+		.data-table {
+			width: 100%;
+		}
+		.data-table th {
+			text-align: left;
+			padding: 0.75rem 1rem;
+			font-weight: 600;
+			color: var(--text-secondary);
+			border-bottom: 1px solid var(--border-color);
+		}
+		.data-table td {
+			padding: 0.75rem 1rem;
+			color: var(--text-primary);
+			border-bottom: 1px solid var(--border-color);
+		}
+		.data-table tbody tr:hover {
+			background: var(--bg-tertiary);
+		}
+		.badge {
+			display: inline-flex;
+			align-items: center;
+			padding: 0.25rem 0.5rem;
+			border-radius: 9999px;
+			font-size: 0.75rem;
+			font-weight: 500;
+		}
+		.badge-green { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+		.badge-red { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+		.badge-yellow { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+		.badge-blue { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+		.badge-gray { background: rgba(107, 114, 128, 0.2); color: #9ca3af; }
+		.badge-purple { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
+		.key-code {
+			font-family: monospace;
+			background: var(--bg-tertiary);
+			padding: 0.25rem 0.5rem;
+			border-radius: 0.25rem;
+			font-size: 0.875rem;
+		}
+		.expandable-row {
+			display: none;
+		}
+		.expandable-row.expanded {
+			display: table-row;
+		}
+		.db-card {
+			background: var(--bg-secondary);
+			border: 1px solid var(--border-color);
+			border-radius: 0.5rem;
+			padding: 1.25rem;
+		}
+		.announcement-banner {
+			animation: pulse 2s infinite;
+		}
+		@keyframes pulse {
+			0%, 100% { opacity: 1; }
+			50% { opacity: 0.8; }
+		}
+	</style>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Page Header -->
+	<section class="mb-6">
+		<div class="flex items-center justify-between">
+			<div>
+				<h1 class="text-2xl font-bold text-white">Platform Admin</h1>
+				<p class="text-gray-400 text-sm mt-1">Superuser tools and platform management</p>
+			</div>
+			<div id="impersonationBanner" class="hidden">
+				<div class="flex items-center gap-3 bg-yellow-600/20 border border-yellow-600 rounded-lg px-4 py-2">
+					<span class="text-yellow-400">Impersonating:</span>
+					<span id="impersonatingUser" class="text-white font-medium"></span>
+					<button onclick="stopImpersonation()" class="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm">
+						Stop
+					</button>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Main Tabs -->
+	<section class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700">
+			<!-- Tab Navigation -->
+			<div class="border-b border-gray-700 p-4">
+				<nav class="flex flex-wrap gap-2">
+					<button onclick="switchTab('users')" data-tab="users" class="platform-tab active">
+						Users
+					</button>
+					<button onclick="switchTab('keys')" data-tab="keys" class="platform-tab">
+						Invite Keys
+					</button>
+					<button onclick="switchTab('tournaments')" data-tab="tournaments" class="platform-tab">
+						Tournaments
+					</button>
+					<button onclick="switchTab('audit')" data-tab="audit" class="platform-tab">
+						Audit Log
+					</button>
+					<button onclick="switchTab('database')" data-tab="database" class="platform-tab">
+						Database
+					</button>
+					<button onclick="switchTab('announcements')" data-tab="announcements" class="platform-tab">
+						Announcements
+					</button>
+					<button onclick="switchTab('systemHealth')" data-tab="systemHealth" class="platform-tab">
+						System Health
+					</button>
+					<button onclick="switchTab('monitoring')" data-tab="monitoring" class="platform-tab">
+						Monitoring
+					</button>
+					<button onclick="switchTab('settings')" data-tab="settings" class="platform-tab">
+						Settings
+					</button>
+					<button onclick="switchTab('flyers')" data-tab="flyers" class="platform-tab">
+						Flyers
+					</button>
+					<button onclick="switchTab('sponsors')" data-tab="sponsors" class="platform-tab">
+						Sponsors
+					</button>
+				</nav>
+			</div>
+
+			<!-- Tab Content -->
+			<div class="p-6">
+				<!-- Users Tab -->
+				<div id="tab-users" class="tab-content">
+					<!-- Stats Row -->
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+						<div class="stat-card">
+							<div class="stat-value" id="statTotalUsers">-</div>
+							<div class="stat-label">Total Users</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statActiveUsers">-</div>
+							<div class="stat-label">Active</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statTrialUsers">-</div>
+							<div class="stat-label">On Trial</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statExpiredUsers">-</div>
+							<div class="stat-label">Expired</div>
+						</div>
+					</div>
+
+					<!-- Users Table -->
+					<div class="overflow-x-auto">
+						<table class="data-table">
+							<thead>
+								<tr>
+									<th>ID</th>
+									<th>Username</th>
+									<th>Role</th>
+									<th>Status</th>
+									<th>Subscription</th>
+									<th>Last Login</th>
+									<th class="text-right">Actions</th>
+								</tr>
+							</thead>
+							<tbody id="usersTableBody">
+								<tr>
+									<td colspan="7" class="text-center py-8 text-gray-400">Loading users...</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<!-- Invite Keys Tab -->
+				<div id="tab-keys" class="tab-content hidden">
+					<!-- Stats Row -->
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+						<div class="stat-card">
+							<div class="stat-value" id="statTotalKeys">-</div>
+							<div class="stat-label">Total Keys</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statActiveKeys">-</div>
+							<div class="stat-label">Active Keys</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statUnlimitedKeys">-</div>
+							<div class="stat-label">Unlimited</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statTotalRegistrations">-</div>
+							<div class="stat-label">Registrations</div>
+						</div>
+					</div>
+
+					<!-- Create Key Form -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Create Invite Key</h3>
+						<form id="createKeyForm" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Key Name</label>
+								<input type="text" id="keyName" placeholder="e.g. Event giveaway"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Type</label>
+								<select id="keyType" onchange="updateKeyTypeOptions()"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="unlimited">Unlimited</option>
+									<option value="multi">Multi-use</option>
+									<option value="single">Single-use</option>
+								</select>
+							</div>
+							<div id="usesAllowedField" class="hidden">
+								<label class="block text-sm text-gray-400 mb-1">Uses Allowed</label>
+								<input type="number" id="usesAllowed" value="10" min="1" max="1000"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Expires (optional)</label>
+								<input type="date" id="keyExpires"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div class="flex items-end">
+								<button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md w-full">
+									Create Key
+								</button>
+							</div>
+						</form>
+					</div>
+
+					<!-- Keys Table -->
+					<div class="overflow-x-auto">
+						<table class="data-table">
+							<thead>
+								<tr>
+									<th>Key Code</th>
+									<th>Name</th>
+									<th>Type</th>
+									<th>Uses</th>
+									<th>Status</th>
+									<th>Created By</th>
+									<th class="text-right">Actions</th>
+								</tr>
+							</thead>
+							<tbody id="keysTableBody">
+								<tr>
+									<td colspan="7" class="text-center py-8 text-gray-400">Loading keys...</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<!-- Tournaments Tab -->
+				<div id="tab-tournaments" class="tab-content hidden">
+					<!-- Search and Filters -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+							<div class="md:col-span-2">
+								<label class="block text-sm text-gray-400 mb-1">Search</label>
+								<input type="text" id="tournamentSearch" placeholder="Tournament name or owner..."
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">State</label>
+								<select id="tournamentState"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">All States</option>
+									<option value="pending">Pending</option>
+									<option value="underway">Underway</option>
+									<option value="complete">Complete</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Owner</label>
+								<select id="tournamentOwner"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">All Owners</option>
+								</select>
+							</div>
+							<div class="flex items-end">
+								<button onclick="searchTournaments()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md w-full">
+									Search
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<!-- Results -->
+					<div id="tournamentResults">
+						<div class="text-center py-8 text-gray-400">Enter search criteria above</div>
+					</div>
+				</div>
+
+				<!-- Audit Log Tab -->
+				<div id="tab-audit" class="tab-content hidden">
+					<!-- Filters -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">User</label>
+								<select id="auditUser"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">All Users</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Action Type</label>
+								<select id="auditAction"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">All Actions</option>
+									<option value="login">Login</option>
+									<option value="logout">Logout</option>
+									<option value="tournament">Tournament</option>
+									<option value="participant">Participant</option>
+									<option value="match">Match</option>
+									<option value="settings">Settings</option>
+									<option value="impersonation">Impersonation</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">From</label>
+								<input type="date" id="auditFrom"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">To</label>
+								<input type="date" id="auditTo"
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div class="flex items-end gap-2">
+								<button onclick="loadAuditLog()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md flex-1">
+									Filter
+								</button>
+								<button onclick="exportAuditLog()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+									Export
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<!-- Activity Table -->
+					<div class="overflow-x-auto">
+						<table class="data-table">
+							<thead>
+								<tr>
+									<th>Timestamp</th>
+									<th>User</th>
+									<th>Action</th>
+									<th>Target</th>
+									<th>Details</th>
+								</tr>
+							</thead>
+							<tbody id="auditTableBody">
+								<tr>
+									<td colspan="5" class="text-center py-8 text-gray-400">Click "Filter" to load activity log</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+					<div id="auditPagination" class="mt-4 text-center"></div>
+				</div>
+
+				<!-- Database Tab -->
+				<div id="tab-database" class="tab-content hidden">
+					<!-- Database Status Cards -->
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+						<div class="db-card" id="db-tournaments">
+							<div class="flex items-center justify-between mb-2">
+								<h3 class="font-semibold text-white">tournaments.db</h3>
+								<span class="badge badge-green">Active</span>
+							</div>
+							<div class="text-2xl font-bold text-white mb-1">-</div>
+							<div class="text-sm text-gray-400">- tables</div>
+						</div>
+						<div class="db-card" id="db-players">
+							<div class="flex items-center justify-between mb-2">
+								<h3 class="font-semibold text-white">players.db</h3>
+								<span class="badge badge-blue">Critical</span>
+							</div>
+							<div class="text-2xl font-bold text-white mb-1">-</div>
+							<div class="text-sm text-gray-400">- tables</div>
+						</div>
+						<div class="db-card" id="db-system">
+							<div class="flex items-center justify-between mb-2">
+								<h3 class="font-semibold text-white">system.db</h3>
+								<span class="badge badge-purple">Config</span>
+							</div>
+							<div class="text-2xl font-bold text-white mb-1">-</div>
+							<div class="text-sm text-gray-400">- tables</div>
+						</div>
+						<div class="db-card" id="db-cache">
+							<div class="flex items-center justify-between mb-2">
+								<h3 class="font-semibold text-white">cache.db</h3>
+								<span class="badge badge-gray">Ephemeral</span>
+							</div>
+							<div class="text-2xl font-bold text-white mb-1">-</div>
+							<div class="text-sm text-gray-400">- tables</div>
+						</div>
+					</div>
+
+					<!-- Backup Section -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-white">Backups</h3>
+							<div class="flex gap-2">
+								<button onclick="createBackup('all')" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md">
+									Backup All
+								</button>
+							</div>
+						</div>
+						<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+							<button onclick="createBackup('tournaments')" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm">
+								Backup tournaments.db
+							</button>
+							<button onclick="createBackup('players')" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm">
+								Backup players.db
+							</button>
+							<button onclick="createBackup('system')" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm">
+								Backup system.db
+							</button>
+							<button onclick="exportAllData()" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm">
+								Export JSON
+							</button>
+						</div>
+
+						<!-- Backup List -->
+						<div class="overflow-x-auto">
+							<table class="data-table">
+								<thead>
+									<tr>
+										<th>Filename</th>
+										<th>Database</th>
+										<th>Size</th>
+										<th>Created</th>
+										<th class="text-right">Actions</th>
+									</tr>
+								</thead>
+								<tbody id="backupsTableBody">
+									<tr>
+										<td colspan="5" class="text-center py-4 text-gray-400">Loading backups...</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</div>
+
+					<!-- Maintenance Section -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<h3 class="text-lg font-semibold text-white mb-4">Maintenance</h3>
+						<div class="flex flex-wrap gap-3">
+							<button onclick="clearCacheDb()" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md">
+								Clear Cache DB
+							</button>
+							<button onclick="vacuumDatabases()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md">
+								Vacuum All
+							</button>
+							<button onclick="runIntegrityCheck()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+								Integrity Check
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<!-- Announcements Tab -->
+				<div id="tab-announcements" class="tab-content hidden">
+					<!-- Create Announcement -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Create Announcement</h3>
+						<form id="createAnnouncementForm" class="space-y-4">
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Message</label>
+								<textarea id="announcementMessage" rows="2" maxlength="500"
+									placeholder="Enter announcement message..."
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white"></textarea>
+							</div>
+							<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+								<div>
+									<label class="block text-sm text-gray-400 mb-1">Type</label>
+									<select id="announcementType"
+										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+										<option value="info">Info (Blue)</option>
+										<option value="warning">Warning (Yellow)</option>
+										<option value="alert">Alert (Red)</option>
+									</select>
+								</div>
+								<div>
+									<label class="block text-sm text-gray-400 mb-1">Duration (hours, 0=permanent)</label>
+									<input type="number" id="announcementDuration" value="0" min="0" max="168"
+										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+								</div>
+								<div class="flex items-end">
+									<button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md w-full">
+										Broadcast
+									</button>
+								</div>
+							</div>
+						</form>
+					</div>
+
+					<!-- Active Announcements -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Active Announcements</h3>
+						<div id="activeAnnouncements" class="space-y-3">
+							<div class="text-gray-400 text-center py-4">No active announcements</div>
+						</div>
+					</div>
+
+					<!-- Announcement History -->
+					<div>
+						<h3 class="text-lg font-semibold text-white mb-4">History</h3>
+						<div class="overflow-x-auto">
+							<table class="data-table">
+								<thead>
+									<tr>
+										<th>Message</th>
+										<th>Type</th>
+										<th>Created</th>
+										<th>Expired</th>
+										<th>Created By</th>
+									</tr>
+								</thead>
+								<tbody id="announcementHistoryBody">
+									<tr>
+										<td colspan="5" class="text-center py-4 text-gray-400">Loading history...</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+
+				<!-- System Health Tab -->
+				<div id="tab-systemHealth" class="tab-content hidden">
+					<!-- Module Status -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Display Module Status</h3>
+						<div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="moduleStatusGrid">
+							<!-- Match Display -->
+							<div class="bg-gray-700/50 rounded-lg p-4">
+								<div class="flex items-center gap-3 mb-2">
+									<span id="matchModuleIndicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
+									<span class="text-white font-medium">Match Display</span>
+								</div>
+								<div class="text-sm text-gray-400">Port 2052</div>
+								<div id="matchModuleStatus" class="text-sm text-gray-300 mt-1">Checking...</div>
+							</div>
+							<!-- Bracket Display -->
+							<div class="bg-gray-700/50 rounded-lg p-4">
+								<div class="flex items-center gap-3 mb-2">
+									<span id="bracketModuleIndicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
+									<span class="text-white font-medium">Bracket Display</span>
+								</div>
+								<div class="text-sm text-gray-400">Port 2053</div>
+								<div id="bracketModuleStatus" class="text-sm text-gray-300 mt-1">Checking...</div>
+							</div>
+							<!-- Flyer Display -->
+							<div class="bg-gray-700/50 rounded-lg p-4">
+								<div class="flex items-center gap-3 mb-2">
+									<span id="flyerModuleIndicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
+									<span class="text-white font-medium">Flyer Display</span>
+								</div>
+								<div class="text-sm text-gray-400">Port 2054</div>
+								<div id="flyerModuleStatus" class="text-sm text-gray-300 mt-1">Checking...</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Server Info -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Server Information</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+								<div>
+									<div class="text-sm text-gray-400">Hostname</div>
+									<div id="serverHostname" class="text-white">-</div>
+								</div>
+								<div>
+									<div class="text-sm text-gray-400">Node.js Version</div>
+									<div id="serverNodeVersion" class="text-white">-</div>
+								</div>
+								<div>
+									<div class="text-sm text-gray-400">Uptime</div>
+									<div id="serverUptime" class="text-white">-</div>
+								</div>
+								<div>
+									<div class="text-sm text-gray-400">Memory Usage</div>
+									<div id="serverMemory" class="text-white">-</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Database Status -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Database Connection</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div class="flex items-center gap-3 mb-4">
+								<span id="dbConnectionIndicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
+								<span id="dbConnectionStatus" class="text-white">Checking connection...</span>
+							</div>
+							<div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="dbSizeGrid">
+								<div>
+									<div class="text-sm text-gray-400">tournaments.db</div>
+									<div id="dbSizeTournaments" class="text-white">-</div>
+								</div>
+								<div>
+									<div class="text-sm text-gray-400">players.db</div>
+									<div id="dbSizePlayers" class="text-white">-</div>
+								</div>
+								<div>
+									<div class="text-sm text-gray-400">system.db</div>
+									<div id="dbSizeSystem" class="text-white">-</div>
+								</div>
+								<div>
+									<div class="text-sm text-gray-400">cache.db</div>
+									<div id="dbSizeCache" class="text-white">-</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Refresh Button -->
+					<div class="flex justify-end">
+						<button onclick="loadSystemHealth()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+							Refresh Status
+						</button>
+					</div>
+				</div>
+
+				<!-- Monitoring Tab -->
+				<div id="tab-monitoring" class="tab-content hidden">
+					<!-- Quick Actions -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Quick Actions</h3>
+						<div class="flex flex-wrap gap-3">
+							<button onclick="runQuickCheck()" id="quickCheckBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md disabled:opacity-50">
+								Quick System Check
+							</button>
+							<button onclick="openServiceLogsModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+								View Service Logs
+							</button>
+						</div>
+					</div>
+
+					<!-- Quick Check Results -->
+					<div id="quickCheckResults" class="mb-6 hidden">
+						<h3 class="text-lg font-semibold text-white mb-4">Quick Check Results</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<pre id="quickCheckOutput" class="text-sm text-gray-300 whitespace-pre-wrap font-mono"></pre>
+						</div>
+					</div>
+
+					<!-- Monitoring Session -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Monitoring Session</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div class="flex flex-wrap items-center gap-4 mb-4">
+								<div>
+									<label class="block text-sm text-gray-400 mb-1">Duration</label>
+									<select id="monitoringDuration" class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+										<option value="1">1 minute</option>
+										<option value="5" selected>5 minutes</option>
+										<option value="10">10 minutes</option>
+										<option value="15">15 minutes</option>
+										<option value="30">30 minutes</option>
+										<option value="60">1 hour</option>
+										<option value="120">2 hours</option>
+									</select>
+								</div>
+								<div class="flex items-end gap-2">
+									<button onclick="startMonitoringSession()" id="startMonitoringBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md disabled:opacity-50">
+										Start Monitoring
+									</button>
+									<button onclick="stopMonitoringSession()" id="stopMonitoringBtn" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md disabled:opacity-50" disabled>
+										Stop
+									</button>
+								</div>
+							</div>
+
+							<!-- Session Status -->
+							<div id="monitoringSessionStatus" class="text-gray-400">
+								No active monitoring session
+							</div>
+						</div>
+					</div>
+
+					<!-- Generate Report -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Generate Report</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div class="flex flex-wrap gap-3 mb-4">
+								<button onclick="generateMonitoringReport()" id="generateReportBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md disabled:opacity-50" disabled>
+									Generate Report
+								</button>
+								<button onclick="copyReportToClipboard()" id="copyReportBtn" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md disabled:opacity-50" disabled>
+									Copy for Claude
+								</button>
+							</div>
+							<div id="monitoringReportOutput" class="hidden">
+								<pre id="reportContent" class="text-sm text-gray-300 whitespace-pre-wrap font-mono bg-gray-800 rounded p-4 max-h-96 overflow-auto"></pre>
+							</div>
+						</div>
+					</div>
+
+					<!-- Saved Reports -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Saved Reports</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div id="savedReportsList" class="space-y-2">
+								<div class="text-gray-400">Loading saved reports...</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Settings Tab -->
+				<div id="tab-settings" class="tab-content hidden">
+					<form id="platformSettingsForm" class="space-y-6">
+						<!-- Signups Section -->
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<h3 class="text-lg font-semibold text-white mb-4">User Signups</h3>
+							<div class="space-y-4">
+								<label class="flex items-center gap-3">
+									<input type="checkbox" id="allowSignups" class="w-5 h-5 rounded bg-gray-700 border-gray-600">
+									<span class="text-white">Allow new user signups</span>
+								</label>
+								<label class="flex items-center gap-3">
+									<input type="checkbox" id="requireInviteKey" class="w-5 h-5 rounded bg-gray-700 border-gray-600">
+									<span class="text-white">Require invite key for signup</span>
+								</label>
+							</div>
+						</div>
+
+						<!-- Trial Section -->
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<h3 class="text-lg font-semibold text-white mb-4">Trial Settings</h3>
+							<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+								<div>
+									<label class="block text-sm text-gray-400 mb-1">Trial Duration (days)</label>
+									<input type="number" id="trialDurationDays" min="0" max="365"
+										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+								</div>
+							</div>
+						</div>
+
+						<!-- Maintenance Section -->
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<h3 class="text-lg font-semibold text-white mb-4">Maintenance Mode</h3>
+							<div class="space-y-4">
+								<label class="flex items-center gap-3">
+									<input type="checkbox" id="maintenanceMode" class="w-5 h-5 rounded bg-gray-700 border-gray-600">
+									<span class="text-white">Enable maintenance mode</span>
+								</label>
+								<div>
+									<label class="block text-sm text-gray-400 mb-1">Maintenance Message</label>
+									<input type="text" id="maintenanceMessage" placeholder="System under maintenance..."
+										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+								</div>
+							</div>
+						</div>
+
+						<!-- Save Button -->
+						<div class="flex justify-end">
+							<button type="submit" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-md">
+								Save Settings
+							</button>
+						</div>
+					</form>
+
+					<!-- Claude API Key Section (separate from main form) -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mt-6">
+						<h3 class="text-lg font-semibold text-white mb-2">Claude AI Integration</h3>
+						<p class="text-sm text-gray-400 mb-4">
+							Configure the Anthropic API key for AI-powered features like tournament seeding and narrative generation.
+							<a href="https://console.anthropic.com/" target="_blank" rel="noopener" class="text-blue-400 hover:underline ml-1">
+								Get an API key
+							</a>
+						</p>
+
+						<!-- Status Display -->
+						<div class="flex items-center gap-3 mb-4 p-3 bg-gray-800 rounded-md">
+							<div id="claudeKeyStatus" class="flex items-center gap-2">
+								<span class="inline-block w-3 h-3 rounded-full bg-gray-500"></span>
+								<span class="text-gray-400">Checking status...</span>
+							</div>
+							<div id="claudeKeySource" class="text-sm text-gray-500 ml-auto"></div>
+						</div>
+
+						<!-- API Key Input -->
+						<div class="space-y-4">
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">API Key</label>
+								<div class="relative">
+									<input type="password" id="claudeApiKey" placeholder="sk-ant-api03-..."
+										autocomplete="off" spellcheck="false"
+										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white pr-10 font-mono text-sm">
+									<button type="button" onclick="toggleApiKeyVisibility()"
+										class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-1">
+										<svg id="eyeIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+										</svg>
+										<svg id="eyeOffIcon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+										</svg>
+									</button>
+								</div>
+								<p class="text-xs text-gray-500 mt-1">Key must start with sk-ant-</p>
+							</div>
+
+							<!-- Action Buttons -->
+							<div class="flex flex-wrap gap-3">
+								<button type="button" onclick="saveClaudeApiKey()"
+									class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md disabled:opacity-50"
+									id="saveClaudeKeyBtn">
+									Save Key
+								</button>
+								<button type="button" onclick="testClaudeApiKey()"
+									class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md"
+									id="testClaudeKeyBtn">
+									Test Connection
+								</button>
+								<button type="button" onclick="removeClaudeApiKey()"
+									class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md"
+									id="removeClaudeKeyBtn">
+									Remove Key
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Flyers Tab -->
+				<div id="tab-flyers" class="tab-content hidden">
+					<!-- Stats Row -->
+					<div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+						<div class="stat-card">
+							<div class="stat-value" id="statTotalFlyers">-</div>
+							<div class="stat-label">Total Flyers</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statTotalFlyersSize">-</div>
+							<div class="stat-label">Total Size</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statFlyersUsers">-</div>
+							<div class="stat-label">Users with Flyers</div>
+						</div>
+					</div>
+
+					<!-- Filters -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="flex flex-wrap items-center gap-4">
+							<div class="flex-1 min-w-48">
+								<input type="text" id="flyerSearch" placeholder="Search by filename..."
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div>
+								<select id="flyerUserFilter"
+									class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">All Users</option>
+								</select>
+							</div>
+							<button onclick="loadFlyers()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+								Refresh
+							</button>
+						</div>
+					</div>
+
+					<!-- Flyers Grid -->
+					<div id="flyersGrid" class="media-grid">
+						<div class="text-center py-8 text-gray-400 col-span-full">Loading flyers...</div>
+					</div>
+				</div>
+
+				<!-- Sponsors Tab -->
+				<div id="tab-sponsors" class="tab-content hidden">
+					<!-- Stats Row -->
+					<div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+						<div class="stat-card">
+							<div class="stat-value" id="statTotalSponsors">-</div>
+							<div class="stat-label">Total Sponsors</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statActiveSponsors">-</div>
+							<div class="stat-label">Active</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value" id="statSponsorsUsers">-</div>
+							<div class="stat-label">Users with Sponsors</div>
+						</div>
+					</div>
+
+					<!-- Filters -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="flex flex-wrap items-center gap-4">
+							<div class="flex-1 min-w-48">
+								<input type="text" id="sponsorSearch" placeholder="Search by name..."
+									class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							</div>
+							<div>
+								<select id="sponsorUserFilter"
+									class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">All Users</option>
+								</select>
+							</div>
+							<button onclick="loadSponsors()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+								Refresh
+							</button>
+						</div>
+					</div>
+
+					<!-- Sponsors Grid -->
+					<div id="sponsorsGrid" class="media-grid">
+						<div class="text-center py-8 text-gray-400 col-span-full">Loading sponsors...</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- User Detail Modal -->
+	<div id="userDetailModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">User Details</h3>
+				<button onclick="closeUserDetailModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<div id="userDetailContent">
+				<!-- Content loaded dynamically -->
+			</div>
+		</div>
+	</div>
+
+	<!-- Subscription Modal -->
+	<div id="subscriptionModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Manage Subscription</h3>
+				<button onclick="closeSubscriptionModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<form id="subscriptionForm" class="space-y-4">
+				<input type="hidden" id="subUserId">
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Status</label>
+					<select id="subStatus"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+						<option value="active">Active</option>
+						<option value="trial">Trial</option>
+						<option value="expired">Expired</option>
+						<option value="suspended">Suspended</option>
+					</select>
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Expires At</label>
+					<input type="date" id="subExpiresAt"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Note (optional)</label>
+					<input type="text" id="subNote" placeholder="Reason for change..."
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+				</div>
+				<div class="flex gap-3 pt-4">
+					<button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-md">
+						Update
+					</button>
+					<button type="button" onclick="closeSubscriptionModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+						Cancel
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Key Usage Modal -->
+	<div id="keyUsageModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Key Usage History</h3>
+				<button onclick="closeKeyUsageModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<div id="keyUsageContent">
+				<!-- Content loaded dynamically -->
+			</div>
+		</div>
+	</div>
+
+	<!-- Tournament Detail Modal -->
+	<div id="tournamentDetailModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Tournament Details</h3>
+				<button onclick="closeTournamentDetailModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<div id="tournamentDetailContent">
+				<!-- Content loaded dynamically -->
+			</div>
+		</div>
+	</div>
+
+	<!-- Impersonation Modal -->
+	<div id="impersonateModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Impersonate User</h3>
+				<button onclick="closeImpersonateModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<form id="impersonateForm" class="space-y-4">
+				<input type="hidden" id="impersonateUserId">
+				<p class="text-gray-300">
+					You are about to impersonate <strong id="impersonateUsername" class="text-white"></strong>.
+					This will be logged for audit purposes.
+				</p>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Reason (required)</label>
+					<input type="text" id="impersonateReason" required placeholder="Support request, debugging, etc."
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+				</div>
+				<div class="flex gap-3 pt-4">
+					<button type="submit" class="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded-md">
+						Start Impersonation
+					</button>
+					<button type="button" onclick="closeImpersonateModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+						Cancel
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Image Preview Modal -->
+	<div id="imagePreviewModal" class="hidden fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50" onclick="closeImagePreview(event)">
+		<div class="relative max-w-6xl w-full mx-4" onclick="event.stopPropagation()">
+			<!-- Close Button -->
+			<button onclick="closeImagePreview()" class="absolute -top-12 right-0 text-white hover:text-gray-300 text-xl bg-gray-800/50 rounded-full w-10 h-10 flex items-center justify-center">
+				<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+				</svg>
+			</button>
+
+			<!-- Image/Video Container -->
+			<div id="previewImageContainer" class="flex items-center justify-center bg-gray-900 rounded-lg overflow-hidden">
+				<!-- Image or video loaded dynamically -->
+			</div>
+
+			<!-- Info Panel -->
+			<div id="previewInfoPanel" class="mt-4 bg-gray-800 rounded-lg p-4 border border-gray-700">
+				<div class="flex flex-wrap items-center justify-between gap-4">
+					<div class="flex flex-wrap items-center gap-4">
+						<div>
+							<span class="text-gray-400 text-sm">Filename:</span>
+							<span id="previewFilename" class="text-white ml-2"></span>
+						</div>
+						<div>
+							<span class="text-gray-400 text-sm">Size:</span>
+							<span id="previewSize" class="text-white ml-2"></span>
+						</div>
+						<div>
+							<span class="text-gray-400 text-sm">Owner:</span>
+							<span id="previewOwner" class="text-white ml-2"></span>
+						</div>
+						<div>
+							<span class="text-gray-400 text-sm">Modified:</span>
+							<span id="previewModified" class="text-white ml-2"></span>
+						</div>
+					</div>
+					<button id="previewDeleteBtn" onclick="deleteFromPreview()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md">
+						Delete
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+	<script src="js/utils.js?v=4"></script>
+	<script src="js/nav.js?v=3"></script>
+	<script src="js/pwa.js?v=3"></script>
+	<script src="js/platform-admin.js?v=5"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Platform Admin');
+		});
+	</script>
+</body>
+</html>
