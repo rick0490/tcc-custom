@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Bracket Editor - Control Center</title>
+	<!-- PWA Meta Tags -->
+	<meta name="theme-color" content="#1f2937">
+	<meta name="description" content="Edit tournament bracket seeding">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Control Center">
+	<!-- PWA Links -->
+	<link rel="manifest" href="/manifest.json">
+	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Google Fonts -->
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+	<!-- Styles -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="css/style.css?v=17">
+	<!-- SortableJS for drag-drop -->
+	<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+	<!-- Theme initialization (prevents flash of wrong theme) -->
+	<script>
+		(function() {
+			const theme = localStorage.getItem('theme') ||
+				(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+			document.documentElement.setAttribute('data-theme', theme);
+		})();
+	</script>
+	<style>
+		/* Bracket Editor specific styles */
+		.bracket-container {
+			position: relative;
+			overflow: auto;
+			background: #111827;
+			border: 1px solid #374151;
+			border-radius: 0.5rem;
+		}
+		.bracket-canvas {
+			display: block;
+			cursor: grab;
+		}
+		.bracket-canvas:active {
+			cursor: grabbing;
+		}
+		.participant-item {
+			cursor: grab;
+			transition: all 0.15s ease;
+		}
+		.participant-item:active {
+			cursor: grabbing;
+		}
+		.participant-item.sortable-ghost {
+			opacity: 0.4;
+			background: #1e40af;
+		}
+		.participant-item.sortable-chosen {
+			background: #1e3a8a;
+			box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+		}
+		.seed-badge {
+			min-width: 28px;
+			text-align: center;
+		}
+		.has-changes {
+			border-color: #f59e0b !important;
+		}
+		.pending-indicator {
+			animation: pulse 2s infinite;
+		}
+		@keyframes pulse {
+			0%, 100% { opacity: 1; }
+			50% { opacity: 0.5; }
+		}
+		.participant-list-container {
+			max-height: calc(100vh - 400px);
+			min-height: 300px;
+		}
+	</style>
+</head>
+<body class="min-h-screen">
+	<!-- Alert Container -->
+	<div id="alertContainer" class="fixed top-4 right-4 z-50 space-y-2 max-w-md"></div>
+
+	<!-- Header Section -->
+	<section class="mb-6">
+		<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+			<div>
+				<h1 class="text-2xl font-bold text-white flex items-center gap-3">
+					<svg class="w-7 h-7 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+							d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"></path>
+					</svg>
+					Bracket Editor
+				</h1>
+				<p class="text-sm text-gray-400 mt-1">Edit seeding before starting tournament</p>
+			</div>
+
+			<!-- Tournament Selector -->
+			<div class="flex items-center gap-4">
+				<div class="flex items-center gap-2">
+					<label for="tournamentSelect" class="text-sm font-medium text-gray-300">Tournament:</label>
+					<select id="tournamentSelect"
+						class="px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 min-w-[250px]">
+						<option value="">Select a tournament...</option>
+					</select>
+				</div>
+
+				<!-- Pending Changes Indicator -->
+				<div id="pendingChanges" class="hidden flex items-center gap-2 text-yellow-400">
+					<span class="pending-indicator">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+						</svg>
+					</span>
+					<span class="text-sm font-medium">Unsaved changes</span>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Main Content Grid -->
+	<section class="grid grid-cols-1 xl:grid-cols-4 gap-6">
+
+		<!-- Bracket Visualization (3 columns) -->
+		<div class="xl:col-span-3">
+			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+				<!-- Bracket Header -->
+				<div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+					<h2 class="text-lg font-semibold text-white">Bracket Preview</h2>
+					<div class="flex items-center gap-3">
+						<!-- Zoom Controls -->
+						<div class="flex items-center gap-2 bg-gray-700 rounded-md px-2 py-1">
+							<button onclick="BracketCanvas.zoomOut()" class="text-gray-300 hover:text-white p-1" title="Zoom out">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path>
+								</svg>
+							</button>
+							<span id="zoomLevel" class="text-sm text-gray-300 min-w-[40px] text-center font-mono">100%</span>
+							<button onclick="BracketCanvas.zoomIn()" class="text-gray-300 hover:text-white p-1" title="Zoom in">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+								</svg>
+							</button>
+							<button onclick="BracketCanvas.resetZoom()" class="text-gray-400 hover:text-white p-1 ml-1" title="Reset zoom">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+										d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+								</svg>
+							</button>
+						</div>
+						<!-- Format Badge -->
+						<span id="formatBadge" class="px-3 py-1 bg-blue-600 text-white text-sm rounded-full font-medium hidden">
+							Single Elimination
+						</span>
+					</div>
+				</div>
+
+				<!-- Canvas Container -->
+				<div id="bracketContainer" class="bracket-container" style="height: 600px;">
+					<canvas id="bracketCanvas" class="bracket-canvas"></canvas>
+					<!-- Empty State -->
+					<div id="emptyState" class="absolute inset-0 flex items-center justify-center">
+						<div class="text-center">
+							<svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+									d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"></path>
+							</svg>
+							<p class="text-gray-400 text-lg">Select a tournament to preview bracket</p>
+							<p class="text-gray-500 text-sm mt-2">Only pending tournaments can be edited</p>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Seeding Tools -->
+			<div id="seedingTools" class="hidden mt-4 bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<h3 class="text-md font-semibold text-white mb-4">Seeding Tools</h3>
+				<div class="flex flex-wrap gap-3">
+					<button onclick="BracketEditor.randomizeSeeds()"
+						class="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+						</svg>
+						Randomize Seeds
+					</button>
+					<button onclick="BracketEditor.applyEloSeeding()"
+						class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+						</svg>
+						Apply Elo Seeding
+					</button>
+					<button onclick="BracketEditor.sortAlphabetically()"
+						class="flex items-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"></path>
+						</svg>
+						Sort A-Z
+					</button>
+					<button onclick="BracketEditor.reverseSeeds()"
+						class="flex items-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"></path>
+						</svg>
+						Reverse Order
+					</button>
+					<button onclick="BracketEditor.resetToOriginal()"
+						class="flex items-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+								d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+						</svg>
+						Reset to Original
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Participant Sidebar (1 column) -->
+		<div class="xl:col-span-1">
+			<div id="participantPanel" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+				<!-- Panel Header -->
+				<div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+					<h2 class="text-lg font-semibold text-white">Participants</h2>
+					<span id="participantCount" class="text-sm text-gray-400">0 players</span>
+				</div>
+
+				<!-- Search -->
+				<div class="p-3 border-b border-gray-700">
+					<input type="text" id="participantSearch" placeholder="Search participants..."
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+				</div>
+
+				<!-- Participant List -->
+				<div id="participantList" class="participant-list-container overflow-y-auto">
+					<!-- Empty state -->
+					<div id="participantEmptyState" class="p-4 text-center text-gray-400">
+						<p>No tournament selected</p>
+					</div>
+				</div>
+
+				<!-- Action Buttons -->
+				<div id="actionButtons" class="hidden p-4 border-t border-gray-700 space-y-3">
+					<button onclick="BracketEditor.applyChanges()" id="applyBtn"
+						class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-md transition font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+						</svg>
+						Apply Changes
+					</button>
+					<button onclick="BracketEditor.discardChanges()" id="discardBtn"
+						class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+						</svg>
+						Discard Changes
+					</button>
+				</div>
+			</div>
+
+			<!-- Legend -->
+			<div class="mt-4 bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<h3 class="text-sm font-medium text-gray-300 mb-3">Legend</h3>
+				<div class="space-y-2 text-sm">
+					<div class="flex items-center gap-2">
+						<div class="w-4 h-4 bg-blue-600 rounded"></div>
+						<span class="text-gray-400">Seeded participant</span>
+					</div>
+					<div class="flex items-center gap-2">
+						<div class="w-4 h-4 bg-gray-600 rounded border-2 border-dashed border-gray-500"></div>
+						<span class="text-gray-400">BYE slot</span>
+					</div>
+					<div class="flex items-center gap-2">
+						<div class="w-4 h-4 bg-yellow-600 rounded"></div>
+						<span class="text-gray-400">Changed position</span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Instructions -->
+			<div class="mt-4 bg-gray-800 rounded-lg border border-gray-700 p-4">
+				<h3 class="text-sm font-medium text-gray-300 mb-3">How to Edit</h3>
+				<ul class="space-y-2 text-sm text-gray-400">
+					<li class="flex items-start gap-2">
+						<span class="text-blue-400">1.</span>
+						Drag participants in the list to reorder seeds
+					</li>
+					<li class="flex items-start gap-2">
+						<span class="text-blue-400">2.</span>
+						Use tools to randomize, apply Elo, or reverse order
+					</li>
+					<li class="flex items-start gap-2">
+						<span class="text-blue-400">3.</span>
+						Preview updates in real-time
+					</li>
+					<li class="flex items-start gap-2">
+						<span class="text-blue-400">4.</span>
+						Click "Apply Changes" to save
+					</li>
+				</ul>
+			</div>
+		</div>
+	</section>
+
+	<!-- Scripts -->
+	<script src="js/utils.js?v=3"></script>
+	<script src="js/nav.js?v=3"></script>
+	<script src="js/pwa.js?v=2"></script>
+	<script src="js/bracket-canvas.js?v=1"></script>
+	<script src="js/bracket-editor.js?v=1"></script>
+	<script>
+		document.addEventListener('DOMContentLoaded', () => {
+			initNavigation('Bracket Editor');
+			BracketEditor.init();
+		});
+	</script>
+</body>
+</html>

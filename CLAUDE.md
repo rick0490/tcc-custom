@@ -381,6 +381,11 @@ All tournament/match/participant endpoints now use local database instead of Cha
 ```
 GET  /api/bracket/data/:tournamentId      // Full bracket visualization data
 POST /api/bracket/render/:tournamentId    // Trigger re-render
+
+# Bracket Editor (seed management before tournament starts)
+POST /api/bracket-editor/preview/:tournamentId    // Generate preview with custom seeds
+POST /api/bracket-editor/apply-seeds/:tournamentId // Apply seed changes
+GET  /api/bracket-editor/status/:tournamentId     // Get editor status
 ```
 
 ## MagicMirror Bracket Display
@@ -523,6 +528,7 @@ These files from original TCC are not present in tcc-custom:
 │       │                         # - Helper: buildMiscField(instagram, existingMisc)
 │       ├── flyers.js             # Flyer management + WebSocket broadcasts (note: upload route with auto-optimization is in server.js)
 │       ├── displays.js           # Display management
+│       ├── bracket-editor.js     # Bracket preview and seed editing APIs
 │       └── platform.js           # Superadmin APIs (users, keys, tournaments, audit, database, announcements)
 ├── match-display/                # Standalone web-based match display (port 2052)
 │   ├── server.js                 # Express server with EJS templates

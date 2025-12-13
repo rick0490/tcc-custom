@@ -45,6 +45,14 @@ const NAV_ITEMS = [
 		</svg>`
 	},
 	{
+		id: 'bracket-editor',
+		label: 'Bracket Editor',
+		href: '/bracket-editor.html',
+		icon: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h4v4H4V5zm0 10h4v4H4v-4zm12-10h4v4h-4V5zm0 10h4v4h-4v-4zM8 7h4m0 0v10m0-10h4m-4 10h4"></path>
+		</svg>`
+	},
+	{
 		id: 'participants',
 		label: 'Participants',
 		href: '/participants.html',
@@ -100,11 +108,21 @@ const NAV_ITEMS = [
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
 		</svg>`
+	},
+	{
+		id: 'platform-admin',
+		label: 'Platform Admin',
+		href: '/platform-admin.html',
+		requireRole: 'superadmin',
+		icon: `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+		</svg>`
 	}
 ];
 
 // Current user data (populated on load)
 let navCurrentUser = null;
+let navIsSuperadmin = false;
 
 // Session monitoring state
 let sessionMonitor = {
@@ -128,7 +146,10 @@ function getCurrentPageId() {
 function createSidebarHTML() {
 	const currentPage = getCurrentPageId();
 
-	const navItemsHTML = NAV_ITEMS.map(item => {
+	// Filter nav items based on role requirements (initially hide restricted items)
+	const visibleItems = NAV_ITEMS.filter(item => !item.requireRole);
+
+	const navItemsHTML = visibleItems.map(item => {
 		const isActive = item.id === currentPage;
 		const activeClass = isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white';
 		return `
@@ -275,13 +296,22 @@ async function loadNavUserInfo() {
 		if (response.ok) {
 			const data = await response.json();
 			navCurrentUser = data.user;
+			navIsSuperadmin = data.isSuperadmin || false;
 			document.getElementById('navUsername').textContent = data.user.username;
-			document.getElementById('navUserRole').textContent = data.user.role;
+			document.getElementById('navUserRole').textContent = navIsSuperadmin ? 'superadmin' : data.user.role;
+
+			// Add superadmin-only nav items if user is superadmin
+			if (navIsSuperadmin) {
+				addSuperadminNavItems();
+			}
 
 			// Initialize session monitoring with data from server
 			if (data.session) {
 				initSessionMonitor(data.session);
 			}
+
+			// Initialize announcement monitoring after auth check
+			initAnnouncementMonitor();
 		} else {
 			window.location.href = '/login.html';
 		}
@@ -289,6 +319,36 @@ async function loadNavUserInfo() {
 		console.error('Failed to load user info:', error);
 		window.location.href = '/login.html';
 	}
+}
+
+// Add superadmin-only nav items to sidebar
+function addSuperadminNavItems() {
+	const nav = document.querySelector('#sidebar nav');
+	if (!nav) return;
+
+	const currentPage = getCurrentPageId();
+
+	// Find items that require superadmin role
+	const superadminItems = NAV_ITEMS.filter(item => item.requireRole === 'superadmin');
+
+	superadminItems.forEach(item => {
+		// Check if item already exists
+		if (nav.querySelector(`[data-page="${item.id}"]`)) return;
+
+		const isActive = item.id === currentPage;
+		const activeClass = isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white';
+
+		const link = document.createElement('a');
+		link.href = item.href;
+		link.className = `nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${activeClass}`;
+		link.dataset.page = item.id;
+		link.innerHTML = `
+			${item.icon}
+			<span class="nav-label">${item.label}</span>
+		`;
+
+		nav.appendChild(link);
+	});
 }
 
 // Logout function
@@ -527,6 +587,155 @@ function resetSessionTimer() {
 }
 
 // ============================================
+// Platform Announcements
+// ============================================
+
+// Announcement state
+let announcementState = {
+	currentAnnouncements: [],
+	dismissedIds: JSON.parse(localStorage.getItem('dismissedAnnouncements') || '[]'),
+	checkInterval: null,
+	CHECK_INTERVAL_MS: 5 * 60 * 1000 // Check every 5 minutes
+};
+
+// Announcement type styling
+const ANNOUNCEMENT_STYLES = {
+	alert: {
+		bgClass: 'bg-red-600',
+		textClass: 'text-white',
+		icon: `<svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+		</svg>`
+	},
+	warning: {
+		bgClass: 'bg-yellow-600',
+		textClass: 'text-white',
+		icon: `<svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+		</svg>`
+	},
+	info: {
+		bgClass: 'bg-blue-600',
+		textClass: 'text-white',
+		icon: `<svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+		</svg>`
+	}
+};
+
+/**
+ * Fetch and display active platform announcements
+ */
+async function fetchAnnouncements() {
+	try {
+		const response = await fetch('/api/announcements/active');
+		if (!response.ok) return;
+
+		const data = await response.json();
+		if (!data.success) return;
+
+		announcementState.currentAnnouncements = data.announcements || [];
+		displayAnnouncements();
+	} catch (error) {
+		console.error('[Announcements] Failed to fetch:', error);
+	}
+}
+
+/**
+ * Display the announcement banner
+ */
+function displayAnnouncements() {
+	// Remove existing banner
+	const existingBanner = document.getElementById('announcementBanner');
+	if (existingBanner) {
+		existingBanner.remove();
+		document.body.style.paddingTop = sessionMonitor.warningShown ? '52px' : '';
+	}
+
+	// Filter out dismissed announcements
+	const activeAnnouncements = announcementState.currentAnnouncements.filter(
+		a => !announcementState.dismissedIds.includes(a.id)
+	);
+
+	if (activeAnnouncements.length === 0) return;
+
+	// Get the highest priority announcement (already sorted by priority from server)
+	const announcement = activeAnnouncements[0];
+	const style = ANNOUNCEMENT_STYLES[announcement.type] || ANNOUNCEMENT_STYLES.info;
+
+	// Create banner
+	const banner = document.createElement('div');
+	banner.id = 'announcementBanner';
+	banner.className = `fixed top-0 left-0 right-0 z-[9998] ${style.bgClass} ${style.textClass} px-4 py-3 flex items-center justify-center gap-4 shadow-lg`;
+	banner.style.transition = 'transform 0.3s ease-out';
+	banner.innerHTML = `
+		${style.icon}
+		<span class="flex-1 text-center">${escapeHtmlNav(announcement.message)}</span>
+		<button onclick="dismissAnnouncement(${announcement.id})" class="p-1 hover:bg-black/20 rounded transition-colors" title="Dismiss">
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+			</svg>
+		</button>
+		${activeAnnouncements.length > 1 ? `<span class="text-xs opacity-75">(+${activeAnnouncements.length - 1} more)</span>` : ''}
+	`;
+
+	document.body.appendChild(banner);
+
+	// Add padding to prevent content overlap
+	const currentPadding = parseInt(document.body.style.paddingTop) || 0;
+	const sessionBannerHeight = sessionMonitor.warningShown ? 52 : 0;
+	document.body.style.paddingTop = `${sessionBannerHeight + 52}px`;
+
+	// Adjust session warning banner position if it exists
+	const sessionBanner = document.getElementById('sessionWarningBanner');
+	if (sessionBanner) {
+		sessionBanner.style.top = '52px';
+	}
+}
+
+/**
+ * Dismiss an announcement (hides it locally via localStorage)
+ * @param {number} announcementId - The ID of the announcement to dismiss
+ */
+function dismissAnnouncement(announcementId) {
+	announcementState.dismissedIds.push(announcementId);
+	localStorage.setItem('dismissedAnnouncements', JSON.stringify(announcementState.dismissedIds));
+	displayAnnouncements();
+}
+
+/**
+ * Clear dismissed announcements (useful when announcements expire)
+ */
+function clearDismissedAnnouncements() {
+	announcementState.dismissedIds = [];
+	localStorage.removeItem('dismissedAnnouncements');
+	fetchAnnouncements();
+}
+
+/**
+ * Initialize announcement monitoring
+ */
+function initAnnouncementMonitor() {
+	// Fetch immediately
+	fetchAnnouncements();
+
+	// Set up periodic checking
+	if (announcementState.checkInterval) {
+		clearInterval(announcementState.checkInterval);
+	}
+	announcementState.checkInterval = setInterval(fetchAnnouncements, announcementState.CHECK_INTERVAL_MS);
+}
+
+/**
+ * Simple HTML escape for announcement messages
+ */
+function escapeHtmlNav(text) {
+	const div = document.createElement('div');
+	div.textContent = text;
+	return div.innerHTML;
+}
+
+// ============================================
 // Theme Management
 // ============================================
 
@@ -607,10 +816,17 @@ window.initTheme = initTheme;
 window.resetSessionTimer = resetSessionTimer;
 window.extendSession = extendSession;
 window.hideSessionWarning = hideSessionWarning;
+// Announcement exports
+window.dismissAnnouncement = dismissAnnouncement;
+window.clearDismissedAnnouncements = clearDismissedAnnouncements;
+window.fetchAnnouncements = fetchAnnouncements;
 
-// Cleanup session monitor on page unload to prevent memory leaks
+// Cleanup intervals on page unload to prevent memory leaks
 window.addEventListener('beforeunload', () => {
 	if (sessionMonitor.checkInterval) {
 		clearInterval(sessionMonitor.checkInterval);
+	}
+	if (announcementState.checkInterval) {
+		clearInterval(announcementState.checkInterval);
 	}
 });

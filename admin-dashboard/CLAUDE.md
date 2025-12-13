@@ -28,6 +28,7 @@ Express.js web dashboard for controlling tournament displays. Features modular p
 | Command Center | command-center.html | command-center.js | Single-page tournament control: 4-quadrant layout, keyboard shortcuts, real-time updates |
 | Tournament | tournament.html | tournament.js | Tournament selection, creation, editing, lifecycle |
 | Matches | matches.html | matches.js | Score entry, mark underway, declare winners |
+| Bracket Editor | bracket-editor.html | bracket-editor.js, bracket-canvas.js | Visual bracket preview, drag-drop seeding, pending tournaments only |
 | Displays | displays.html | displays.js | Module status, registered Pi displays |
 | Flyers | flyers.html | flyers.js | Upload, preview, delete, quick switch |
 | Sponsors | sponsors.html | sponsors.js | Sponsor logo overlays for displays |
@@ -837,6 +838,41 @@ PUT    /api/tournament/:tournamentId/station-settings   - Update auto-assign (bo
 ```
 
 **Note:** Auto-assign setting can only be changed when tournament is in **pending** state. Reset tournament to change it.
+
+### Bracket Editor
+```
+POST /api/bracket-editor/preview/:tournamentId    - Generate bracket preview with custom seed order
+                                                    Body: { seedOrder: [participantId1, participantId2, ...] }
+                                                    Returns: Visualization data for canvas rendering
+POST /api/bracket-editor/apply-seeds/:tournamentId - Apply seed changes to participants
+                                                    Body: { seeds: [{ participantId, seed }, ...] }
+                                                    Returns: { success, updated, failed }
+GET  /api/bracket-editor/status/:tournamentId     - Get bracket editor status
+                                                    Returns: { tournament, participantCount, canEdit }
+```
+
+**Preview Response (visualization data):**
+```json
+{
+  "type": "single_elimination",
+  "rounds": [
+    {
+      "name": "Round 1",
+      "matches": [
+        {
+          "id": 1,
+          "player1": { "name": "Player 1", "seed": 1 },
+          "player2": { "name": "Player 2", "seed": 4 },
+          "position": { "x": 50, "y": 50 }
+        }
+      ]
+    }
+  ],
+  "dimensions": { "width": 800, "height": 600 }
+}
+```
+
+**Note:** Bracket editor only works with pending tournaments. Once started, seeds cannot be changed.
 
 ### Tournament Management
 ```
@@ -2361,6 +2397,87 @@ parseBulkAddParticipants()   // Parse textarea input
 exportToCSV()                // Download participant list
 ```
 
+### Bracket Editor (bracket-editor.html, bracket-editor.js, bracket-canvas.js)
+
+**Purpose:** Visual bracket preview and drag-drop seed editing for pending tournaments
+
+**Sections:**
+- Tournament Selector (dropdown of pending tournaments only)
+- Bracket Preview (canvas visualization with pan/zoom)
+- Participant Sidebar (sortable list with drag handles)
+- Seeding Tools (Randomize, Elo Seeding, Sort A-Z, Reverse, Reset)
+- Action Buttons (Apply Changes, Discard Changes)
+
+**Key Functions (bracket-editor.js):**
+```javascript
+// Tournament and participant loading
+loadTournaments()            // Load pending tournaments only
+loadTournament(id)           // Load tournament and participants
+generateBracketPreview()     // Request preview from API
+
+// Seeding operations
+randomizeSeeds()             // Fisher-Yates shuffle
+applyEloSeeding()            // Apply Elo-based seeding from analytics
+sortAlphabetically()         // Sort A-Z by name
+reverseSeeds()               // Reverse current order
+resetToOriginal()            // Reset to original seeds
+
+// State management
+checkForChanges()            // Detect seed changes
+applyChanges()               // Save seeds to database
+discardChanges()             // Revert to original
+
+// Drag-drop
+initSortable()               // Initialize SortableJS
+handleSortEnd()              // Update seeds after drag
+```
+
+**Key Functions (bracket-canvas.js):**
+```javascript
+// Rendering
+render(visualization)        // Main render entry point
+drawSingleElimination()      // Single elimination bracket
+drawDoubleElimination()      // Double elimination with winners/losers
+drawRoundRobin()             // Round robin grid
+drawSwiss()                  // Swiss rounds
+
+// Helpers
+drawMatch(round, match, x, y) // Draw individual match box
+drawPlayer(name, seed, y, isChanged) // Draw player slot
+drawConnector(startX, startY, endX, endY) // Draw bracket lines
+
+// Pan/Zoom
+handleMouseDown/Move/Up()    // Pan via mouse drag
+handleWheel()                // Zoom via scroll wheel
+zoomIn/Out/Reset()           // Zoom controls
+```
+
+**Canvas Constants:**
+| Constant | Value | Description |
+|----------|-------|-------------|
+| MATCH_WIDTH | 220px | Match box width |
+| MATCH_HEIGHT | 60px | Match box height |
+| MATCH_SPACING_V | 30px | Vertical spacing between matches |
+| ROUND_SPACING | 80px | Horizontal spacing between rounds |
+| PADDING | 50px | Canvas edge padding |
+| MIN_ZOOM | 0.3 | Minimum zoom level |
+| MAX_ZOOM | 3.0 | Maximum zoom level |
+
+**Color Scheme:**
+| Element | Color | Usage |
+|---------|-------|-------|
+| Background | #111827 | Canvas background |
+| Match BG | #1f2937 | Match box fill |
+| Match Border | #374151 | Match box stroke |
+| Text | #ffffff | Player names |
+| Seed Badge | #3b82f6 | Normal seed number |
+| Changed Seed | #f59e0b | Modified seed highlight |
+| BYE | #4b5563 | BYE slot styling |
+| Connectors | #4b5563 | Bracket lines |
+
+**External Dependencies:**
+- SortableJS (CDN): `https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js`
+
 ### Settings (settings.html, settings.js)
 
 **Purpose:** User and system management
@@ -3019,7 +3136,8 @@ admin-dashboard/
 │   ├── sponsors.js        # Sponsor overlays (~300 lines)
 │   ├── analytics.js       # Analytics and seeding suggestions (~600 lines)
 │   ├── exports.js         # CSV/PDF exports (~600 lines)
-│   └── api.js             # Misc APIs: status, cache, timer, QR, etc. (~1,200 lines)
+│   ├── api.js             # Misc APIs: status, cache, timer, QR, etc. (~1,200 lines)
+│   └── bracket-editor.js  # Bracket preview and seed editing (~230 lines)
 ├── helpers/               # Utility functions (extracted from server.js)
 │   ├── index.js           # Central export for all helpers
 │   ├── pdf.js             # PDF generation helpers (~140 lines)
@@ -3036,6 +3154,7 @@ admin-dashboard/
     ├── index.html         # Dashboard
     ├── tournament.html    # Tournament config
     ├── matches.html       # Match management
+    ├── bracket-editor.html # Bracket preview and seed editing
     ├── displays.html      # Display management
     ├── flyers.html        # Flyer management
     ├── sponsors.html      # Sponsor management
@@ -3051,6 +3170,8 @@ admin-dashboard/
         ├── dashboard.js   # Dashboard logic
         ├── tournament.js  # Tournament logic
         ├── matches.js     # Match logic
+        ├── bracket-editor.js # Bracket editor page controller
+        ├── bracket-canvas.js # Canvas bracket rendering
         ├── displays.js    # Display logic
         ├── flyers.js      # Flyer logic
         ├── sponsors.js    # Sponsor logic

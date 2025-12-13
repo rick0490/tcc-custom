@@ -6,6 +6,8 @@
  */
 
 const authRoutes = require('./auth');
+const signupRoutes = require('./signup');
+const platformRoutes = require('./platform');
 const usersRoutes = require('./users');
 const settingsRoutes = require('./settings');
 const gamesRoutes = require('./games');
@@ -21,9 +23,12 @@ const sponsorsRoutes = require('./sponsors');
 const analyticsRoutes = require('./analytics');
 const exportsRoutes = require('./exports');
 const apiRoutes = require('./api');
+const bracketEditorRoutes = require('./bracket-editor');
 
 module.exports = {
 	auth: authRoutes,
+	signup: signupRoutes,
+	platform: platformRoutes,
 	users: usersRoutes,
 	settings: settingsRoutes,
 	games: gamesRoutes,
@@ -38,5 +43,6 @@ module.exports = {
 	sponsors: sponsorsRoutes,
 	analytics: analyticsRoutes,
 	exports: exportsRoutes,
-	api: apiRoutes
+	api: apiRoutes,
+	bracketEditor: bracketEditorRoutes
 };

@@ -29,6 +29,8 @@ const tournamentDb = require('./services/tournament-db');
 const matchDb = require('./services/match-db');
 const stationDb = require('./services/station-db');
 const sponsorService = require('./services/sponsor');
+const bracketEngine = require('./services/bracket-engine');
+const bracketRenderer = require('./services/bracket-renderer');
 
 // PDF Report Color Palette
 const PDF_COLORS = {
@@ -644,6 +646,7 @@ localRoutes.stations.init({ io });
 localRoutes.flyers.init({ axios, requireAuthAPI, logActivity, io });
 localRoutes.sponsors.init({ axios, io, requireAuthAPI, sponsorService, logActivity });
 localRoutes.games.setSocketIO(io);
+localRoutes.bracketEditor.init({ tournamentDb, participantDb, bracketEngine, bracketRenderer, io });
 
 // Mount local database routes (replaces Challonge API)
 // Mount at both singular and plural paths for frontend compatibility
@@ -655,6 +658,7 @@ app.use('/api/stations', localRoutes.stations);
 app.use('/api/flyers', localRoutes.flyers);
 app.use('/api/sponsors', localRoutes.sponsors);
 app.use('/api/games', localRoutes.games);
+app.use('/api/bracket-editor', localRoutes.bracketEditor.router);
 
 // Signup routes (public - no auth required)
 app.use('/api/auth', localRoutes.signup);
