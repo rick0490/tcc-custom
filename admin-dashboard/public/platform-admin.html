@@ -526,6 +526,74 @@
 						</div>
 					</div>
 
+					<!-- Scheduled Backups Section (Phase 2) -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="flex items-center justify-between mb-4">
+							<div>
+								<h3 class="text-lg font-semibold text-white">Scheduled Backups</h3>
+								<p class="text-sm text-gray-400">Automated backup schedules with retention policies</p>
+							</div>
+							<div class="flex items-center gap-3">
+								<span id="schedulerStatus" class="flex items-center gap-2 text-sm">
+									<span class="w-2 h-2 rounded-full bg-gray-500"></span>
+									<span class="text-gray-400">Loading...</span>
+								</span>
+								<button onclick="openScheduleModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+									+ New Schedule
+								</button>
+							</div>
+						</div>
+
+						<!-- Schedules List -->
+						<div class="overflow-x-auto mb-4">
+							<table class="data-table">
+								<thead>
+									<tr>
+										<th>Name</th>
+										<th>Database</th>
+										<th>Schedule</th>
+										<th>Retention</th>
+										<th>Last Run</th>
+										<th>Next Run</th>
+										<th>Status</th>
+										<th class="text-right">Actions</th>
+									</tr>
+								</thead>
+								<tbody id="schedulesTableBody">
+									<tr>
+										<td colspan="8" class="text-center py-4 text-gray-400">Loading schedules...</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+
+						<!-- Backup History -->
+						<details class="mt-4">
+							<summary class="text-sm text-gray-400 cursor-pointer hover:text-white">
+								View Backup History
+							</summary>
+							<div class="mt-3 overflow-x-auto">
+								<table class="data-table">
+									<thead>
+										<tr>
+											<th>Time</th>
+											<th>Schedule</th>
+											<th>Database</th>
+											<th>Size</th>
+											<th>Status</th>
+											<th>Duration</th>
+										</tr>
+									</thead>
+									<tbody id="backupHistoryTableBody">
+										<tr>
+											<td colspan="6" class="text-center py-4 text-gray-400">Loading history...</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+						</details>
+					</div>
+
 					<!-- Maintenance Section -->
 					<div class="bg-gray-700/50 rounded-lg p-4">
 						<h3 class="text-lg font-semibold text-white mb-4">Maintenance</h3>
@@ -1555,11 +1623,74 @@
 		</div>
 	</div>
 
+	<!-- Schedule Backup Modal -->
+	<div id="scheduleModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-6">
+				<h3 id="scheduleModalTitle" class="text-xl font-bold text-white">Create Backup Schedule</h3>
+				<button onclick="closeScheduleModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<form id="scheduleForm" class="space-y-4">
+				<input type="hidden" id="scheduleId" value="">
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Schedule Name</label>
+					<input type="text" id="scheduleName" required maxlength="50" placeholder="e.g., Daily Backup"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Database</label>
+					<select id="scheduleDatabase" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+						<option value="all">All Databases</option>
+						<option value="tournaments">tournaments.db</option>
+						<option value="players">players.db</option>
+						<option value="system">system.db</option>
+					</select>
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Schedule (Cron Expression)</label>
+					<div class="flex gap-2">
+						<input type="text" id="scheduleCron" required placeholder="0 2 * * *"
+							class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white font-mono">
+						<select id="cronPresets" onchange="applyCronPreset()" class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+							<option value="">Presets...</option>
+							<option value="0 * * * *">Every hour</option>
+							<option value="0 */6 * * *">Every 6 hours</option>
+							<option value="0 0 * * *">Daily at midnight</option>
+							<option value="0 2 * * *">Daily at 2am</option>
+							<option value="0 0 * * 0">Weekly (Sunday)</option>
+							<option value="0 2 * * 1">Weekly (Monday 2am)</option>
+							<option value="0 2 1 * *">Monthly (1st at 2am)</option>
+						</select>
+					</div>
+					<div class="text-xs text-gray-400 mt-1">Format: minute hour day month weekday (e.g., "0 2 * * *" = daily at 2am)</div>
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Retention (days)</label>
+					<input type="number" id="scheduleRetention" value="7" min="1" max="365"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+					<div class="text-xs text-gray-400 mt-1">Backups older than this will be automatically deleted</div>
+				</div>
+				<div>
+					<label class="flex items-center gap-2">
+						<input type="checkbox" id="scheduleEnabled" checked class="w-4 h-4 rounded bg-gray-700">
+						<span class="text-gray-300">Enabled</span>
+					</label>
+				</div>
+			</form>
+			<div class="flex justify-end gap-3 mt-6">
+				<button onclick="closeScheduleModal()" class="btn-secondary">Cancel</button>
+				<button onclick="saveSchedule()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
+					Save Schedule
+				</button>
+			</div>
+		</div>
+	</div>
+
 	<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 	<script src="js/utils.js?v=4"></script>
 	<script src="js/nav.js?v=3"></script>
 	<script src="js/pwa.js?v=3"></script>
-	<script src="js/platform-admin.js?v=11"></script>
+	<script src="js/platform-admin.js?v=13"></script>
 	<script>
 		document.addEventListener('DOMContentLoaded', () => {
 			initNavigation('Platform Admin');

@@ -48,6 +48,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Initialize WebSocket
     initWebSocket();
+
+    // Setup backup history toggle
+    setupBackupHistoryToggle();
 });
 
 /**
@@ -181,6 +184,7 @@ function switchTab(tabName) {
         case 'database':
             loadDatabaseStatus();
             loadBackups();
+            loadBackupSchedules();
             break;
         case 'announcements':
             loadAnnouncements();
@@ -1435,6 +1439,370 @@ async function runIntegrityCheck() {
         FrontendDebug.error('PlatformAdmin', 'Failed to run integrity check', error);
         showAlert('Failed to run integrity check', 'error');
     }
+}
+
+// ============================================
+// SCHEDULED BACKUPS
+// ============================================
+
+// Backup schedules data
+let backupSchedulesData = [];
+let backupHistoryData = [];
+let editingScheduleId = null;
+
+/**
+ * Load backup schedules
+ */
+async function loadBackupSchedules() {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading backup schedules');
+        const response = await csrfFetch('/api/admin/backup-schedules');
+        const data = await response.json();
+
+        if (data.success) {
+            backupSchedulesData = data.schedules;
+            renderSchedulesTable(data.schedules);
+            updateSchedulerStatus(data.schedulerStatus);
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load backup schedules', error);
+    }
+}
+
+/**
+ * Render backup schedules table
+ */
+function renderSchedulesTable(schedules) {
+    const tbody = document.getElementById('schedulesTableBody');
+    if (!tbody) return;
+
+    if (!schedules || schedules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-gray-400">No backup schedules configured</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = schedules.map(s => `
+        <tr class="${s.enabled ? '' : 'opacity-50'}">
+            <td class="font-medium">${escapeHtml(s.name)}</td>
+            <td>${escapeHtml(s.database)}</td>
+            <td class="font-mono text-sm">${escapeHtml(s.cron_expression)}</td>
+            <td>${s.retention_days} days</td>
+            <td class="text-sm text-gray-400">${s.last_run ? formatDate(s.last_run) : 'Never'}</td>
+            <td class="text-sm text-gray-400">${s.next_run ? formatDate(s.next_run) : '-'}</td>
+            <td>
+                <button onclick="toggleScheduleEnabled(${s.id}, ${s.enabled ? 0 : 1})"
+                        class="px-2 py-1 text-xs rounded ${s.enabled ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'}">
+                    ${s.enabled ? 'Enabled' : 'Disabled'}
+                </button>
+            </td>
+            <td class="text-right">
+                <button onclick="runScheduleNow(${s.id})" class="text-green-400 hover:text-green-300 text-sm mr-2" title="Run Now">
+                    <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </button>
+                <button onclick="editSchedule(${s.id})" class="text-blue-400 hover:text-blue-300 text-sm mr-2">Edit</button>
+                <button onclick="deleteSchedule(${s.id})" class="text-red-400 hover:text-red-300 text-sm">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+/**
+ * Update scheduler status indicator
+ */
+function updateSchedulerStatus(status) {
+    const statusContainer = document.getElementById('schedulerStatus');
+    if (!statusContainer) return;
+
+    const indicator = statusContainer.querySelector('span:first-child');
+    const text = statusContainer.querySelector('span:last-child');
+
+    if (!indicator || !text) return;
+
+    indicator.classList.remove('bg-green-500', 'bg-red-500', 'bg-gray-500');
+
+    if (status && status.isRunning) {
+        indicator.classList.add('bg-green-500');
+        text.textContent = `Running (${status.activeJobs} active jobs)`;
+        text.classList.remove('text-gray-400');
+        text.classList.add('text-green-400');
+    } else {
+        indicator.classList.add('bg-gray-500');
+        text.textContent = 'Stopped';
+        text.classList.remove('text-green-400');
+        text.classList.add('text-gray-400');
+    }
+}
+
+/**
+ * Load backup history
+ */
+async function loadBackupHistory() {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading backup history');
+        const response = await csrfFetch('/api/admin/backup-history?limit=20');
+        const data = await response.json();
+
+        if (data.success) {
+            backupHistoryData = data.history;
+            renderBackupHistory(data.history);
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load backup history', error);
+    }
+}
+
+/**
+ * Render backup history table
+ */
+function renderBackupHistory(history) {
+    const tbody = document.getElementById('backupHistoryTableBody');
+    if (!tbody) return;
+
+    if (!history || history.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-400">No backup history</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = history.map(h => `
+        <tr>
+            <td class="text-sm text-gray-400">${formatDate(h.created_at)}</td>
+            <td>${escapeHtml(h.schedule_name || 'Manual')}</td>
+            <td>${escapeHtml(h.database)}</td>
+            <td>
+                <span class="px-2 py-1 text-xs rounded ${h.status === 'success' ? 'bg-green-600' : 'bg-red-600'}">
+                    ${h.status}
+                </span>
+            </td>
+            <td>${h.size_bytes ? formatFileSize(h.size_bytes) : '-'}</td>
+            <td class="text-sm text-gray-400 truncate max-w-xs" title="${escapeHtml(h.error_message || '')}">${h.error_message ? escapeHtml(h.error_message) : '-'}</td>
+        </tr>
+    `).join('');
+}
+
+/**
+ * Open schedule modal for create/edit
+ */
+function openScheduleModal(scheduleId = null) {
+    editingScheduleId = scheduleId;
+    const modal = document.getElementById('scheduleModal');
+    const title = document.getElementById('scheduleModalTitle');
+
+    if (scheduleId) {
+        // Edit mode
+        title.textContent = 'Edit Backup Schedule';
+        const schedule = backupSchedulesData.find(s => s.id === scheduleId);
+        if (schedule) {
+            document.getElementById('scheduleName').value = schedule.name;
+            document.getElementById('scheduleDatabase').value = schedule.database;
+            document.getElementById('scheduleCron').value = schedule.cron_expression;
+            document.getElementById('scheduleRetention').value = schedule.retention_days;
+            document.getElementById('scheduleEnabled').checked = schedule.enabled;
+        }
+    } else {
+        // Create mode
+        title.textContent = 'Create Backup Schedule';
+        document.getElementById('scheduleName').value = '';
+        document.getElementById('scheduleDatabase').value = 'all';
+        document.getElementById('scheduleCron').value = '0 2 * * *';
+        document.getElementById('scheduleRetention').value = '7';
+        document.getElementById('scheduleEnabled').checked = true;
+    }
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+/**
+ * Close schedule modal
+ */
+function closeScheduleModal() {
+    const modal = document.getElementById('scheduleModal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    editingScheduleId = null;
+}
+
+/**
+ * Apply cron preset to input
+ */
+function applyCronPreset() {
+    const select = document.getElementById('cronPresets');
+    const input = document.getElementById('scheduleCron');
+    if (select.value) {
+        input.value = select.value;
+        select.value = '';
+    }
+}
+
+/**
+ * Save schedule (create or update)
+ */
+async function saveSchedule() {
+    const name = document.getElementById('scheduleName').value.trim();
+    const database = document.getElementById('scheduleDatabase').value;
+    const cronExpression = document.getElementById('scheduleCron').value.trim();
+    const retentionDays = parseInt(document.getElementById('scheduleRetention').value);
+    const enabled = document.getElementById('scheduleEnabled').checked;
+
+    if (!name) {
+        showAlert('Schedule name is required', 'error');
+        return;
+    }
+
+    if (!cronExpression) {
+        showAlert('Cron expression is required', 'error');
+        return;
+    }
+
+    try {
+        // Validate cron expression first
+        const validateResponse = await csrfFetch('/api/admin/backup-schedules/validate-cron', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cronExpression })
+        });
+        const validateData = await validateResponse.json();
+
+        if (!validateData.valid) {
+            showAlert('Invalid cron expression', 'error');
+            return;
+        }
+
+        const payload = { name, database, cronExpression, retentionDays, enabled };
+
+        let response;
+        if (editingScheduleId) {
+            // Update existing
+            response = await csrfFetch(`/api/admin/backup-schedules/${editingScheduleId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            // Create new
+            response = await csrfFetch('/api/admin/backup-schedules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(editingScheduleId ? 'Schedule updated' : 'Schedule created', 'success');
+            closeScheduleModal();
+            loadBackupSchedules();
+        } else {
+            showAlert(data.error || 'Failed to save schedule', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to save schedule', error);
+        showAlert('Failed to save schedule', 'error');
+    }
+}
+
+/**
+ * Edit schedule
+ */
+function editSchedule(id) {
+    openScheduleModal(id);
+}
+
+/**
+ * Delete schedule
+ */
+async function deleteSchedule(id) {
+    if (!confirm('Are you sure you want to delete this backup schedule?')) return;
+
+    try {
+        const response = await csrfFetch(`/api/admin/backup-schedules/${id}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert('Schedule deleted', 'success');
+            loadBackupSchedules();
+        } else {
+            showAlert(data.error || 'Failed to delete schedule', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to delete schedule', error);
+        showAlert('Failed to delete schedule', 'error');
+    }
+}
+
+/**
+ * Run schedule now
+ */
+async function runScheduleNow(id) {
+    try {
+        showAlert('Running backup...', 'info');
+
+        const response = await csrfFetch(`/api/admin/backup-schedules/${id}/run-now`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(`Backup completed: ${data.backups?.length || 0} files`, 'success');
+            loadBackupSchedules();
+            loadBackupHistory();
+            loadBackups(); // Also reload manual backups list
+        } else {
+            showAlert(data.error || 'Backup failed', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to run backup', error);
+        showAlert('Failed to run backup', 'error');
+    }
+}
+
+/**
+ * Toggle schedule enabled status
+ */
+async function toggleScheduleEnabled(id, enabled) {
+    try {
+        const response = await csrfFetch(`/api/admin/backup-schedules/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled === 1 })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(enabled ? 'Schedule enabled' : 'Schedule disabled', 'success');
+            loadBackupSchedules();
+        } else {
+            showAlert(data.error || 'Failed to update schedule', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to toggle schedule', error);
+        showAlert('Failed to update schedule', 'error');
+    }
+}
+
+/**
+ * Setup backup history details toggle
+ * Loads history when details element is opened
+ */
+function setupBackupHistoryToggle() {
+    // Find all details elements in the database tab
+    const detailsElements = document.querySelectorAll('#tab-database details');
+    detailsElements.forEach(details => {
+        details.addEventListener('toggle', () => {
+            if (details.open) {
+                loadBackupHistory();
+            }
+        });
+    });
 }
 
 // ============================================
