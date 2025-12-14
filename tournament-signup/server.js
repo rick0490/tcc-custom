@@ -5,6 +5,74 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const chokidar = require('chokidar');
+const rateLimit = require('express-rate-limit');
+
+// ==================== ERROR CODES ====================
+const ERROR_CODES = {
+	VALIDATION_ERROR: 'VALIDATION_ERROR',
+	NAME_REQUIRED: 'NAME_REQUIRED',
+	NAME_TOO_SHORT: 'NAME_TOO_SHORT',
+	NAME_TOO_LONG: 'NAME_TOO_LONG',
+	INVALID_INSTAGRAM: 'INVALID_INSTAGRAM',
+	DUPLICATE_NAME: 'DUPLICATE_NAME',
+	TOURNAMENT_FULL: 'TOURNAMENT_FULL',
+	TOURNAMENT_STARTED: 'TOURNAMENT_STARTED',
+	TOURNAMENT_NOT_FOUND: 'TOURNAMENT_NOT_FOUND',
+	REGISTRATION_NOT_OPEN: 'REGISTRATION_NOT_OPEN',
+	RATE_LIMITED: 'RATE_LIMITED',
+	SERVER_ERROR: 'SERVER_ERROR'
+};
+
+// ==================== VALIDATION ====================
+const VALIDATION = {
+	NAME_MIN: 2,
+	NAME_MAX: 50,
+	INSTAGRAM_PATTERN: /^[a-zA-Z0-9._]{1,30}$/
+};
+
+// Helper to create standardized error responses
+function errorResponse(res, status, code, message, field = null) {
+	return res.status(status).json({
+		success: false,
+		error: {
+			code: code,
+			message: message,
+			field: field
+		}
+	});
+}
+
+// ==================== DEBUG LOGGER ====================
+const DEBUG = process.env.DEBUG_MODE === 'true';
+
+function debugLog(service, action, data = {}) {
+	if (!DEBUG) return;
+	const timestamp = new Date().toISOString();
+	const prefix = `[${timestamp}] [${service}:${action}]`;
+	if (Object.keys(data).length === 0) {
+		console.log(prefix);
+	} else {
+		try {
+			console.log(prefix, JSON.stringify(data, null, 2));
+		} catch (e) {
+			console.log(prefix, data);
+		}
+	}
+}
+
+function debugError(service, action, error, context = {}) {
+	const timestamp = new Date().toISOString();
+	const prefix = `[${timestamp}] [${service}:${action}] ERROR:`;
+	console.error(prefix, {
+		message: error.message || error,
+		stack: error.stack,
+		...context
+	});
+}
+
+// Create bound logger for this service
+const log = (action, data) => debugLog('signup', action, data);
+const logError = (action, error, context) => debugError('signup', action, error, context);
 
 // Game configs path
 const GAME_CONFIGS_PATH = path.join(__dirname, 'game-configs.json');
@@ -14,9 +82,9 @@ let gameConfigs = {};
 function loadGameConfigs() {
 	try {
 		gameConfigs = JSON.parse(fs.readFileSync(GAME_CONFIGS_PATH, 'utf8'));
-		console.log('[Game Configs] Loaded:', Object.keys(gameConfigs).join(', '));
+		log('game-configs:loaded', { games: Object.keys(gameConfigs) });
 	} catch (error) {
-		console.error('[Game Configs] Error loading:', error.message);
+		logError('game-configs:load', error);
 		gameConfigs = { default: { name: 'Tournament', shortName: '', rules: [], prizes: [], additionalInfo: [] } };
 	}
 }
@@ -32,16 +100,50 @@ const configWatcher = chokidar.watch(GAME_CONFIGS_PATH, {
 });
 
 configWatcher.on('change', () => {
-	console.log('[Game Configs] File changed, reloading...');
+	log('game-configs:file-changed', { path: GAME_CONFIGS_PATH });
 	loadGameConfigs();
 });
 
 configWatcher.on('error', (error) => {
-	console.error('[Game Configs] Watcher error:', error.message);
+	logError('game-configs:watcher', error);
 });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ==================== RATE LIMITING ====================
+// Signup-specific rate limiter (stricter)
+const signupLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 minutes
+	max: 10, // 10 signup attempts per IP per 15 minutes
+	message: {
+		success: false,
+		error: {
+			code: ERROR_CODES.RATE_LIMITED,
+			message: 'Too many signup attempts. Please try again in 15 minutes.',
+			field: null
+		}
+	},
+	standardHeaders: true,
+	legacyHeaders: false,
+	keyGenerator: (req) => req.ip || req.connection?.remoteAddress || 'unknown'
+});
+
+// General API rate limiter (more lenient)
+const apiLimiter = rateLimit({
+	windowMs: 1 * 60 * 1000, // 1 minute
+	max: 60, // 60 requests per minute
+	message: {
+		success: false,
+		error: {
+			code: ERROR_CODES.RATE_LIMITED,
+			message: 'Too many requests. Please slow down.',
+			field: null
+		}
+	},
+	standardHeaders: true,
+	legacyHeaders: false
+});
 
 // Admin Dashboard Activity Webhook Configuration
 const ADMIN_WEBHOOK_URL = process.env.ADMIN_WEBHOOK_URL || 'http://localhost:3000/api/activity/external';
@@ -50,7 +152,7 @@ const ACTIVITY_TOKEN = process.env.ACTIVITY_TOKEN || '';
 // Notify admin dashboard of signups (non-blocking)
 async function notifyAdminDashboard(action, details) {
 	if (!ACTIVITY_TOKEN) {
-		console.log('[Activity Webhook] No token configured, skipping notification');
+		log('webhook:skip', { reason: 'no token configured' });
 		return;
 	}
 
@@ -66,10 +168,10 @@ async function notifyAdminDashboard(action, details) {
 			},
 			timeout: 5000
 		});
-		console.log('[Activity Webhook] Notification sent:', action);
+		log('webhook:sent', { action, details });
 	} catch (error) {
 		// Non-critical - log and continue
-		console.error('[Activity Webhook] Failed to notify:', error.message);
+		logError('webhook:send', error, { action });
 	}
 }
 
@@ -124,9 +226,10 @@ function getGameConfig(gameName) {
 // Helper function to get current tournament info
 function getTournamentInfo() {
 	try {
-		const stateFilePath = process.env.TOURNAMENT_STATE_FILE;
+		const stateFilePath = process.env.TOURNAMENT_STATE_FILE ||
+			path.join(__dirname, '..', 'admin-dashboard', 'tournament-state.json');
 
-		if (stateFilePath && fs.existsSync(stateFilePath)) {
+		if (fs.existsSync(stateFilePath)) {
 			const stateData = JSON.parse(fs.readFileSync(stateFilePath, 'utf8'));
 			// Use env API key if state file has placeholder or OAuth marker
 			const apiKey = (stateData.apiKey && stateData.apiKey !== 'oauth-connected')
@@ -152,7 +255,7 @@ function getTournamentInfo() {
 
 		return null;
 	} catch (error) {
-		console.error('Error reading tournament state:', error);
+		logError('tournament-state:read', error);
 		return null;
 	}
 }
@@ -176,7 +279,7 @@ function getSystemRegistrationWindow() {
 			return settings.systemDefaults?.registrationWindow || 48;
 		}
 	} catch (error) {
-		console.error('Error reading system settings:', error.message);
+		logError('system-settings:read', error);
 	}
 	return 48; // Default fallback
 }
@@ -221,59 +324,63 @@ function isRegistrationOpen(tournamentDetails, registrationWindowHours) {
 	return { open: true };
 }
 
-// Helper function to fetch tournament details from Challonge (v2.1 API)
+// Admin Dashboard API URL (for local database access)
+const ADMIN_API_URL = process.env.ADMIN_API_URL || 'http://localhost:3000';
+
+// Helper function to fetch tournament details from local database (via admin dashboard)
 async function fetchTournamentDetails(tournamentId, apiKey) {
 	try {
-		const response = await axios.get(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}.json`,
-			{ headers: getChallongeV2Headers(apiKey) }
-		);
-		// v2.1 returns { data: { id, type, attributes: {...} } } structure
-		const rawData = response.data.data;
-		const attrs = rawData?.attributes || {};
+		const response = await axios.get(`${ADMIN_API_URL}/api/public/tournament`, {
+			timeout: 5000
+		});
 
-		// Map v2.1 response to expected format (compatible with old v1 field names)
-		// NOTE: v2.1 uses 'starts_at' while v1 used 'start_at'
+		if (!response.data.success) {
+			throw new Error(response.data.error || 'Failed to fetch tournament');
+		}
+
+		const tournament = response.data.tournament;
+
+		// Map local response to expected format (compatible with old field names)
 		return {
-			id: rawData?.id || tournamentId,
-			name: attrs.name,
-			url: attrs.url,
-			full_challonge_url: attrs.full_challonge_url,
-			game_name: attrs.game_name,
-			state: attrs.state,
-			participants_count: attrs.participants_count,
-			start_at: attrs.starts_at,  // v2.1 field name is 'starts_at'
-			started_at: attrs.timestamps?.started_at,
-			completed_at: attrs.timestamps?.completed_at,
-			description: attrs.description,
-			tournament_type: attrs.tournament_type
+			id: tournament.id,
+			name: tournament.name,
+			url: tournament.urlSlug,
+			full_challonge_url: tournament.bracketUrl || `http://bracket.despairhardware.com`,
+			game_name: tournament.gameName,
+			state: tournament.state,
+			participants_count: tournament.participantsCount,
+			start_at: tournament.startAt,
+			signup_cap: tournament.signupCap,
+			registration_open: tournament.registrationOpen,
+			registration_reason: tournament.registrationReason,
+			is_full: tournament.isFull
 		};
 	} catch (error) {
-		console.error('Error fetching tournament details:', error.message);
-		if (error.response) {
-			console.error('Response status:', error.response.status);
-			console.error('Response data:', JSON.stringify(error.response.data, null, 2));
-		}
+		logError('admin-api:fetch-tournament', error, {
+			url: `${ADMIN_API_URL}/api/public/tournament`,
+			status: error.response?.status,
+			responseData: error.response?.data
+		});
 		throw error;
 	}
 }
 
-// Helper function to fetch existing participants from Challonge (v2.1 API)
+// Helper function to fetch existing participants from local database (via admin dashboard)
 async function fetchParticipants(tournamentId, apiKey) {
 	try {
-		const response = await axios.get(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}/participants.json`,
-			{ headers: getChallongeV2Headers(apiKey) }
-		);
+		const response = await axios.get(`${ADMIN_API_URL}/api/public/participants`, {
+			timeout: 5000
+		});
 
-		// v2.1 returns { data: [{id, type, attributes: {name, ...}}, ...] }
-		const participants = response.data.data || [];
-		return participants.map(p => ({
-			id: p.id,
-			name: p.attributes?.name || ''
-		}));
+		if (!response.data.success) {
+			throw new Error(response.data.error || 'Failed to fetch participants');
+		}
+
+		return response.data.participants || [];
 	} catch (error) {
-		console.error('Error fetching participants:', error.message);
+		logError('admin-api:fetch-participants', error, {
+			url: `${ADMIN_API_URL}/api/public/participants`
+		});
 		return []; // Return empty array on error to allow signup to proceed
 	}
 }
@@ -295,49 +402,38 @@ function findSimilarName(existingParticipants, newName) {
 	return match ? match.name : null;
 }
 
-// Helper function to add participant to Challonge tournament (v2.1 API)
-async function addParticipant(tournamentId, apiKey, participantName, instagram) {
+// Helper function to add participant to local database (via admin dashboard)
+async function addParticipant(tournamentId, apiKey, participantName, instagram, notes = null) {
 	try {
-		// Build v2.1 participant data structure
-		const participantAttributes = {
-			name: participantName
-		};
-
-		// Add Instagram handle to misc field if provided
-		if (instagram) {
-			participantAttributes.misc = `Instagram: @${instagram}`;
-		}
-
-		// v2.1 uses JSON:API format
-		const requestData = {
-			data: {
-				type: 'participant',
-				attributes: participantAttributes
-			}
-		};
-
 		const response = await axios.post(
-			`https://api.challonge.com/v2.1/tournaments/${tournamentId}/participants.json`,
-			requestData,
-			{ headers: getChallongeV2Headers(apiKey) }
+			`${ADMIN_API_URL}/api/public/signup`,
+			{
+				participantName: participantName,
+				instagram: instagram,
+				misc: notes  // Notes are stored in the misc field
+			},
+			{
+				headers: { 'Content-Type': 'application/json' },
+				timeout: 10000
+			}
 		);
 
-		// Map v2.1 response to expected format
-		const rawData = response.data.data;
-		const attrs = rawData?.attributes || {};
+		if (!response.data.success) {
+			throw new Error(response.data.error || 'Signup failed');
+		}
 
 		return {
-			id: rawData?.id,
-			name: attrs.name,
-			seed: attrs.seed,
-			misc: attrs.misc
+			id: response.data.participant.id,
+			name: response.data.participant.name,
+			seed: response.data.participant.seed
 		};
 	} catch (error) {
-		console.error('Error adding participant:', error.message);
-		if (error.response) {
-			console.error('Response status:', error.response.status);
-			console.error('Response data:', JSON.stringify(error.response.data, null, 2));
-		}
+		logError('admin-api:add-participant', error, {
+			url: `${ADMIN_API_URL}/api/public/signup`,
+			participantName,
+			status: error.response?.status,
+			responseData: error.response?.data
+		});
 		throw error;
 	}
 }
@@ -390,7 +486,7 @@ app.get('/api/game-config', async (req, res) => {
 			gameName: gameName
 		});
 	} catch (error) {
-		console.error('Error fetching game config:', error.message);
+		logError('api:game-config', error);
 		// Return default config on error
 		res.json({
 			success: true,
@@ -469,24 +565,66 @@ app.get('/api/tournament', async (req, res) => {
 });
 
 // POST /api/signup - Submit participant signup
-app.post('/api/signup', async (req, res) => {
+app.post('/api/signup', signupLimiter, async (req, res) => {
 	try {
-		const { participantName, instagram } = req.body;
+		const { participantName, instagram, notes } = req.body;
 
-		if (!participantName || participantName.trim() === '') {
-			return res.status(400).json({
-				success: false,
-				error: 'Participant name is required'
-			});
+		// ==================== INPUT VALIDATION ====================
+		// Validate participant name exists
+		if (!participantName || typeof participantName !== 'string') {
+			return errorResponse(res, 400, ERROR_CODES.NAME_REQUIRED,
+				'Participant name is required', 'participantName');
 		}
+
+		const trimmedName = participantName.trim();
+
+		// Validate name is not empty after trimming
+		if (trimmedName === '') {
+			return errorResponse(res, 400, ERROR_CODES.NAME_REQUIRED,
+				'Participant name is required', 'participantName');
+		}
+
+		// Validate minimum length
+		if (trimmedName.length < VALIDATION.NAME_MIN) {
+			return errorResponse(res, 400, ERROR_CODES.NAME_TOO_SHORT,
+				`Name must be at least ${VALIDATION.NAME_MIN} characters`, 'participantName');
+		}
+
+		// Validate maximum length
+		if (trimmedName.length > VALIDATION.NAME_MAX) {
+			return errorResponse(res, 400, ERROR_CODES.NAME_TOO_LONG,
+				`Name must be ${VALIDATION.NAME_MAX} characters or less`, 'participantName');
+		}
+
+		// Validate Instagram format if provided
+		let sanitizedInstagram = null;
+		if (instagram) {
+			const cleanInstagram = instagram.trim().replace(/^@/, '');
+			if (cleanInstagram && !VALIDATION.INSTAGRAM_PATTERN.test(cleanInstagram)) {
+				return errorResponse(res, 400, ERROR_CODES.INVALID_INSTAGRAM,
+					'Invalid Instagram handle format. Use only letters, numbers, periods, and underscores (max 30 characters)',
+					'instagram');
+			}
+			sanitizedInstagram = cleanInstagram || null;
+		}
+
+		// Validate and sanitize notes if provided
+		let sanitizedNotes = null;
+		if (notes && typeof notes === 'string') {
+			const trimmedNotes = notes.trim();
+			if (trimmedNotes.length > 200) {
+				return errorResponse(res, 400, ERROR_CODES.VALIDATION_ERROR,
+					'Notes must be 200 characters or less', 'notes');
+			}
+			sanitizedNotes = trimmedNotes || null;
+		}
+		// ==================== END VALIDATION ====================
 
 		const tournamentInfo = getTournamentInfo();
 
 		if (!tournamentInfo) {
-			return res.status(404).json({
-				success: false,
-				error: 'No active tournament configured'
-			});
+			return errorResponse(res, 404, ERROR_CODES.TOURNAMENT_NOT_FOUND,
+				'No active tournament configured');
 		}
 
 		// Fetch tournament details to check registration status
@@ -502,27 +640,31 @@ app.post('/api/signup', async (req, res) => {
 		);
 
 		if (!registrationStatus.open) {
-			let errorMessage = 'Registration is closed';
-
 			if (registrationStatus.reason === 'too_early') {
 				const opensAt = new Date(registrationStatus.opensAt);
-				errorMessage = `Registration opens ${opensAt.toLocaleString('en-US', {
+				const errorMessage = `Registration opens ${opensAt.toLocaleString('en-US', {
 					month: 'short',
 					day: 'numeric',
 					hour: 'numeric',
 					minute: '2-digit',
 					timeZoneName: 'short'
 				})}`;
+				return res.status(403).json({
+					success: false,
+					error: {
+						code: ERROR_CODES.REGISTRATION_NOT_OPEN,
+						message: errorMessage,
+						field: null
+					},
+					opensAt: registrationStatus.opensAt
+				});
 			} else if (registrationStatus.reason === 'tournament_started') {
-				errorMessage = 'Tournament has already started. Registration is closed.';
+				return errorResponse(res, 403, ERROR_CODES.TOURNAMENT_STARTED,
+					'Tournament has already started. Registration is closed.');
 			}
 
-			return res.status(403).json({
-				success: false,
-				error: errorMessage,
-				reason: registrationStatus.reason,
-				opensAt: registrationStatus.opensAt
-			});
+			return errorResponse(res, 403, ERROR_CODES.REGISTRATION_NOT_OPEN,
+				'Registration is closed');
 		}
 
 		// Check if tournament is full
@@ -530,8 +672,11 @@ app.post('/api/signup', async (req, res) => {
 			tournamentDetails.participants_count >= tournamentInfo.signupCap) {
 			return res.status(403).json({
 				success: false,
-				error: `Tournament is full (${tournamentInfo.signupCap}/${tournamentInfo.signupCap} participants)`,
-				reason: 'tournament_full',
+				error: {
+					code: ERROR_CODES.TOURNAMENT_FULL,
+					message: `Tournament is full (${tournamentInfo.signupCap}/${tournamentInfo.signupCap} participants)`,
+					field: null
+				},
 				signupCap: tournamentInfo.signupCap
 			});
 		}
@@ -542,34 +687,35 @@ app.post('/api/signup', async (req, res) => {
 			tournamentInfo.apiKey
 		);
 
-		const existingName = findSimilarName(existingParticipants, participantName);
+		const existingName = findSimilarName(existingParticipants, trimmedName);
 		if (existingName) {
-			return res.status(400).json({
-				success: false,
-				error: `"${existingName}" is already registered. Please use a different name.`,
-				reason: 'duplicate_name'
-			});
+			return errorResponse(res, 400, ERROR_CODES.DUPLICATE_NAME,
+				`"${existingName}" is already registered. Please use a different name.`,
+				'participantName');
 		}
 
-		// Sanitize Instagram handle (remove @ if user included it)
-		const sanitizedInstagram = instagram ? instagram.trim().replace(/^@/, '') : undefined;
+		// Instagram and notes were already validated and sanitized in the validation section above
 
 		const participant = await addParticipant(
 			tournamentInfo.tournamentId,
 			tournamentInfo.apiKey,
-			participantName.trim(),
-			sanitizedInstagram
+			trimmedName,
+			sanitizedInstagram,
+			sanitizedNotes
 		);
 
-		const logMessage = sanitizedInstagram
-			? `Participant added: ${participantName} (@${sanitizedInstagram}) (ID: ${participant.id})`
-			: `Participant added: ${participantName} (ID: ${participant.id})`;
-		console.log(logMessage);
+		log('participant:added', {
+			name: trimmedName,
+			instagram: sanitizedInstagram || null,
+			notes: sanitizedNotes || null,
+			participantId: participant.id,
+			seed: participant.seed
+		});
 
 		// Notify admin dashboard (non-blocking)
 		notifyAdminDashboard('participant_signup', {
 			tournamentName: tournamentDetails.name || 'Tournament',
-			playerName: participantName.trim(),
+			playerName: trimmedName,
 			participantCount: (tournamentDetails.participants_count || 0) + 1,
 			instagram: sanitizedInstagram || null
 		}).catch(() => {}); // Silently ignore errors
@@ -584,51 +730,38 @@ app.post('/api/signup', async (req, res) => {
 			}
 		});
 	} catch (error) {
-		console.error('Signup error:', error);
+		logError('api:signup', error, { participantName: req.body.participantName });
 
-		// Handle specific Challonge errors (v2.1 API returns errors as array of objects)
-		if (error.response && error.response.data && error.response.data.errors) {
-			const errors = error.response.data.errors;
-			let errorMessage = 'Signup failed';
+		// Handle API errors with standardized format
+		if (error.response && error.response.data) {
+			const errorData = error.response.data;
 
-			// v2.1 API error format: [{detail: "...", source: {...}}]
-			if (Array.isArray(errors) && errors.length > 0) {
-				const firstError = errors[0];
-				if (typeof firstError === 'object' && firstError.detail) {
-					errorMessage = String(firstError.detail);
-				} else if (typeof firstError === 'string') {
-					errorMessage = firstError;
-				} else if (typeof firstError === 'object') {
-					// Try to extract any useful message from the error object
-					errorMessage = firstError.title || firstError.message || JSON.stringify(firstError);
-				}
-
-				// Check for duplicate name error (ensure errorMessage is a string)
-				const lowerError = String(errorMessage).toLowerCase();
-				if (lowerError.includes('name has already been taken') ||
+			// Check for duplicate name error from admin dashboard
+			if (errorData.error && typeof errorData.error === 'string') {
+				const lowerError = errorData.error.toLowerCase();
+				if (lowerError.includes('already registered') ||
 					lowerError.includes('duplicate') ||
-					lowerError.includes('already exists') ||
-					lowerError.includes('already been taken')) {
-					errorMessage = 'This name is already registered. Please use a different name.';
+					lowerError.includes('already exists')) {
+					return errorResponse(res, 400, ERROR_CODES.DUPLICATE_NAME,
+						'This name is already registered. Please use a different name.',
+						'participantName');
 				}
 			}
 
-			return res.status(400).json({
-				success: false,
-				error: errorMessage
-			});
+			// Return standardized error from upstream
+			const message = errorData.error?.message || errorData.error || 'Signup failed';
+			return errorResponse(res, error.response.status || 400,
+				ERROR_CODES.VALIDATION_ERROR, message);
 		}
 
-		res.status(500).json({
-			success: false,
-			error: 'Failed to complete signup',
-			message: error.message
-		});
+		return errorResponse(res, 500, ERROR_CODES.SERVER_ERROR,
+			'Failed to complete signup. Please try again.');
 	}
 });
 
 // GET /api/participants/lookup - Check if a participant is registered
 app.get('/api/participants/lookup', async (req, res) => {
+	log('api:lookup:start', { query: req.query });
 	try {
 		const { name } = req.query;
 
@@ -640,102 +773,138 @@ app.get('/api/participants/lookup', async (req, res) => {
 			});
 		}
 
-		const tournamentInfo = getTournamentInfo();
-
-		if (!tournamentInfo) {
-			return res.status(404).json({
-				success: false,
-				found: false,
-				error: 'No active tournament configured'
-			});
-		}
-
-		// Fetch all participants
-		const participants = await fetchParticipants(
-			tournamentInfo.tournamentId,
-			tournamentInfo.apiKey
-		);
-
-		// Case-insensitive partial match search
-		const searchName = name.trim().toLowerCase();
-		const matches = participants.filter(p =>
-			p.name.toLowerCase().includes(searchName) ||
-			searchName.includes(p.name.toLowerCase())
-		);
-
-		// Check for exact match first (case-insensitive)
-		const exactMatch = participants.find(p =>
-			p.name.toLowerCase() === searchName
-		);
-
-		if (exactMatch) {
-			// Fetch full participant details to get seed
-			try {
-				const response = await axios.get(
-					`https://api.challonge.com/v2.1/tournaments/${tournamentInfo.tournamentId}/participants.json`,
-					{ headers: getChallongeV2Headers(tournamentInfo.apiKey) }
-				);
-
-				const fullParticipants = response.data.data || [];
-				const fullMatch = fullParticipants.find(p =>
-					p.attributes?.name?.toLowerCase() === searchName
-				);
-
-				return res.json({
-					success: true,
-					found: true,
-					participant: {
-						id: fullMatch?.id || exactMatch.id,
-						name: fullMatch?.attributes?.name || exactMatch.name,
-						seed: fullMatch?.attributes?.seed || null,
-						checkedIn: fullMatch?.attributes?.checked_in || false
-					}
-				});
-			} catch (error) {
-				// Fall back to basic info if detailed fetch fails
-				return res.json({
-					success: true,
-					found: true,
-					participant: {
-						id: exactMatch.id,
-						name: exactMatch.name,
-						seed: null,
-						checkedIn: false
-					}
-				});
+		// Call the admin dashboard's public lookup endpoint
+		const response = await axios.get(
+			`${ADMIN_API_URL}/api/public/participants/lookup`,
+			{
+				params: { name: name },
+				timeout: 5000
 			}
-		}
+		);
 
-		// If no exact match, check for partial matches
-		if (matches.length > 0) {
-			const bestMatch = matches[0];
-			return res.json({
-				success: true,
-				found: true,
-				participant: {
-					id: bestMatch.id,
-					name: bestMatch.name,
-					seed: null,
-					checkedIn: false
-				},
-				partial: true
-			});
-		}
-
-		// No match found
-		return res.json({
-			success: true,
-			found: false,
-			message: 'No registration found for that name'
-		});
+		// Forward the response from admin dashboard
+		return res.json(response.data);
 
 	} catch (error) {
-		console.error('Lookup error:', error.message);
+		logError('api:lookup', error, { name: req.query.name });
 		res.status(500).json({
 			success: false,
 			found: false,
 			error: 'Failed to lookup participant',
 			message: error.message
+		});
+	}
+});
+
+// ==================== WAITLIST ENDPOINTS ====================
+
+// POST /api/waitlist - Join waitlist (proxy to admin dashboard)
+app.post('/api/waitlist', signupLimiter, async (req, res) => {
+	try {
+		const { name, email } = req.body;
+
+		if (!name || name.trim() === '') {
+			return errorResponse(res, 400, ERROR_CODES.NAME_REQUIRED,
+				'Name is required to join waitlist', 'name');
+		}
+
+		const response = await axios.post(
+			`${ADMIN_API_URL}/api/public/waitlist`,
+			{ name, email },
+			{
+				headers: { 'Content-Type': 'application/json' },
+				timeout: 5000
+			}
+		);
+
+		log('waitlist:joined', { name, position: response.data.position });
+		return res.json(response.data);
+
+	} catch (error) {
+		logError('api:waitlist:join', error, { name: req.body.name });
+
+		// Forward error from admin dashboard
+		if (error.response && error.response.data) {
+			return res.status(error.response.status || 400).json(error.response.data);
+		}
+
+		return errorResponse(res, 500, ERROR_CODES.SERVER_ERROR,
+			'Failed to join waitlist. Please try again.');
+	}
+});
+
+// GET /api/waitlist - Check waitlist status (proxy to admin dashboard)
+app.get('/api/waitlist', async (req, res) => {
+	try {
+		const { name } = req.query;
+
+		if (!name || name.trim() === '') {
+			return res.status(400).json({
+				success: false,
+				error: 'Name parameter is required'
+			});
+		}
+
+		const response = await axios.get(
+			`${ADMIN_API_URL}/api/public/waitlist`,
+			{
+				params: { name },
+				timeout: 5000
+			}
+		);
+
+		return res.json(response.data);
+
+	} catch (error) {
+		logError('api:waitlist:check', error, { name: req.query.name });
+
+		// Forward error from admin dashboard
+		if (error.response && error.response.data) {
+			return res.status(error.response.status || 400).json(error.response.data);
+		}
+
+		return res.status(500).json({
+			success: false,
+			error: 'Failed to check waitlist status'
+		});
+	}
+});
+
+// DELETE /api/waitlist - Leave waitlist (proxy to admin dashboard)
+app.delete('/api/waitlist', async (req, res) => {
+	try {
+		const { name } = req.body;
+
+		if (!name || name.trim() === '') {
+			return res.status(400).json({
+				success: false,
+				error: 'Name is required to leave waitlist'
+			});
+		}
+
+		const response = await axios.delete(
+			`${ADMIN_API_URL}/api/public/waitlist`,
+			{
+				data: { name },
+				headers: { 'Content-Type': 'application/json' },
+				timeout: 5000
+			}
+		);
+
+		log('waitlist:left', { name });
+		return res.json(response.data);
+
+	} catch (error) {
+		logError('api:waitlist:leave', error, { name: req.body.name });
+
+		// Forward error from admin dashboard
+		if (error.response && error.response.data) {
+			return res.status(error.response.status || 400).json(error.response.data);
+		}
+
+		return res.status(500).json({
+			success: false,
+			error: 'Failed to leave waitlist'
 		});
 	}
 });
@@ -749,9 +918,126 @@ app.get('/api/health', (req, res) => {
 	});
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-	console.log(`Tournament Signup app listening on port ${PORT}`);
-	console.log(`Access at: http://localhost:${PORT}`);
-	console.log(`Production URL: https://signup.despairhardware.com`);
+// ==================== PUSH NOTIFICATION ENDPOINTS ====================
+
+// GET /api/push/vapid-public-key - Get VAPID public key from admin dashboard
+app.get('/api/push/vapid-public-key', async (req, res) => {
+	try {
+		const response = await axios.get(
+			`${ADMIN_API_URL}/api/public/push/vapid-public-key`,
+			{ timeout: 5000 }
+		);
+
+		if (!response.data.success) {
+			return res.status(503).json({
+				success: false,
+				error: 'Push notifications not configured on server'
+			});
+		}
+
+		res.json(response.data);
+	} catch (error) {
+		logError('api:push:vapid-key', error);
+		res.status(503).json({
+			success: false,
+			error: 'Push notifications not available'
+		});
+	}
 });
+
+// POST /api/push/subscribe - Subscribe to push notifications
+app.post('/api/push/subscribe', async (req, res) => {
+	try {
+		const { subscription, notificationTypes } = req.body;
+
+		if (!subscription || !subscription.endpoint) {
+			return res.status(400).json({
+				success: false,
+				error: 'Invalid push subscription'
+			});
+		}
+
+		// Forward subscription to admin dashboard
+		const response = await axios.post(
+			`${ADMIN_API_URL}/api/public/push/subscribe`,
+			{
+				subscription,
+				source: 'signup-pwa',
+				notificationTypes: notificationTypes || ['registration_open', 'tournament_starting']
+			},
+			{
+				headers: { 'Content-Type': 'application/json' },
+				timeout: 10000
+			}
+		);
+
+		log('push:subscribed', { endpoint: subscription.endpoint.slice(0, 50) + '...' });
+		res.json(response.data);
+	} catch (error) {
+		logError('api:push:subscribe', error);
+
+		if (error.response?.data) {
+			return res.status(error.response.status || 500).json(error.response.data);
+		}
+
+		res.status(500).json({
+			success: false,
+			error: 'Failed to subscribe to notifications'
+		});
+	}
+});
+
+// DELETE /api/push/unsubscribe - Unsubscribe from push notifications
+app.delete('/api/push/unsubscribe', async (req, res) => {
+	try {
+		const { endpoint } = req.body;
+
+		if (!endpoint) {
+			return res.status(400).json({
+				success: false,
+				error: 'Endpoint is required'
+			});
+		}
+
+		const response = await axios.delete(
+			`${ADMIN_API_URL}/api/public/push/unsubscribe`,
+			{
+				data: { endpoint },
+				headers: { 'Content-Type': 'application/json' },
+				timeout: 5000
+			}
+		);
+
+		log('push:unsubscribed', { endpoint: endpoint.slice(0, 50) + '...' });
+		res.json(response.data);
+	} catch (error) {
+		logError('api:push:unsubscribe', error);
+		res.status(500).json({
+			success: false,
+			error: 'Failed to unsubscribe'
+		});
+	}
+});
+
+// Start server only if not in test mode
+if (process.env.NODE_ENV !== 'test') {
+	app.listen(PORT, '0.0.0.0', () => {
+		log('server:started', {
+			port: PORT,
+			debugMode: DEBUG,
+			localUrl: `http://localhost:${PORT}`,
+			productionUrl: 'https://signup.despairhardware.com'
+		});
+		console.log(`Tournament Signup app listening on port ${PORT}`);
+	});
+}
+
+// Export for testing
+module.exports = {
+	app,
+	getGameConfigKey,
+	getGameConfig,
+	isRegistrationOpen,
+	VALIDATION,
+	ERROR_CODES
+};
