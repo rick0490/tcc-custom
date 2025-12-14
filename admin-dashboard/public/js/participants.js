@@ -26,7 +26,7 @@ function loadSortPreferences() {
 			}
 		}
 	} catch (e) {
-		console.warn('Failed to load sort preferences:', e);
+		FrontendDebug.warn('Participants', 'Failed to load sort preferences', e);
 	}
 }
 
@@ -38,7 +38,7 @@ function saveSortPreferences() {
 			direction: sortDirection
 		}));
 	} catch (e) {
-		console.warn('Failed to save sort preferences:', e);
+		FrontendDebug.warn('Participants', 'Failed to save sort preferences', e);
 	}
 }
 
@@ -68,6 +68,9 @@ function updateSortIndicators() {
 	});
 }
 
+// WebSocket state
+let wsConnected = false;
+
 // Initialize page on load
 document.addEventListener('DOMContentLoaded', async () => {
 	// Load sort preferences first
@@ -83,17 +86,96 @@ document.addEventListener('DOMContentLoaded', async () => {
 	const searchInput = document.getElementById('searchInput');
 	searchInput.addEventListener('input', handleSearch);
 
-	// Auto-refresh every 30 seconds
+	// Initialize WebSocket for real-time updates
+	initWebSocket();
+
+	// Auto-refresh every 60 seconds (reduced from 30s when WebSocket is available)
+	startPolling();
+});
+
+// WebSocket initialization
+function initWebSocket() {
+	if (!WebSocketManager.init()) {
+		FrontendDebug.warn('Participants', 'WebSocket not available, using polling');
+		return;
+	}
+
+	// Subscribe to participant events
+	WebSocketManager.subscribeMany({
+		'participants:update': handleParticipantUpdate,
+		[WS_EVENTS.PARTICIPANT_ADDED]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANT_UPDATED]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANT_DELETED]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANT_CHECKIN]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANTS_BULK]: handleParticipantEvent,
+		[WS_EVENTS.PARTICIPANTS_SEEDED]: handleParticipantEvent
+	});
+
+	WebSocketManager.onConnection('connect', () => {
+		FrontendDebug.ws('Participants', 'WebSocket connected');
+		wsConnected = true;
+		// Reduce polling when connected
+		stopPolling();
+		startPolling(60000); // 60 second backup polling
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		FrontendDebug.ws('Participants', 'WebSocket disconnected');
+		wsConnected = false;
+		// Increase polling when disconnected
+		stopPolling();
+		startPolling(30000); // 30 second polling
+	});
+}
+
+// Handle participant update event
+function handleParticipantUpdate(data) {
+	// Only handle events for selected tournament
+	if (!selectedTournamentId) return;
+
+	// Tournament ID could be numeric or string
+	const eventTournamentId = String(data.tournamentId);
+	const currentTournamentId = String(selectedTournamentId);
+
+	if (eventTournamentId !== currentTournamentId) return;
+
+	FrontendDebug.ws('Participants', 'Update received', { action: data.action });
+	loadParticipants();
+}
+
+// Handle specific participant events
+function handleParticipantEvent(data) {
+	if (!selectedTournamentId) return;
+
+	const eventTournamentId = String(data.tournamentId);
+	const currentTournamentId = String(selectedTournamentId);
+
+	if (eventTournamentId !== currentTournamentId) return;
+
+	FrontendDebug.ws('Participants', 'Event received', data);
+	loadParticipants();
+}
+
+// Polling functions
+function startPolling(interval = 30000) {
+	if (participantsRefreshInterval) return;
 	participantsRefreshInterval = setInterval(() => {
 		if (selectedTournamentId) {
 			loadParticipants();
 		}
-	}, 30000);
-});
+	}, interval);
+}
+
+function stopPolling() {
+	if (participantsRefreshInterval) {
+		clearInterval(participantsRefreshInterval);
+		participantsRefreshInterval = null;
+	}
+}
 
 // Cleanup interval on page unload to prevent memory leaks
 window.addEventListener('beforeunload', () => {
-	if (participantsRefreshInterval) clearInterval(participantsRefreshInterval);
+	stopPolling();
 });
 
 // ============================================
@@ -120,11 +202,9 @@ async function loadTournaments() {
 
 			updateTournamentSelect();
 
-			// Auto-select first tournament if available
 			if (tournaments.length > 0) {
-				selectedTournamentId = tournaments[0].tournamentId;
-				document.getElementById('tournamentSelect').value = selectedTournamentId;
-				onTournamentChange();
+				// Auto-select active tournament (or fall back to first)
+				await selectActiveTournament();
 			} else {
 				document.getElementById('tournamentSelect').innerHTML = '<option value="">No tournaments available</option>';
 				document.getElementById('loadingState').classList.add('hidden');
@@ -138,6 +218,51 @@ async function loadTournaments() {
 	} catch (error) {
 		console.error('Failed to load tournaments:', error);
 		showAlert('Failed to load tournaments', 'error');
+	}
+}
+
+// Auto-select the active tournament based on user's active tournament setting
+async function selectActiveTournament() {
+	const select = document.getElementById('tournamentSelect');
+	let selectedId = null;
+
+	try {
+		const response = await fetch('/api/tournament/active');
+		if (response.ok) {
+			const data = await response.json();
+			if (data.success && data.tournament) {
+				// API returns tournamentId (url_slug) and id (numeric)
+				const slugId = data.tournament.tournamentId;
+				const numericId = data.tournament.id;
+
+				// Check if active tournament is in our dropdown (match by slug or numeric id)
+				const option = Array.from(select.options).find(opt =>
+					opt.value === String(slugId) || opt.value === String(numericId)
+				);
+
+				if (option) {
+					selectedId = option.value;
+					FrontendDebug.log('Participants', 'Auto-selected active tournament', {
+						tournament: data.tournament.name,
+						mode: data.mode
+					});
+				}
+			}
+		}
+	} catch (error) {
+		FrontendDebug.warn('Participants', 'Could not fetch active tournament', error);
+	}
+
+	// Fall back to first tournament if no active tournament found
+	if (!selectedId && tournaments.length > 0) {
+		selectedId = tournaments[0].tournamentId;
+		FrontendDebug.log('Participants', 'No active tournament, selecting first', { tournament: tournaments[0].name });
+	}
+
+	if (selectedId) {
+		selectedTournamentId = selectedId;
+		select.value = selectedId;
+		onTournamentChange();
 	}
 }
 
@@ -356,9 +481,6 @@ function renderParticipantsTable() {
 		if (participant.email) {
 			contactItems.push(`<span class="text-gray-400 text-xs">${escapeHtml(participant.email)}</span>`);
 		}
-		if (participant.challongeUsername) {
-			contactItems.push(`<span class="text-blue-400 text-xs">Challonge: ${escapeHtml(participant.challongeUsername)}</span>`);
-		}
 
 		row.innerHTML = `
 			<td class="px-4 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-sm text-gray-300">
@@ -377,7 +499,6 @@ function renderParticipantsTable() {
 			</td>
 			<td class="px-4 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
 				<div class="text-sm font-medium text-white">${escapeHtml(participant.name)}</div>
-				${participant.challongeUsername ? `<div class="text-xs text-gray-500">${escapeHtml(participant.challongeUsername)}</div>` : ''}
 				${instagramDisplay ? `<div class="text-xs text-purple-400 sm:hidden">@${escapeHtml(instagramDisplay)}</div>` : ''}
 			</td>
 			<td class="px-4 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
@@ -489,7 +610,6 @@ function openAddParticipantModal() {
 	document.getElementById('addParticipantModal').classList.add('flex');
 	document.getElementById('newParticipantName').value = '';
 	document.getElementById('newParticipantEmail').value = '';
-	document.getElementById('newParticipantChallongeUsername').value = '';
 	document.getElementById('newParticipantInstagram').value = '';
 	document.getElementById('newParticipantSeed').value = '';
 	document.getElementById('newParticipantName').focus();
@@ -510,13 +630,12 @@ async function addParticipant(event) {
 
 	const participantName = document.getElementById('newParticipantName').value.trim();
 	const email = document.getElementById('newParticipantEmail').value.trim();
-	const challongeUsername = document.getElementById('newParticipantChallongeUsername').value.trim();
 	let instagram = document.getElementById('newParticipantInstagram').value.trim();
 	const seedValue = document.getElementById('newParticipantSeed').value;
 	const seed = seedValue ? parseInt(seedValue) : null;
 
-	if (!participantName && !email && !challongeUsername) {
-		showAlert('At least a name, email, or Challonge username is required', 'error');
+	if (!participantName) {
+		showAlert('Participant name is required', 'error');
 		return;
 	}
 
@@ -532,7 +651,6 @@ async function addParticipant(event) {
 			body: JSON.stringify({
 				participantName,
 				email,
-				challongeUsername,
 				instagram,
 				seed
 			})
@@ -541,7 +659,7 @@ async function addParticipant(event) {
 		const data = await response.json();
 
 		if (data.success) {
-			showToast(`Participant "${participantName || email || challongeUsername}" added successfully!`, 'success');
+			showToast(`Participant "${participantName}" added successfully!`, 'success');
 			closeAddParticipantModal();
 			loadParticipants();
 		} else {
@@ -568,7 +686,6 @@ function openEditParticipantModal(participantId) {
 	document.getElementById('editParticipantName').value = participant.name;
 	document.getElementById('editParticipantSeed').value = participant.seed || '';
 	document.getElementById('editParticipantEmail').value = participant.email || '';
-	document.getElementById('editParticipantChallongeUsername').value = participant.challongeUsername || '';
 	document.getElementById('editParticipantInstagram').value = participant.instagram || '';
 
 	// Extract misc without Instagram line
@@ -599,7 +716,6 @@ async function saveParticipantEdit(event) {
 	const seedValue = document.getElementById('editParticipantSeed').value;
 	const seed = seedValue ? parseInt(seedValue) : null;
 	const email = document.getElementById('editParticipantEmail').value.trim();
-	const challongeUsername = document.getElementById('editParticipantChallongeUsername').value.trim();
 	let instagram = document.getElementById('editParticipantInstagram').value.trim();
 	const misc = document.getElementById('editParticipantMisc').value.trim();
 
@@ -621,7 +737,6 @@ async function saveParticipantEdit(event) {
 				participantName,
 				seed,
 				email,
-				challongeUsername,
 				instagram,
 				misc
 			})
@@ -763,7 +878,7 @@ function showToast(message, type = 'info') {
 // SEED MANAGEMENT
 // ============================================
 
-// Randomize all participant seeds (uses Challonge's native randomize endpoint)
+// Randomize all participant seeds
 async function randomizeSeeds() {
 	if (!selectedTournamentId) {
 		showAlert('Please select a tournament first', 'error');
@@ -791,7 +906,7 @@ async function randomizeSeeds() {
 	try {
 		showToast('Randomizing seeds...', 'info');
 
-		// Use Challonge's native randomize endpoint
+		// Randomize seeds via API
 		const response = await csrfFetch(`/api/participants/${selectedTournamentId}/randomize`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' }
@@ -839,7 +954,7 @@ async function handleDragEnd(evt) {
 	try {
 		showToast('Updating seeds...', 'info');
 
-		// Update all seeds on Challonge
+		// Update all seeds via API
 		await updateMultipleSeeds(updates);
 
 		showToast('Seeds updated successfully!', 'success');

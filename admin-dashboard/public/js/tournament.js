@@ -7,26 +7,289 @@ let currentTab = 'pending';
 let editingTournament = null;
 let editingVersion = null; // Version tracking for optimistic locking
 
+// Active Tournament State (Always-Live Displays)
+let activeTournament = null;
+let activeMode = 'auto'; // 'auto' or 'manual'
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
-	console.log('Tournament Control page loaded');
+	FrontendDebug.log('Tournament', 'Initializing tournament control page...');
 
 	await Promise.all([
 		refreshTournaments(),
-		loadSystemDefaults()
+		loadSystemDefaults(),
+		loadActiveTournament()
 	]);
+
+	// Initialize WebSocket for real-time updates
+	initWebSocket();
+
+	FrontendDebug.log('Tournament', 'Initialization complete');
 });
+
+// WebSocket event handlers for real-time updates
+function initWebSocket() {
+	if (!WebSocketManager.init()) {
+		FrontendDebug.warn('Tournament', 'WebSocket not available, using manual refresh');
+		return;
+	}
+
+	// Subscribe to tournament events
+	WebSocketManager.subscribeMany({
+		[WS_EVENTS.TOURNAMENT_CREATED]: handleTournamentCreated,
+		[WS_EVENTS.TOURNAMENT_UPDATED]: handleTournamentUpdated,
+		[WS_EVENTS.TOURNAMENT_DELETED]: handleTournamentDeleted,
+		[WS_EVENTS.TOURNAMENT_STARTED]: handleTournamentStarted,
+		[WS_EVENTS.TOURNAMENT_RESET]: handleTournamentReset,
+		[WS_EVENTS.TOURNAMENT_COMPLETED]: handleTournamentCompleted,
+		'tournament:activated': handleTournamentActivated
+	});
+
+	// Connection status handling
+	WebSocketManager.onConnection('connect', () => {
+		FrontendDebug.ws('Tournament', 'WebSocket connected');
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		FrontendDebug.ws('Tournament', 'WebSocket disconnected');
+	});
+}
+
+// Handle tournament created event
+function handleTournamentCreated(data) {
+	FrontendDebug.ws('Tournament', 'Tournament created event', data);
+	// Refresh the list to show new tournament
+	refreshTournaments();
+}
+
+// Handle tournament updated event
+function handleTournamentUpdated(data) {
+	FrontendDebug.ws('Tournament', 'Tournament updated event', data);
+	const tournament = data.tournament;
+	if (!tournament || !allTournaments) return;
+
+	// Update the tournament in the local list
+	updateTournamentInList(tournament);
+
+	// If this is the currently selected tournament, update details
+	if (selectedTournament && selectedTournament.tournamentId === tournament.tournamentId) {
+		FrontendDebug.state('Tournament', 'Updating selected tournament', { id: tournament.tournamentId });
+		selectedTournament = tournament;
+		updateLifecycleButtons();
+		updateChecklistVisibility();
+	}
+}
+
+// Handle tournament deleted event
+function handleTournamentDeleted(data) {
+	FrontendDebug.ws('Tournament', 'Tournament deleted event', data);
+	// Refresh to remove the deleted tournament
+	refreshTournaments();
+
+	// If the deleted tournament was selected, clear selection
+	if (selectedTournament && selectedTournament.id === data.tournamentId) {
+		FrontendDebug.state('Tournament', 'Clearing selected tournament (deleted)');
+		selectedTournament = null;
+		document.getElementById('lifecycleSection').classList.add('hidden');
+	}
+}
+
+// Handle tournament started event
+function handleTournamentStarted(data) {
+	FrontendDebug.ws('Tournament', 'Tournament started event', data);
+	const tournament = data.tournament;
+	if (!tournament || !allTournaments) return;
+
+	// Move tournament from pending to inProgress
+	moveTournamentToState(tournament.tournamentId, 'inProgress', tournament);
+
+	// Update selected tournament if it's the one that started
+	if (selectedTournament && selectedTournament.tournamentId === tournament.tournamentId) {
+		FrontendDebug.state('Tournament', 'Selected tournament started', { state: tournament.state });
+		selectedTournament = tournament;
+		updateLifecycleButtons();
+		updateChecklistVisibility();
+	}
+
+	// Update active banner
+	updateActiveBanner();
+}
+
+// Handle tournament reset event
+function handleTournamentReset(data) {
+	FrontendDebug.ws('Tournament', 'Tournament reset event', data);
+	const tournament = data.tournament;
+	if (!tournament || !allTournaments) return;
+
+	// Move tournament back to pending
+	moveTournamentToState(tournament.tournamentId, 'pending', tournament);
+
+	// Update selected tournament if it's the one that was reset
+	if (selectedTournament && selectedTournament.tournamentId === tournament.tournamentId) {
+		FrontendDebug.state('Tournament', 'Selected tournament reset', { state: tournament.state });
+		selectedTournament = tournament;
+		updateLifecycleButtons();
+		updateChecklistVisibility();
+	}
+
+	// Update active banner
+	updateActiveBanner();
+}
+
+// Handle tournament completed event
+function handleTournamentCompleted(data) {
+	FrontendDebug.ws('Tournament', 'Tournament completed event', data);
+	const tournament = data.tournament;
+	if (!tournament || !allTournaments) return;
+
+	// Move tournament to completed
+	moveTournamentToState(tournament.tournamentId, 'completed', tournament);
+
+	// Update selected tournament if it's the one that completed
+	if (selectedTournament && selectedTournament.tournamentId === tournament.tournamentId) {
+		FrontendDebug.state('Tournament', 'Selected tournament completed');
+		selectedTournament = tournament;
+		updateLifecycleButtons();
+	}
+
+	// Update active banner
+	updateActiveBanner();
+}
+
+// Helper: Update a tournament in the local list
+function updateTournamentInList(tournament) {
+	if (!allTournaments) return;
+
+	['pending', 'inProgress', 'completed'].forEach(category => {
+		const list = allTournaments[category] || [];
+		const index = list.findIndex(t => t.tournamentId === tournament.tournamentId);
+		if (index !== -1) {
+			allTournaments[category][index] = tournament;
+		}
+	});
+
+	displayTournaments();
+}
+
+// Helper: Move a tournament to a different state category
+function moveTournamentToState(tournamentId, newState, updatedTournament) {
+	if (!allTournaments) return;
+
+	// Map state to category
+	const stateToCategory = {
+		'pending': 'pending',
+		'checking_in': 'pending',
+		'underway': 'inProgress',
+		'awaiting_review': 'inProgress',
+		'complete': 'completed'
+	};
+	const targetCategory = stateToCategory[updatedTournament.state] || newState;
+
+	// Remove from all categories
+	['pending', 'inProgress', 'completed'].forEach(category => {
+		if (allTournaments[category]) {
+			allTournaments[category] = allTournaments[category].filter(
+				t => t.tournamentId !== tournamentId
+			);
+		}
+	});
+
+	// Add to target category
+	if (!allTournaments[targetCategory]) {
+		allTournaments[targetCategory] = [];
+	}
+	allTournaments[targetCategory].unshift(updatedTournament);
+
+	displayTournaments();
+}
+
+// ============================================
+// Always-Live Displays: Active Tournament Functions
+// ============================================
+
+// Load active tournament from API
+async function loadActiveTournament() {
+	try {
+		const response = await fetch('/api/tournament/active');
+		if (!response.ok) return;
+
+		const data = await response.json();
+		if (data.success) {
+			activeTournament = data.tournament;
+			activeMode = data.mode || 'auto';
+			FrontendDebug.log('Tournament', 'Active tournament loaded', {
+				id: activeTournament?.tournamentId,
+				mode: activeMode
+			});
+			updateActiveBanner();
+			displayTournaments(); // Re-render to show active indicator
+		}
+	} catch (error) {
+		console.error('Failed to load active tournament:', error);
+	}
+}
+
+// Handle tournament activated WebSocket event
+function handleTournamentActivated(data) {
+	FrontendDebug.ws('Tournament', 'Tournament activated event', data);
+	activeTournament = data.tournament;
+	activeMode = data.mode || 'auto';
+	updateActiveBanner();
+	displayTournaments(); // Re-render to show active indicator
+	updateChecklistVisibility(); // Update checklist if visible
+}
+
+// Make a tournament active (manual override)
+async function makeActive(tournamentId) {
+	try {
+		const response = await csrfFetch(`/api/tournament/activate/${tournamentId}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' }
+		});
+
+		const data = await response.json();
+		if (data.success) {
+			showAlert('Tournament activated - displays synced', 'success');
+			// Will be updated via WebSocket, but update immediately for responsiveness
+			await loadActiveTournament();
+		} else {
+			showAlert(`Failed to activate: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// Revert to auto-select mode
+async function revertToAutoSelect() {
+	try {
+		const response = await csrfFetch('/api/tournament/activate/auto', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' }
+		});
+
+		const data = await response.json();
+		if (data.success) {
+			showAlert('Reverted to auto-select mode', 'success');
+			// Will be updated via WebSocket, but update immediately for responsiveness
+			await loadActiveTournament();
+		} else {
+			showAlert(`Failed to revert: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// Check if a tournament is the active one
+function isActiveTournament(tournamentId) {
+	return activeTournament && activeTournament.tournamentId === tournamentId;
+}
+
+// ============================================
 
 // Load tournaments from API
 async function refreshTournaments() {
-	// Show loading state
-	const btn = document.getElementById('refreshTournamentsBtn');
-	const icon = document.getElementById('refreshTournamentsIcon');
-	const text = document.getElementById('refreshTournamentsText');
-	if (btn) btn.disabled = true;
-	if (icon) icon.classList.add('animate-spin');
-	if (text) text.textContent = 'Refreshing...';
-
 	try {
 		const response = await fetch('/api/tournaments?days=90');
 		if (!response.ok) {
@@ -59,11 +322,6 @@ async function refreshTournaments() {
 	} catch (error) {
 		console.error('Failed to load tournaments:', error);
 		showAlert('Failed to load tournaments', 'error');
-	} finally {
-		// Reset loading state
-		if (btn) btn.disabled = false;
-		if (icon) icon.classList.remove('animate-spin');
-		if (text) text.textContent = 'Refresh';
 	}
 }
 
@@ -94,11 +352,19 @@ function displayTournaments() {
 		return;
 	}
 
-	container.innerHTML = tournaments.map(t => `
-		<div class="tournament-item ${selectedTournament?.tournamentId === t.tournamentId ? 'selected' : ''}"
+	container.innerHTML = tournaments.map(t => {
+		const isActive = isActiveTournament(t.tournamentId);
+		const showMakeActive = !isActive && t.state !== 'complete';
+		const modeLabel = isActive ? (activeMode === 'manual' ? '(Manual)' : '(Auto)') : '';
+
+		return `
+		<div class="tournament-item ${selectedTournament?.tournamentId === t.tournamentId ? 'selected' : ''} ${isActive ? 'active-tournament' : ''}"
 			 onclick="selectTournament('${t.tournamentId}')">
 			<div class="flex-1">
-				<div class="tournament-name">${escapeHtml(t.name)}</div>
+				<div class="tournament-name flex items-center gap-2">
+					${escapeHtml(t.name)}
+					${isActive ? `<span class="active-badge">Active ${modeLabel}</span>` : ''}
+				</div>
 				<div class="text-sm text-gray-400">${escapeHtml(t.game)}</div>
 				<div class="flex flex-wrap gap-2 mt-2">
 					<span class="text-xs bg-gray-700 px-2 py-1 rounded">${formatTournamentType(t.tournamentType)}</span>
@@ -106,6 +372,16 @@ function displayTournaments() {
 				</div>
 			</div>
 			<div class="flex items-center gap-4">
+				${showMakeActive ? `
+				<button onclick="event.stopPropagation(); makeActive('${t.tournamentId}')"
+					class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-1.5" title="Make this tournament active on displays">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+					</svg>
+					Make Active
+				</button>
+				` : ''}
 				<button onclick="event.stopPropagation(); openEditModal('${t.tournamentId}')"
 					class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-1.5" title="Edit Tournament">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -117,7 +393,7 @@ function displayTournaments() {
 				<span class="text-gray-400">${t.participants} players</span>
 			</div>
 		</div>
-	`).join('');
+	`}).join('');
 }
 
 // Switch tournament tab
@@ -152,17 +428,10 @@ function selectTournament(tournamentId) {
 	});
 	event.currentTarget.classList.add('selected');
 
-	// Show configuration section
-	const configSection = document.getElementById('configSection');
+	// Show tournament controls section
 	const lifecycleSection = document.getElementById('lifecycleSection');
 
 	if (selectedTournament) {
-		// Update selected tournament info
-		document.getElementById('selectedName').textContent = selectedTournament.name;
-		document.getElementById('selectedGame').textContent = selectedTournament.game;
-		document.getElementById('selectedParticipants').textContent = selectedTournament.participants;
-
-		configSection.classList.remove('hidden');
 		lifecycleSection.classList.remove('hidden');
 
 		// Update lifecycle buttons based on state
@@ -171,14 +440,11 @@ function selectTournament(tournamentId) {
 		// Update checklist visibility (only for pending tournaments)
 		updateChecklistVisibility();
 	} else {
-		configSection.classList.add('hidden');
 		lifecycleSection.classList.add('hidden');
 		// Hide checklist when no tournament selected
 		const checklistSection = document.getElementById('checklistSection');
 		if (checklistSection) checklistSection.classList.add('hidden');
 	}
-
-	updateDeployButton();
 }
 
 // Update lifecycle control buttons based on tournament state
@@ -253,15 +519,21 @@ function updateLifecycleButtons() {
 // Update active tournament banner
 function updateActiveBanner() {
 	const banner = document.getElementById('activeTournamentBanner');
-	const inProgress = allTournaments?.inProgress || [];
+	const nameEl = document.getElementById('activeTournamentName');
+	const stateEl = document.getElementById('activeTournamentState');
+	const modeEl = document.getElementById('activeTournamentMode');
+	const revertBtn = document.getElementById('revertToAutoBtn');
 
-	if (inProgress.length > 0) {
-		const active = inProgress[0];
-		document.getElementById('activeTournamentName').textContent = active.name;
-		document.getElementById('activeTournamentState').textContent = active.state;
-		banner.classList.remove('hidden');
+	if (activeTournament) {
+		if (nameEl) nameEl.textContent = activeTournament.name;
+		if (stateEl) stateEl.textContent = activeTournament.state;
+		if (modeEl) modeEl.textContent = activeMode === 'manual' ? '(Manual)' : '(Auto)';
+		if (revertBtn) {
+			revertBtn.classList.toggle('hidden', activeMode !== 'manual');
+		}
+		if (banner) banner.classList.remove('hidden');
 	} else {
-		banner.classList.add('hidden');
+		if (banner) banner.classList.add('hidden');
 	}
 }
 
@@ -273,9 +545,10 @@ async function loadSystemDefaults() {
 
 		const data = await response.json();
 		if (data.success && data.defaults) {
-			const regWindow = document.getElementById('registrationWindow');
-			if (regWindow && data.defaults.registrationWindow) {
-				regWindow.value = data.defaults.registrationWindow;
+			// Set default registration window in wizard
+			const wizardRegWindow = document.getElementById('wizardRegistrationWindow');
+			if (wizardRegWindow && data.defaults.registrationWindow) {
+				wizardRegWindow.value = data.defaults.registrationWindow;
 			}
 		}
 	} catch (error) {
@@ -283,56 +556,7 @@ async function loadSystemDefaults() {
 	}
 }
 
-// Update deploy button state
-function updateDeployButton() {
-	const btn = document.getElementById('deployBtn');
-	if (btn) {
-		btn.disabled = !selectedTournament;
-	}
-}
-
-// Deploy tournament to all displays
-async function deployTournament() {
-	if (!selectedTournament) return;
-
-	const regWindow = document.getElementById('registrationWindow');
-	const signupCap = document.getElementById('signupCap');
-
-	const payload = {
-		tournamentId: selectedTournament.tournamentId,
-		gameName: selectedTournament.game,
-		registrationWindowHours: parseInt(regWindow.value) || 48,
-		signupCap: signupCap.value ? parseInt(signupCap.value) : null
-	};
-
-	const btn = document.getElementById('deployBtn');
-	btn.disabled = true;
-	btn.textContent = 'Deploying...';
-
-	try {
-		const response = await csrfFetch('/api/tournament/setup', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload)
-		});
-
-		const data = await response.json();
-
-		if (data.success) {
-			showAlert(`Tournament "${selectedTournament.name}" deployed successfully!`, 'success');
-		} else {
-			showAlert(`Deployment failed: ${data.error}`, 'error');
-		}
-	} catch (error) {
-		showAlert(`Deployment error: ${error.message}`, 'error');
-	} finally {
-		btn.disabled = false;
-		btn.textContent = 'Deploy Tournament';
-		updateDeployButton();
-	}
-}
-
-// Start tournament on Challonge
+// Start tournament
 async function startTournament() {
 	if (!selectedTournament) return;
 	if (!confirm(`Start tournament "${selectedTournament.name}"? This will lock participants and begin bracket play.`)) return;
@@ -371,7 +595,7 @@ async function startTournament() {
 	}
 }
 
-// Reset tournament on Challonge
+// Reset tournament
 async function resetTournament() {
 	if (!selectedTournament) return;
 	if (!confirm(`Reset tournament "${selectedTournament.name}"? This will clear all match results.`)) return;
@@ -410,7 +634,7 @@ async function resetTournament() {
 	}
 }
 
-// Finalize tournament on Challonge
+// Finalize tournament
 async function finalizeTournament() {
 	if (!selectedTournament) return;
 	if (!confirm(`Finalize tournament "${selectedTournament.name}"? This will mark it as complete.`)) return;
@@ -468,9 +692,8 @@ async function deleteTournament() {
 
 		if (data.success) {
 			showAlert('Tournament deleted successfully', 'success');
-			// Clear selection and hide config sections
+			// Clear selection and hide controls section
 			selectedTournament = null;
-			document.getElementById('configSection').classList.add('hidden');
 			document.getElementById('lifecycleSection').classList.add('hidden');
 			await refreshTournaments();
 		} else {
@@ -596,6 +819,8 @@ function resetWizardForm() {
 	document.getElementById('wizardHideSeeds').checked = false;
 	document.getElementById('wizardSequentialPairings').checked = false;
 	document.getElementById('wizardShowRounds').checked = false;
+	document.getElementById('wizardByeStrategy').value = 'traditional';
+	document.getElementById('wizardCompactBracket').checked = false;
 
 	// Station options
 	document.getElementById('wizardAutoAssign').checked = false;
@@ -611,16 +836,16 @@ function resetWizardForm() {
 	// Step 3: Schedule & Settings
 	document.getElementById('wizardStartAt').value = '';
 	document.getElementById('wizardCheckIn').value = '';
+	document.getElementById('wizardRegistrationWindow').value = '48';
 	document.getElementById('wizardSignupCap').value = '';
 
 	// Registration & Privacy
 	document.getElementById('wizardOpenSignup').checked = false;
 	document.getElementById('wizardPrivate').checked = false;
-	document.getElementById('wizardHideForum').checked = false;
+	document.getElementById('wizardEntryFee').value = '';
 
 	// Match Settings
 	document.getElementById('wizardAcceptAttachments').checked = false;
-	// Note: quickAdvance removed - not supported by Challonge v2.1 API
 
 	// Notifications
 	document.getElementById('wizardNotifyMatchOpen').checked = false;
@@ -649,6 +874,21 @@ function setupWizardEventListeners() {
 	const startAtInput = document.getElementById('wizardStartAt');
 	if (startAtInput) {
 		startAtInput.addEventListener('change', updateWizardSummary);
+	}
+
+	// Compact bracket toggle - show/hide BYE strategy
+	const compactBracketCheckbox = document.getElementById('wizardCompactBracket');
+	if (compactBracketCheckbox) {
+		compactBracketCheckbox.addEventListener('change', () => {
+			const byeStrategyOption = document.getElementById('byeStrategyOption');
+			if (byeStrategyOption) {
+				byeStrategyOption.classList.toggle('hidden', compactBracketCheckbox.checked);
+				// Reset BYE strategy when enabling compact bracket
+				if (compactBracketCheckbox.checked) {
+					document.getElementById('wizardByeStrategy').value = 'traditional';
+				}
+			}
+		});
 	}
 }
 
@@ -685,6 +925,30 @@ function updateFormatSelection() {
 	// Show round labels option only for elimination formats
 	const isElimination = selected === 'single elimination' || selected === 'double elimination';
 	showRoundsOption.classList.toggle('hidden', !isElimination);
+
+	// Show compact bracket option only for single elimination
+	const compactBracketOption = document.getElementById('compactBracketOption');
+	const isSingleElim = selected === 'single elimination';
+	if (compactBracketOption) {
+		compactBracketOption.classList.toggle('hidden', !isSingleElim);
+		// Reset when switching away from single elimination
+		if (!isSingleElim) {
+			document.getElementById('wizardCompactBracket').checked = false;
+		}
+	}
+
+	// Show BYE strategy option only for elimination formats (and when compact bracket is disabled)
+	const byeStrategyOption = document.getElementById('byeStrategyOption');
+	const compactBracketCheckbox = document.getElementById('wizardCompactBracket');
+	const isCompactEnabled = compactBracketCheckbox && compactBracketCheckbox.checked;
+	if (byeStrategyOption) {
+		// Hide BYE strategy if not elimination OR if compact bracket is enabled
+		byeStrategyOption.classList.toggle('hidden', !isElimination || isCompactEnabled);
+		// Reset to default when switching away from elimination formats or enabling compact
+		if (!isElimination || isCompactEnabled) {
+			document.getElementById('wizardByeStrategy').value = 'traditional';
+		}
+	}
 
 	// Show group stage option only for elimination formats
 	if (groupStageSection) {
@@ -817,6 +1081,8 @@ async function createTournament() {
 	const hideSeeds = document.getElementById('wizardHideSeeds').checked;
 	const sequentialPairings = document.getElementById('wizardSequentialPairings').checked;
 	const showRounds = document.getElementById('wizardShowRounds').checked;
+	const byeStrategy = document.getElementById('wizardByeStrategy').value || 'traditional';
+	const compactBracket = document.getElementById('wizardCompactBracket').checked;
 
 	// Station options
 	const autoAssign = document.getElementById('wizardAutoAssign').checked;
@@ -859,16 +1125,16 @@ async function createTournament() {
 		console.log('[Tournament Create] Converting Central Time:', startAtValue, `(${isDST ? 'CDT' : 'CST'})`, '-> UTC:', startAt);
 	}
 	const checkInDuration = document.getElementById('wizardCheckIn').value;
+	const registrationWindowHours = document.getElementById('wizardRegistrationWindow').value;
 	const signupCap = document.getElementById('wizardSignupCap').value;
 
 	// Registration & Privacy
 	const openSignup = document.getElementById('wizardOpenSignup').checked;
 	const privateTournament = document.getElementById('wizardPrivate').checked;
-	const hideForum = document.getElementById('wizardHideForum').checked;
+	const entryFee = document.getElementById('wizardEntryFee').value;
 
 	// Match Settings
 	const acceptAttachments = document.getElementById('wizardAcceptAttachments').checked;
-	// Note: quick_advance is NOT supported by Challonge v2.1 API
 
 	// Notifications
 	const notifyMatchOpen = document.getElementById('wizardNotifyMatchOpen').checked;
@@ -893,6 +1159,7 @@ async function createTournament() {
 			// Schedule
 			startAt: startAt || null,
 			checkInDuration: checkInDuration || null,
+			registrationWindowHours: registrationWindowHours ? parseInt(registrationWindowHours) : 48,
 			signupCap: signupCap || null,
 
 			// Format-specific options
@@ -919,6 +1186,8 @@ async function createTournament() {
 			hideSeeds,
 			sequentialPairings,
 			showRounds,
+			byeStrategy: byeStrategy !== 'traditional' ? byeStrategy : undefined,
+			compactBracket: compactBracket || undefined,
 
 			// Station options
 			autoAssign,
@@ -935,11 +1204,10 @@ async function createTournament() {
 			// Registration & Privacy
 			openSignup,
 			privateTournament,
-			hideForum,
+			entryFee: entryFee ? parseFloat(entryFee) : null,
 
 			// Match Settings
 			acceptAttachments,
-			// Note: quickAdvance not supported by Challonge v2.1 API
 
 			// Notifications
 			notifyMatchOpen,
@@ -1081,64 +1349,57 @@ function populateEditForm(tournament) {
 	}
 
 	document.getElementById('editCheckIn').value = tournament.checkInDuration || '';
+	document.getElementById('editRegistrationWindow').value = tournament.registrationWindowHours || 48;
 
 	// Registration
 	document.getElementById('editSignupCap').value = tournament.signupCap || '';
+	document.getElementById('editEntryFee').value = tournament.entryFee || '';
 	document.getElementById('editOpenSignup').checked = tournament.openSignup || false;
 
-	// Format display
-	document.getElementById('editFormatDisplay').textContent = formatTournamentType(tournament.tournamentType);
+	// Format dropdown - editable only for pending tournaments
+	const formatSelect = document.getElementById('editTournamentType');
+	const formatHelp = document.getElementById('editFormatHelp');
+	const isPending = tournament.state === 'pending' || tournament.state === 'checking_in';
+
+	// Normalize tournament type to snake_case for the select value
+	const normalizedType = (tournament.tournamentType || 'double_elimination')
+		.toLowerCase()
+		.replace(/\s+/g, '_');
+	formatSelect.value = normalizedType;
+	formatSelect.disabled = !isPending;
+	formatHelp.classList.toggle('hidden', isPending);
+
 	document.getElementById('editTournamentState').textContent = `State: ${tournament.state}`;
 
-	// Hide all format-specific option sections first
-	document.getElementById('editSingleElimOptions').classList.add('hidden');
-	document.getElementById('editDoubleElimOptions').classList.add('hidden');
-	document.getElementById('editRoundRobinOptions').classList.add('hidden');
-	document.getElementById('editSwissOptions').classList.add('hidden');
-	document.getElementById('editElimOptions').classList.add('hidden');
+	// Populate format-specific options from tournament data
+	document.getElementById('editThirdPlace').checked = tournament.holdThirdPlaceMatch || false;
+	document.getElementById('editSequentialPairings').checked = tournament.sequentialPairings || false;
+	document.getElementById('editShowRounds').checked = tournament.showRounds || false;
+	document.getElementById('editGrandFinals').value = tournament.grandFinalsModifier || '';
+	document.getElementById('editRankedBy').value = tournament.rankedBy || 'match wins';
+	document.getElementById('editSwissRounds').value = tournament.swissRounds || '';
+	document.getElementById('editSwissMatchWin').value = tournament.ptsForMatchWin ?? 1.0;
+	document.getElementById('editSwissMatchTie').value = tournament.ptsForMatchTie ?? 0.5;
+	document.getElementById('editSwissBye').value = tournament.ptsForBye ?? 1.0;
+	document.getElementById('editSwissGameWin').value = tournament.ptsForGameWin ?? 0;
+	document.getElementById('editSwissGameTie').value = tournament.ptsForGameTie ?? 0;
 
-	// Show/populate format-specific options based on tournament type
-	const tournamentType = tournament.tournamentType;
-
-	if (tournamentType === 'single elimination') {
-		document.getElementById('editSingleElimOptions').classList.remove('hidden');
-		document.getElementById('editElimOptions').classList.remove('hidden');
-		document.getElementById('editThirdPlace').checked = tournament.holdThirdPlaceMatch || false;
-		document.getElementById('editSequentialPairings').checked = tournament.sequentialPairings || false;
-		document.getElementById('editShowRounds').checked = tournament.showRounds || false;
-	} else if (tournamentType === 'double elimination') {
-		document.getElementById('editDoubleElimOptions').classList.remove('hidden');
-		document.getElementById('editElimOptions').classList.remove('hidden');
-		document.getElementById('editGrandFinals').value = tournament.grandFinalsModifier || '';
-		document.getElementById('editSequentialPairings').checked = tournament.sequentialPairings || false;
-		document.getElementById('editShowRounds').checked = tournament.showRounds || false;
-	} else if (tournamentType === 'round robin') {
-		document.getElementById('editRoundRobinOptions').classList.remove('hidden');
-		document.getElementById('editRankedBy').value = tournament.rankedBy || 'match wins';
-
-		// Show/hide custom points based on ranking method
-		const isCustom = tournament.rankedBy === 'custom';
-		document.getElementById('editRrCustomPoints').classList.toggle('hidden', !isCustom);
-
-		if (isCustom) {
-			document.getElementById('editRrMatchWin').value = tournament.rrPtsForMatchWin ?? 1.0;
-			document.getElementById('editRrMatchTie').value = tournament.rrPtsForMatchTie ?? 0.5;
-			document.getElementById('editRrGameWin').value = tournament.rrPtsForGameWin ?? 0;
-			document.getElementById('editRrGameTie').value = tournament.rrPtsForGameTie ?? 0;
-		}
-	} else if (tournamentType === 'swiss') {
-		document.getElementById('editSwissOptions').classList.remove('hidden');
-		document.getElementById('editSwissRounds').value = tournament.swissRounds || '';
-		document.getElementById('editSwissMatchWin').value = tournament.ptsForMatchWin ?? 1.0;
-		document.getElementById('editSwissMatchTie').value = tournament.ptsForMatchTie ?? 0.5;
-		document.getElementById('editSwissBye').value = tournament.ptsForBye ?? 1.0;
-		document.getElementById('editSwissGameWin').value = tournament.ptsForGameWin ?? 0;
-		document.getElementById('editSwissGameTie').value = tournament.ptsForGameTie ?? 0;
+	// Show/hide custom RR points based on ranking method
+	const isCustom = tournament.rankedBy === 'custom';
+	document.getElementById('editRrCustomPoints').classList.toggle('hidden', !isCustom);
+	if (isCustom) {
+		document.getElementById('editRrMatchWin').value = tournament.rrPtsForMatchWin ?? 1.0;
+		document.getElementById('editRrMatchTie').value = tournament.rrPtsForMatchTie ?? 0.5;
+		document.getElementById('editRrGameWin').value = tournament.rrPtsForGameWin ?? 0;
+		document.getElementById('editRrGameTie').value = tournament.rrPtsForGameTie ?? 0;
 	}
+
+	// Show format-specific options based on dropdown value
+	updateEditFormatOptions();
 
 	// Group Stage (only for elimination tournaments)
 	const groupStageSection = document.getElementById('editGroupStageSection');
-	if (tournamentType === 'single elimination' || tournamentType === 'double elimination') {
+	if (normalizedType === 'single_elimination' || normalizedType === 'double_elimination') {
 		groupStageSection.classList.remove('hidden');
 		document.getElementById('editGroupStageEnabled').checked = tournament.groupStageEnabled || false;
 
@@ -1156,24 +1417,23 @@ function populateEditForm(tournament) {
 		groupStageSection.classList.add('hidden');
 	}
 
+	// Round Labels (only for elimination tournaments)
+	// Load round labels asynchronously after modal is shown
+	const roundLabelsSection = document.getElementById('editRoundLabelsSection');
+	if (normalizedType === 'single_elimination' || normalizedType === 'double_elimination') {
+		roundLabelsSection.classList.remove('hidden');
+		// Load round labels (async, don't block form display)
+		loadRoundLabels(tournament.tournamentId);
+	} else {
+		roundLabelsSection.classList.add('hidden');
+	}
+
 	// Display & Privacy
 	document.getElementById('editHideSeeds').checked = tournament.hideSeeds || false;
 	document.getElementById('editPrivate').checked = tournament.privateTournament || false;
-	document.getElementById('editHideForum').checked = tournament.hideForum || false;
 
 	// Match Settings
 	document.getElementById('editAcceptAttachments').checked = tournament.acceptAttachments || false;
-	// Note: Quick Advance is not supported by Challonge v2.1 API
-
-	// Challonge link
-	const challongeLink = document.getElementById('editChallongeLink');
-	if (tournament.url) {
-		challongeLink.href = tournament.url;
-		challongeLink.textContent = tournament.url;
-	} else {
-		challongeLink.href = '#';
-		challongeLink.textContent = '--';
-	}
 
 	// Setup event listener for ranking method dropdown
 	setupEditModalEventListeners();
@@ -1186,6 +1446,55 @@ function setupEditModalEventListeners() {
 		// Remove existing listener to avoid duplicates
 		rankedBySelect.removeEventListener('change', handleRankedByChange);
 		rankedBySelect.addEventListener('change', handleRankedByChange);
+	}
+
+	// Format dropdown change listener
+	const formatSelect = document.getElementById('editTournamentType');
+	if (formatSelect) {
+		formatSelect.removeEventListener('change', updateEditFormatOptions);
+		formatSelect.addEventListener('change', updateEditFormatOptions);
+	}
+}
+
+// Update format-specific options visibility in edit modal based on dropdown selection
+function updateEditFormatOptions() {
+	const formatSelect = document.getElementById('editTournamentType');
+	const selectedType = formatSelect.value;
+
+	// Hide all format-specific option sections first
+	document.getElementById('editSingleElimOptions').classList.add('hidden');
+	document.getElementById('editDoubleElimOptions').classList.add('hidden');
+	document.getElementById('editRoundRobinOptions').classList.add('hidden');
+	document.getElementById('editSwissOptions').classList.add('hidden');
+	document.getElementById('editElimOptions').classList.add('hidden');
+
+	// Show appropriate sections based on selected format
+	if (selectedType === 'single_elimination') {
+		document.getElementById('editSingleElimOptions').classList.remove('hidden');
+		document.getElementById('editElimOptions').classList.remove('hidden');
+	} else if (selectedType === 'double_elimination') {
+		document.getElementById('editDoubleElimOptions').classList.remove('hidden');
+		document.getElementById('editElimOptions').classList.remove('hidden');
+	} else if (selectedType === 'round_robin') {
+		document.getElementById('editRoundRobinOptions').classList.remove('hidden');
+	} else if (selectedType === 'swiss') {
+		document.getElementById('editSwissOptions').classList.remove('hidden');
+	}
+
+	// Update group stage section visibility (only for elimination types)
+	const groupStageSection = document.getElementById('editGroupStageSection');
+	if (selectedType === 'single_elimination' || selectedType === 'double_elimination') {
+		groupStageSection.classList.remove('hidden');
+	} else {
+		groupStageSection.classList.add('hidden');
+	}
+
+	// Update round labels section visibility (only for elimination types)
+	const roundLabelsSection = document.getElementById('editRoundLabelsSection');
+	if (selectedType === 'single_elimination' || selectedType === 'double_elimination') {
+		roundLabelsSection.classList.remove('hidden');
+	} else {
+		roundLabelsSection.classList.add('hidden');
 	}
 }
 
@@ -1210,11 +1519,171 @@ function toggleWizardGroupStageOptions() {
 	optionsDiv.classList.toggle('hidden', !enabled);
 }
 
+// ==========================================
+// Round Labels Functions
+// ==========================================
+
+// Track loaded round labels data
+let loadedRoundLabels = null;
+
+// Load round labels for the edit modal
+async function loadRoundLabels(tournamentId) {
+	const section = document.getElementById('editRoundLabelsSection');
+	const loading = document.getElementById('roundLabelsLoading');
+	const notAvailable = document.getElementById('roundLabelsNotAvailable');
+	const winnersContainer = document.getElementById('winnersLabelsContainer');
+	const losersContainer = document.getElementById('losersLabelsContainer');
+
+	// Reset state
+	loadedRoundLabels = null;
+	loading.classList.remove('hidden');
+	notAvailable.classList.add('hidden');
+	winnersContainer.classList.add('hidden');
+	losersContainer.classList.add('hidden');
+
+	try {
+		const response = await fetch(`/api/tournament/${tournamentId}/round-labels`);
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}`);
+		}
+
+		const data = await response.json();
+		if (!data.success) {
+			throw new Error(data.error || 'Failed to load round labels');
+		}
+
+		loading.classList.add('hidden');
+		loadedRoundLabels = data;
+
+		// Check if tournament has started (has max rounds data)
+		if (!data.maxRounds || (data.maxRounds.winners === 0 && data.maxRounds.losers === 0)) {
+			notAvailable.classList.remove('hidden');
+			return;
+		}
+
+		// Render the inputs
+		renderRoundLabelInputs(data);
+
+	} catch (error) {
+		console.error('Failed to load round labels:', error);
+		loading.classList.add('hidden');
+		notAvailable.classList.remove('hidden');
+		notAvailable.querySelector('p').textContent = 'Failed to load round labels.';
+	}
+}
+
+// Render round label input fields
+function renderRoundLabelInputs(data) {
+	const winnersContainer = document.getElementById('winnersLabelsContainer');
+	const losersContainer = document.getElementById('losersLabelsContainer');
+	const winnersInputs = document.getElementById('winnersLabelInputs');
+	const losersInputs = document.getElementById('losersLabelInputs');
+
+	// Clear existing inputs
+	winnersInputs.innerHTML = '';
+	losersInputs.innerHTML = '';
+
+	// Render winners bracket labels
+	if (data.labels && data.labels.winners) {
+		winnersContainer.classList.remove('hidden');
+		const winnersLabels = data.labels.winners;
+
+		for (const [round, labelData] of Object.entries(winnersLabels)) {
+			const div = document.createElement('div');
+			div.innerHTML = `
+				<label class="block text-xs text-gray-400 mb-1">${labelData.default}</label>
+				<input type="text"
+					id="roundLabel_winners_${round}"
+					data-bracket="winners"
+					data-round="${round}"
+					value="${labelData.custom || ''}"
+					placeholder="${labelData.default}"
+					class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:ring-2 focus:ring-blue-500">
+			`;
+			winnersInputs.appendChild(div);
+		}
+	}
+
+	// Render losers bracket labels (double elimination only)
+	if (data.labels && data.labels.losers && Object.keys(data.labels.losers).length > 0) {
+		losersContainer.classList.remove('hidden');
+		const losersLabels = data.labels.losers;
+
+		for (const [round, labelData] of Object.entries(losersLabels)) {
+			const div = document.createElement('div');
+			div.innerHTML = `
+				<label class="block text-xs text-gray-400 mb-1">${labelData.default}</label>
+				<input type="text"
+					id="roundLabel_losers_${round}"
+					data-bracket="losers"
+					data-round="${round}"
+					value="${labelData.custom || ''}"
+					placeholder="${labelData.default}"
+					class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:ring-2 focus:ring-blue-500">
+			`;
+			losersInputs.appendChild(div);
+		}
+	}
+}
+
+// Collect round label values from inputs
+function collectRoundLabelInputs() {
+	const labels = { winners: {}, losers: {} };
+
+	// Collect all round label inputs
+	document.querySelectorAll('input[id^="roundLabel_"]').forEach(input => {
+		const bracket = input.dataset.bracket;
+		const round = input.dataset.round;
+		const value = input.value.trim();
+
+		if (value) {
+			labels[bracket][round] = value;
+		}
+	});
+
+	// Return null if no custom labels are set
+	const hasWinners = Object.keys(labels.winners).length > 0;
+	const hasLosers = Object.keys(labels.losers).length > 0;
+
+	return (hasWinners || hasLosers) ? labels : null;
+}
+
+// Save round labels
+async function saveRoundLabels(tournamentId) {
+	const labels = collectRoundLabelInputs();
+
+	try {
+		const response = await csrfFetch(`/api/tournament/${tournamentId}/round-labels`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ labels })
+		});
+
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}`);
+		}
+
+		const data = await response.json();
+		if (!data.success) {
+			throw new Error(data.error || 'Failed to save round labels');
+		}
+
+		console.log('[Tournament Edit] Round labels saved:', labels);
+		return true;
+
+	} catch (error) {
+		console.error('Failed to save round labels:', error);
+		showAlert(`Failed to save round labels: ${error.message}`, 'error');
+		return false;
+	}
+}
+
 // Close the edit modal
 function closeEditModal() {
 	document.getElementById('editTournamentModal').classList.add('hidden');
 	editingTournament = null;
 	editingVersion = null;
+	loadedRoundLabels = null;
 }
 
 // Save tournament edits
@@ -1268,9 +1737,15 @@ async function saveTournamentEdit() {
 	}
 
 	// Build payload with all fields
-	// IMPORTANT: Always send values (use original if field is empty) to prevent Challonge from resetting them
+	// IMPORTANT: Always send values (use original if field is empty) to preserve settings
 	const checkInValue = document.getElementById('editCheckIn').value;
+	const registrationWindowValue = document.getElementById('editRegistrationWindow').value;
 	const signupCapValue = document.getElementById('editSignupCap').value;
+
+	// Get the selected tournament type from dropdown
+	const formatSelect = document.getElementById('editTournamentType');
+	const selectedTournamentType = formatSelect.value;
+	const isPending = editingTournament.state === 'pending' || editingTournament.state === 'checking_in';
 
 	const payload = {
 		// Basic info
@@ -1280,17 +1755,20 @@ async function saveTournamentEdit() {
 
 		// Schedule - preserve original if field is empty
 		startAt: startAtISO || editingTournament.startAt || null,
-		// Preserve original values if field is empty (prevents Challonge from resetting)
 		checkInDuration: checkInValue !== '' ? parseInt(checkInValue) : (editingTournament.checkInDuration || null),
+		registrationWindowHours: registrationWindowValue !== '' ? parseInt(registrationWindowValue) : (editingTournament.registrationWindowHours || 48),
 
 		// Registration
 		signupCap: signupCapValue !== '' ? parseInt(signupCapValue) : (editingTournament.signupCap || null),
+		entryFee: (() => {
+			const entryFeeValue = document.getElementById('editEntryFee').value;
+			return entryFeeValue !== '' ? parseFloat(entryFeeValue) : (editingTournament.entryFee || null);
+		})(),
 		openSignup: document.getElementById('editOpenSignup').checked,
 
 		// Display & Privacy
 		hideSeeds: document.getElementById('editHideSeeds').checked,
 		privateTournament: document.getElementById('editPrivate').checked,
-		hideForum: document.getElementById('editHideForum').checked,
 
 		// Match Settings
 		acceptAttachments: document.getElementById('editAcceptAttachments').checked,
@@ -1298,14 +1776,17 @@ async function saveTournamentEdit() {
 		// Notifications - preserve original values
 		notifyMatchOpen: editingTournament.notifyMatchOpen || false,
 		notifyTournamentEnd: editingTournament.notifyTournamentEnd || false
-		// Note: quickAdvance is not supported by Challonge v2.1 API
 	};
 
-	// Add format-specific options based on tournament type
-	// IMPORTANT: Always include these fields with appropriate values to prevent Challonge from resetting them
-	const tournamentType = editingTournament.tournamentType;
+	// Include tournament type only if pending (editable)
+	if (isPending) {
+		payload.tournamentType = selectedTournamentType;
+	}
 
-	if (tournamentType === 'single elimination') {
+	// Add format-specific options based on selected tournament type (not original)
+	const tournamentType = selectedTournamentType;
+
+	if (tournamentType === 'single_elimination') {
 		// Use form value, fallback to original value if form element doesn't exist
 		const thirdPlaceEl = document.getElementById('editThirdPlace');
 		const seqPairingsEl = document.getElementById('editSequentialPairings');
@@ -1314,7 +1795,7 @@ async function saveTournamentEdit() {
 		payload.holdThirdPlaceMatch = thirdPlaceEl ? thirdPlaceEl.checked : (editingTournament.holdThirdPlaceMatch || false);
 		payload.sequentialPairings = seqPairingsEl ? seqPairingsEl.checked : (editingTournament.sequentialPairings || false);
 		payload.showRounds = showRoundsEl ? showRoundsEl.checked : (editingTournament.showRounds || false);
-	} else if (tournamentType === 'double elimination') {
+	} else if (tournamentType === 'double_elimination') {
 		const grandFinalsEl = document.getElementById('editGrandFinals');
 		const seqPairingsEl = document.getElementById('editSequentialPairings');
 		const showRoundsEl = document.getElementById('editShowRounds');
@@ -1322,7 +1803,7 @@ async function saveTournamentEdit() {
 		payload.grandFinalsModifier = grandFinalsEl?.value || editingTournament.grandFinalsModifier || null;
 		payload.sequentialPairings = seqPairingsEl ? seqPairingsEl.checked : (editingTournament.sequentialPairings || false);
 		payload.showRounds = showRoundsEl ? showRoundsEl.checked : (editingTournament.showRounds || false);
-	} else if (tournamentType === 'round robin') {
+	} else if (tournamentType === 'round_robin') {
 		const rankedByEl = document.getElementById('editRankedBy');
 		payload.rankedBy = rankedByEl?.value || editingTournament.rankedBy || 'match wins';
 
@@ -1364,7 +1845,7 @@ async function saveTournamentEdit() {
 
 	// Group Stage options (for elimination tournaments only)
 	// IMPORTANT: Preserve original values if not changed
-	if (tournamentType === 'single elimination' || tournamentType === 'double elimination') {
+	if (tournamentType === 'single_elimination' || tournamentType === 'double_elimination') {
 		const groupStageEnabledEl = document.getElementById('editGroupStageEnabled');
 		payload.groupStageEnabled = groupStageEnabledEl ? groupStageEnabledEl.checked : (editingTournament.groupStageEnabled || false);
 
@@ -1408,18 +1889,29 @@ async function saveTournamentEdit() {
 		}
 
 		if (data.success) {
-			showAlert('Tournament updated successfully!', 'success');
-
 			// Save tournament ID before closing modal (closeEditModal sets editingTournament to null)
 			const editedTournamentId = editingTournament.tournamentId;
+			const tournamentType = selectedTournamentType;
+
+			// Save round labels if the tournament is an elimination format and section is visible
+			if ((tournamentType === 'single_elimination' || tournamentType === 'double_elimination') &&
+				!document.getElementById('editRoundLabelsSection').classList.contains('hidden') &&
+				loadedRoundLabels && loadedRoundLabels.maxRounds) {
+				// Don't block on round labels save - do it in parallel
+				saveRoundLabels(editedTournamentId).then(success => {
+					if (!success) {
+						console.warn('[Tournament Edit] Round labels save failed, but tournament was saved');
+					}
+				});
+			}
+
+			showAlert('Tournament updated successfully!', 'success');
 			closeEditModal();
 			await refreshTournaments();
 
 			// Re-select if this was the selected tournament
 			if (selectedTournament?.tournamentId === editedTournamentId) {
 				selectedTournament = data.tournament;
-				document.getElementById('selectedName').textContent = data.tournament.name;
-				document.getElementById('selectedGame').textContent = data.tournament.game;
 			}
 		} else {
 			showAlert(`Failed to update: ${data.error}`, 'error');
@@ -1710,6 +2202,8 @@ async function applyTemplate(templateId) {
 		if (settings.hideSeeds !== undefined) document.getElementById('wizardHideSeeds').checked = settings.hideSeeds;
 		if (settings.sequentialPairings !== undefined) document.getElementById('wizardSequentialPairings').checked = settings.sequentialPairings;
 		if (settings.showRounds !== undefined) document.getElementById('wizardShowRounds').checked = settings.showRounds;
+		if (settings.byeStrategy) document.getElementById('wizardByeStrategy').value = settings.byeStrategy;
+		if (settings.compactBracket !== undefined) document.getElementById('wizardCompactBracket').checked = settings.compactBracket;
 
 		// Apply Station options
 		if (settings.autoAssign !== undefined) document.getElementById('wizardAutoAssign').checked = settings.autoAssign;
@@ -1733,7 +2227,7 @@ async function applyTemplate(templateId) {
 
 		// Apply Privacy options
 		if (settings.privateTournament !== undefined) document.getElementById('wizardPrivate').checked = settings.privateTournament;
-		if (settings.hideForum !== undefined) document.getElementById('wizardHideForum').checked = settings.hideForum;
+		if (settings.entryFee !== undefined) document.getElementById('wizardEntryFee').value = settings.entryFee || '';
 
 		// Apply Match options
 		if (settings.acceptAttachments !== undefined) document.getElementById('wizardAcceptAttachments').checked = settings.acceptAttachments;
@@ -1827,7 +2321,7 @@ async function saveAsTemplate() {
 let checklistState = {
 	displays: null,
 	piDisplays: null,
-	deployed: null,
+	active: null,  // Changed from 'deployed' to 'active' for Always-Live Displays
 	participants: null,
 	flyer: null,
 	stations: null,
@@ -1848,11 +2342,10 @@ async function refreshChecklist() {
 	await Promise.all([
 		checkDisplayModules(),
 		checkPiDisplays(),
-		checkTournamentDeployed(),
+		checkActiveTournament(),  // Changed from checkTournamentDeployed
 		checkParticipants(),
 		checkFlyer(),
-		checkStations(),
-		checkChallongeApi()
+		checkStations()
 	]);
 
 	// Update progress and banners
@@ -1868,9 +2361,9 @@ async function checkDisplayModules() {
 		const data = await response.json();
 		if (!data.success) throw new Error('Status check failed');
 
-		const match = data.modules?.match?.online;
-		const bracket = data.modules?.bracket?.online;
-		const flyer = data.modules?.flyer?.online;
+		const match = data.modules?.match?.status?.running;
+		const bracket = data.modules?.bracket?.status?.running;
+		const flyer = data.modules?.flyer?.status?.running;
 
 		const onlineCount = [match, bracket, flyer].filter(Boolean).length;
 
@@ -1925,30 +2418,24 @@ async function checkPiDisplays() {
 	}
 }
 
-// Check tournament is deployed to displays
-async function checkTournamentDeployed() {
-	try {
-		const response = await fetch('/api/status');
-		if (!response.ok) throw new Error('Failed to fetch status');
+// Check if selected tournament is the active tournament (Always-Live Displays)
+async function checkActiveTournament() {
+	// Use the cached activeTournament state
+	const isActive = selectedTournament && activeTournament &&
+		selectedTournament.tournamentId === activeTournament.tournamentId;
 
-		const data = await response.json();
-		if (!data.success) throw new Error('Status check failed');
-
-		// Check if match module has the selected tournament
-		const matchState = data.modules?.match?.state;
-		const isDeployed = matchState?.tournamentId === selectedTournament.tournamentId;
-
-		if (isDeployed) {
-			checklistState.deployed = 'success';
-			updateChecklistItem('deployed', 'success', 'Deployed');
-		} else {
-			checklistState.deployed = 'warning';
-			updateChecklistItem('deployed', 'warning', 'Not deployed');
-		}
-	} catch (error) {
-		console.error('Deployed check error:', error);
-		checklistState.deployed = 'warning';
-		updateChecklistItem('deployed', 'warning', 'Check failed');
+	if (isActive) {
+		const modeLabel = activeMode === 'manual' ? 'Manual' : 'Auto';
+		checklistState.active = 'success';
+		updateChecklistItem('active', 'success', `Active (${modeLabel})`);
+	} else if (activeTournament) {
+		// Another tournament is active
+		checklistState.active = 'warning';
+		updateChecklistItem('active', 'warning', 'Not active');
+	} else {
+		// No active tournament
+		checklistState.active = 'warning';
+		updateChecklistItem('active', 'warning', 'No active');
 	}
 }
 
@@ -2030,28 +2517,6 @@ async function checkStations() {
 	}
 }
 
-// Check Challonge API connection
-async function checkChallongeApi() {
-	try {
-		const response = await fetch('/api/test-connection');
-		if (!response.ok) throw new Error('API connection failed');
-
-		const data = await response.json();
-
-		if (data.success) {
-			checklistState.api = 'success';
-			updateChecklistItem('api', 'success', 'Connected');
-		} else {
-			checklistState.api = 'error';
-			updateChecklistItem('api', 'error', 'Connection failed');
-		}
-	} catch (error) {
-		console.error('API check error:', error);
-		checklistState.api = 'error';
-		updateChecklistItem('api', 'error', 'Check failed');
-	}
-}
-
 // Update a single checklist item UI
 function updateChecklistItem(checkId, status, badgeText) {
 	const item = document.querySelector(`.checklist-item[data-check="${checkId}"]`);
@@ -2108,7 +2573,7 @@ function updateChecklistSummary() {
 		// Build issues message
 		const issues = [];
 		if (checklistState.displays !== 'success') issues.push('display modules');
-		if (checklistState.deployed !== 'success') issues.push('deployment');
+		if (checklistState.active !== 'success') issues.push('active tournament');
 		if (checklistState.participants !== 'success') issues.push('participants');
 		if (checklistState.api !== 'success') issues.push('API connection');
 
@@ -2140,7 +2605,8 @@ function updateChecklistVisibility() {
 window.refreshTournaments = refreshTournaments;
 window.switchTab = switchTab;
 window.selectTournament = selectTournament;
-window.deployTournament = deployTournament;
+window.makeActive = makeActive;
+window.revertToAutoSelect = revertToAutoSelect;
 window.startTournament = startTournament;
 window.resetTournament = resetTournament;
 window.finalizeTournament = finalizeTournament;

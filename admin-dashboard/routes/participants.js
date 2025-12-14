@@ -3,12 +3,14 @@
  *
  * Participant management API endpoints using local database.
  * Replaces Challonge API calls with local participant-db service.
+ * Includes Always-Live Displays support for bracket preview updates.
  */
 
 const express = require('express');
 const router = express.Router();
 const { requireAuthAPI } = require('../middleware/auth');
 const { createLogger } = require('../services/debug-logger');
+const activeTournamentService = require('../services/active-tournament');
 
 const logger = createLogger('routes:participants');
 
@@ -37,6 +39,62 @@ function broadcastParticipant(eventType, tournamentId, data = {}) {
 		io.emit(eventType, { tournamentId, ...data });
 		// Also emit generic update for pages that want to know when to refresh
 		io.emit('participants:update', { tournamentId, action: eventType, ...data });
+	}
+}
+
+/**
+ * Always-Live Displays: Broadcast bracket preview when participants change
+ * This sends updated participant list to displays so they can show a preview
+ * Only broadcasts if the tournament is the user's active tournament
+ * @param {Object} tournament - Tournament object
+ */
+function broadcastBracketPreviewIfActive(tournament) {
+	if (!io || !tournament || !tournament.user_id) return;
+
+	// Only broadcast for pending tournaments (preview mode)
+	// Underway tournaments use match polling for updates
+	if (tournament.state !== 'pending' && tournament.state !== 'checking_in') {
+		return;
+	}
+
+	// Check if this is the user's active tournament
+	const activeResult = activeTournamentService.getActiveTournament(tournament.user_id);
+	if (!activeResult.tournament || activeResult.tournament.id !== tournament.id) {
+		return;
+	}
+
+	try {
+		// Get current participants
+		const participants = participantDb.getByTournament(tournament.id);
+
+		// Broadcast bracket preview to user's displays
+		io.to(`user:${tournament.user_id}`).emit('tournament:preview', {
+			tournament: {
+				id: tournament.id,
+				url_slug: tournament.url_slug,
+				name: tournament.name,
+				game_name: tournament.game_name,
+				tournament_type: tournament.tournament_type,
+				state: tournament.state
+			},
+			participants: participants.map(p => ({
+				id: p.id,
+				name: p.name || p.display_name,
+				seed: p.seed,
+				checkedIn: p.checked_in
+			})),
+			participantCount: participants.length,
+			mode: activeResult.mode,
+			timestamp: new Date().toISOString()
+		});
+
+		logger.log('broadcastBracketPreview', {
+			userId: tournament.user_id,
+			tournamentId: tournament.id,
+			participantCount: participants.length
+		});
+	} catch (error) {
+		logger.error('broadcastBracketPreview', error, { tournamentId: tournament?.id });
 	}
 }
 
@@ -445,6 +503,9 @@ router.post('/:tournamentId', async (req, res) => {
 			}
 		});
 
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
+
 		// Send Discord notification
 		if (discordNotify) {
 			discordNotify.notifyParticipantSignup(tournament.user_id, participant, tournament).catch(err => {
@@ -536,6 +597,9 @@ router.put('/:tournamentId/:id', requireAuthAPI, async (req, res) => {
 			participant: { id: updated.id, name: updated.name, seed: updated.seed }
 		});
 
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
+
 		res.json({
 			success: true,
 			message: 'Participant updated successfully',
@@ -588,6 +652,9 @@ router.post('/:tournamentId/randomize', requireAuthAPI, async (req, res) => {
 			action: 'randomized',
 			count: participants.length
 		});
+
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
 
 		res.json({
 			success: true,
@@ -651,6 +718,9 @@ router.post('/:tournamentId/snake-draft', requireAuthAPI, async (req, res) => {
 			teamCount: teams,
 			count: participants.length
 		});
+
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
 
 		res.json({
 			success: true,
@@ -731,6 +801,9 @@ router.post('/:tournamentId/previous-tournament-seeding', requireAuthAPI, async 
 			count: participants.length
 		});
 
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
+
 		res.json({
 			success: true,
 			message: `Seeding applied from ${previousTournament.name}`,
@@ -810,6 +883,9 @@ router.post('/:tournamentId/swiss-pre-round-seeding', requireAuthAPI, async (req
 			swissTournamentName: swissTournament.name,
 			count: participants.length
 		});
+
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
 
 		res.json({
 			success: true,
@@ -895,6 +971,9 @@ router.post('/:tournamentId/bulk', requireAuthAPI, async (req, res) => {
 			count: created.length
 		});
 
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
+
 		res.json({
 			success: true,
 			message: `Successfully added ${created.length} participants`,
@@ -958,6 +1037,9 @@ router.delete('/:tournamentId/:id', requireAuthAPI, async (req, res) => {
 			name: existing.name
 		});
 
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
+
 		res.json({
 			success: true,
 			message: 'Participant deleted successfully'
@@ -1004,6 +1086,9 @@ router.delete('/:tournamentId/clear', requireAuthAPI, async (req, res) => {
 			action: 'cleared',
 			count: deleted
 		});
+
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
 
 		res.json({
 			success: true,
@@ -1172,6 +1257,15 @@ router.post('/:tournamentId/apply-seeding', requireAuthAPI, async (req, res) => 
 
 		// Apply Elo-based seeding
 		const participants = participantDb.applyEloSeeding(tournament.id, gameId);
+
+		// Broadcast seeding change
+		broadcastParticipant(WS_EVENTS.PARTICIPANTS_SEEDED, tournament.id, {
+			action: 'elo_seeding',
+			count: participants.length
+		});
+
+		// Always-Live Displays: Broadcast bracket preview if this is the active tournament
+		broadcastBracketPreviewIfActive(tournament);
 
 		res.json({
 			success: true,

@@ -20,6 +20,7 @@ const tournamentDb = require('../services/tournament-db');
 const matchDb = require('../services/match-db');
 const participantDb = require('../services/participant-db');
 const bracketEngine = require('../services/bracket-engine');
+const activeTournamentService = require('../services/active-tournament');
 
 // Dependencies injected via init()
 let pushNotifications = null;
@@ -42,7 +43,8 @@ const WS_EVENTS = {
     TOURNAMENT_DELETED: 'tournament:deleted',
     TOURNAMENT_STARTED: 'tournament:started',
     TOURNAMENT_RESET: 'tournament:reset',
-    TOURNAMENT_COMPLETED: 'tournament:completed'
+    TOURNAMENT_COMPLETED: 'tournament:completed',
+    TOURNAMENT_ACTIVATED: 'tournament:activated'
 };
 
 // Helper to broadcast tournament updates with specific event types
@@ -51,6 +53,89 @@ function broadcastTournament(eventType, tournament, extra = {}) {
         io.emit(eventType, { tournament, ...extra });
         // Also emit generic update for backward compatibility
         io.emit('tournament:update', { tournamentId: tournament?.id, action: eventType, ...extra });
+    }
+}
+
+/**
+ * Broadcast tournament data to user's displays (Always-Live Displays feature)
+ * This sends full tournament + matches data to match/bracket displays
+ * @param {Object} tournament - Tournament object
+ * @param {number} userId - User ID for targeting
+ */
+function broadcastTournamentDataToDisplays(tournament, userId) {
+    if (!io || !tournament || !userId) return;
+
+    try {
+        // Get tournament data for displays
+        const participants = participantDb.getByTournament(tournament.id);
+        const matches = matchDb.getByTournament(tournament.id);
+
+        // Build participant lookup
+        const participantsCache = {};
+        participants.forEach(p => {
+            participantsCache[String(p.id)] = p.name || p.display_name || `Seed ${p.seed}`;
+        });
+
+        // Transform matches to camelCase for frontend
+        const transformedMatches = matches.map(m => ({
+            id: m.id,
+            state: m.state,
+            round: m.round,
+            identifier: m.identifier,
+            suggestedPlayOrder: m.suggested_play_order || 9999,
+            player1Id: m.player1_id,
+            player2Id: m.player2_id,
+            player1Name: participantsCache[String(m.player1_id)] || 'TBD',
+            player2Name: participantsCache[String(m.player2_id)] || 'TBD',
+            stationId: m.station_id,
+            underwayAt: m.underway_at,
+            winnerId: m.winner_id
+        }));
+
+        // Get active mode for this user
+        const activeResult = activeTournamentService.getActiveTournament(userId);
+
+        // Broadcast to user's displays
+        io.to(`user:${userId}`).emit('tournament:activated', {
+            tournament: {
+                id: tournament.id,
+                url_slug: tournament.url_slug,
+                name: tournament.name,
+                game_name: tournament.game_name,
+                tournament_type: tournament.tournament_type,
+                state: tournament.state,
+                bracketUrl: `${process.env.EXTERNAL_URL || ''}/u/${userId}/bracket`
+            },
+            participants: participants,
+            matches: transformedMatches,
+            mode: activeResult.mode,
+            timestamp: new Date().toISOString()
+        });
+
+        logger.log('broadcastToDisplays', {
+            userId,
+            tournamentId: tournament.id,
+            tournamentName: tournament.name,
+            matchCount: matches.length,
+            participantCount: participants.length
+        });
+    } catch (error) {
+        logger.error('broadcastToDisplays', error, { tournamentId: tournament?.id, userId });
+    }
+}
+
+/**
+ * Check if tournament is the user's active tournament and broadcast if so
+ * Call this after tournament mutations to keep displays in sync
+ * @param {Object} tournament - Tournament object
+ * @param {number} userId - User ID
+ */
+function broadcastIfActiveTournament(tournament, userId) {
+    if (!tournament || !userId) return;
+
+    const activeResult = activeTournamentService.getActiveTournament(userId);
+    if (activeResult.tournament && activeResult.tournament.id === tournament.id) {
+        broadcastTournamentDataToDisplays(tournament, userId);
     }
 }
 
@@ -277,6 +362,207 @@ router.post('/create', async (req, res) => {
         });
     } catch (error) {
         logger.error('create', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// ============================================
+// ACTIVE TOURNAMENT ROUTES - Must be defined before /:tournamentId
+// These routes manage the "always-live displays" feature
+// ============================================
+
+// GET /api/tournament/active - Get current active tournament
+// Returns the active tournament (auto-selected or manually set)
+router.get('/active', async (req, res) => {
+    try {
+        const userId = req.tenantId || req.session?.userId;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication required'
+            });
+        }
+
+        const result = activeTournamentService.getActiveTournament(userId);
+
+        logger.log('getActive:success', {
+            userId,
+            tournamentId: result.tournament?.id || null,
+            mode: result.mode
+        });
+
+        // Count connected displays for this user
+        let displaysSynced = 0;
+        if (io) {
+            const room = io.sockets.adapter.rooms.get(`user:${userId}`);
+            displaysSynced = room ? room.size : 0;
+        }
+
+        res.json({
+            success: true,
+            tournament: result.tournament ? transformTournament(result.tournament) : null,
+            mode: result.mode,
+            displaysSynced
+        });
+    } catch (error) {
+        logger.error('getActive', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/tournament/activate/auto - Revert to auto-select mode
+// NOTE: This route MUST come before /activate/:tournamentId to avoid "auto" being matched as an ID
+router.post('/activate/auto', async (req, res) => {
+    try {
+        const userId = req.tenantId || req.session?.userId;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication required'
+            });
+        }
+
+        const result = activeTournamentService.revertToAutoSelect(userId);
+
+        logger.log('activateAuto:success', {
+            userId,
+            tournamentId: result.tournament?.id || null
+        });
+
+        // Get participants for broadcast if there's an active tournament
+        let participants = [];
+        if (result.tournament) {
+            try {
+                participants = participantDb.getByTournament(result.tournament.id);
+            } catch (pErr) {
+                logger.warn('activateAuto:participantsFetchFailed', { error: pErr.message });
+            }
+
+            // Write tournament-state.json for backward compatibility
+            await writeTournamentStateFile(result.tournament);
+        } else {
+            // Clear state file when no active tournament
+            await clearTournamentStateFile();
+        }
+
+        // Count connected displays for this user
+        let displaysSynced = 0;
+        if (io) {
+            const room = io.sockets.adapter.rooms.get(`user:${userId}`);
+            displaysSynced = room ? room.size : 0;
+
+            // Broadcast to all user's displays
+            io.to(`user:${userId}`).emit(WS_EVENTS.TOURNAMENT_ACTIVATED, {
+                tournament: result.tournament ? transformTournament(result.tournament) : null,
+                participants,
+                mode: 'auto',
+                timestamp: new Date().toISOString()
+            });
+
+            logger.log('activateAuto:broadcast', { userId, displaysSynced });
+        }
+
+        res.json({
+            success: true,
+            message: 'Reverted to auto-select',
+            tournament: result.tournament ? transformTournament(result.tournament) : null,
+            mode: 'auto',
+            displaysSynced
+        });
+    } catch (error) {
+        logger.error('activateAuto', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/tournament/activate/:tournamentId - Manually activate a tournament
+// Sets this tournament as the active one (manual override)
+router.post('/activate/:tournamentId', async (req, res) => {
+    try {
+        const userId = req.tenantId || req.session?.userId;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication required'
+            });
+        }
+
+        const { tournamentId } = req.params;
+
+        // Resolve tournament (support both ID and slug)
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({
+                success: false,
+                error: 'Tournament not found'
+            });
+        }
+
+        // Set as active (this validates ownership internally)
+        const result = activeTournamentService.setActiveTournament(userId, tournament.id);
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                error: result.error
+            });
+        }
+
+        logger.log('activate:success', {
+            userId,
+            tournamentId: tournament.id,
+            name: tournament.name
+        });
+
+        // Get participants for broadcast
+        let participants = [];
+        try {
+            participants = participantDb.getByTournament(tournament.id);
+        } catch (pErr) {
+            logger.warn('activate:participantsFetchFailed', { error: pErr.message });
+        }
+
+        // Write tournament-state.json for backward compatibility
+        await writeTournamentStateFile(tournament);
+
+        // Count connected displays for this user
+        let displaysSynced = 0;
+        if (io) {
+            const room = io.sockets.adapter.rooms.get(`user:${userId}`);
+            displaysSynced = room ? room.size : 0;
+
+            // Broadcast to all user's displays
+            io.to(`user:${userId}`).emit(WS_EVENTS.TOURNAMENT_ACTIVATED, {
+                tournament: transformTournament(tournament),
+                participants,
+                mode: 'manual',
+                timestamp: new Date().toISOString()
+            });
+
+            logger.log('activate:broadcast', { userId, displaysSynced });
+        }
+
+        res.json({
+            success: true,
+            message: 'Tournament activated (manual override)',
+            tournament: transformTournament(tournament),
+            mode: 'manual',
+            displaysSynced
+        });
+    } catch (error) {
+        logger.error('activate', error, { tournamentId: req.params.tournamentId });
         res.status(500).json({
             success: false,
             error: error.message
@@ -595,6 +881,17 @@ router.post('/:tournamentId/start', async (req, res) => {
             logger.log('start:autoAssigned', { count: autoAssigned.length, assignments: autoAssigned });
         }
 
+        // Always-Live Displays: Broadcast tournament data to user's displays
+        // Underway tournaments become active automatically via auto-select
+        broadcastTournamentDataToDisplays(updatedTournament, tournament.user_id);
+
+        // Write tournament-state.json for backward compatibility
+        try {
+            await writeTournamentStateFile(updatedTournament);
+        } catch (stateFileErr) {
+            logger.warn('start:stateFileError', { error: stateFileErr.message });
+        }
+
         // Auto-deploy: Find and activate matching flyer based on game name
         let autoDeployedFlyer = null;
         if (tournament.user_id && tournament.game_name) {
@@ -715,17 +1012,30 @@ router.post('/:tournamentId/reset', async (req, res) => {
             deletedMatches
         });
 
-        // Immediately broadcast empty matches to clear match display
-        // This ensures instant update instead of waiting for polling cycle
-        if (io) {
-            io.emit('matches:update', {
+        // Always-Live Displays: Broadcast to user's displays (multi-tenant)
+        // Send empty matches to clear the display since tournament is reset to pending
+        if (io && tournament.user_id) {
+            io.to(`user:${tournament.user_id}`).emit('matches:update', {
                 tournamentId: updatedTournament.url_slug,
                 matches: [],
                 podium: { isComplete: false },
                 timestamp: new Date().toISOString(),
                 source: 'reset'
             });
-            logger.log('reset:matchesBroadcast', { tournamentId: updatedTournament.url_slug });
+            logger.log('reset:matchesBroadcast', { tournamentId: updatedTournament.url_slug, userId: tournament.user_id });
+        }
+
+        // Broadcast tournament data if this is still the active tournament
+        broadcastIfActiveTournament(updatedTournament, tournament.user_id);
+
+        // Write tournament-state.json if this is still the active tournament
+        const activeResult = activeTournamentService.getActiveTournament(tournament.user_id);
+        if (activeResult.tournament && activeResult.tournament.id === tournament.id) {
+            try {
+                await writeTournamentStateFile(updatedTournament);
+            } catch (stateFileErr) {
+                logger.warn('reset:stateFileError', { error: stateFileErr.message });
+            }
         }
 
         res.json({
@@ -849,6 +1159,56 @@ router.post('/:tournamentId/complete', async (req, res) => {
             });
         }
 
+        // Always-Live Displays: Handle tournament completion
+        // Clear manual override if this was the active tournament, auto-select will pick next
+        if (tournament.user_id) {
+            activeTournamentService.handleTournamentCompleted(tournament.user_id, tournament.id);
+
+            // Update tournament-state.json for next active tournament (or clear if none)
+            try {
+                const nextActive = activeTournamentService.getActiveTournament(tournament.user_id);
+                if (nextActive.tournament) {
+                    await writeTournamentStateFile(nextActive.tournament);
+                } else {
+                    await clearTournamentStateFile();
+                }
+            } catch (stateFileErr) {
+                logger.warn('complete:stateFileError', { error: stateFileErr.message });
+            }
+
+            // Broadcast final state to displays with podium
+            const podium = {
+                isComplete: true,
+                first: null,
+                second: null,
+                third: null
+            };
+
+            // Find top 3 from ranks
+            Object.entries(ranks).forEach(([participantId, rank]) => {
+                const participant = participants.find(p => p.id === parseInt(participantId));
+                if (rank === 1) podium.first = participant?.name || 'Unknown';
+                if (rank === 2) podium.second = participant?.name || 'Unknown';
+                if (rank === 3) podium.third = participant?.name || 'Unknown';
+            });
+
+            if (io) {
+                io.to(`user:${tournament.user_id}`).emit('matches:update', {
+                    tournamentId: updatedTournament.url_slug,
+                    matches: matches.map(m => ({
+                        id: m.id,
+                        state: m.state,
+                        round: m.round,
+                        identifier: m.identifier,
+                        winnerId: m.winner_id
+                    })),
+                    podium,
+                    timestamp: new Date().toISOString(),
+                    source: 'complete'
+                });
+            }
+        }
+
         res.json({
             success: true,
             tournament: transformTournament(updatedTournament),
@@ -907,6 +1267,20 @@ router.delete('/:tournamentId', async (req, res) => {
             tournamentId: tournament.id,
             name
         });
+
+        // Update tournament-state.json if this was the active tournament
+        if (tournament.user_id) {
+            try {
+                const nextActive = activeTournamentService.getActiveTournament(tournament.user_id);
+                if (nextActive.tournament) {
+                    await writeTournamentStateFile(nextActive.tournament);
+                } else {
+                    await clearTournamentStateFile();
+                }
+            } catch (stateFileErr) {
+                logger.warn('delete:stateFileError', { error: stateFileErr.message });
+            }
+        }
 
         res.json({
             success: true,
@@ -1009,6 +1383,186 @@ router.get('/:tournamentId/standings', async (req, res) => {
 });
 
 // ============================================
+// GET /api/tournament/:tournamentId/round-labels - Get custom round labels
+// Returns custom labels and computed defaults for each round
+// ============================================
+router.get('/:tournamentId/round-labels', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({
+                success: false,
+                error: 'Tournament not found'
+            });
+        }
+
+        // Get current matches to determine round counts
+        const matches = matchDb.getByTournament(tournament.id);
+
+        // Calculate max rounds for winners and losers brackets
+        let maxRounds = { winners: 0, losers: 0 };
+
+        if (matches.length > 0) {
+            const winnersMatches = matches.filter(m => !m.losers_bracket);
+            const losersMatches = matches.filter(m => m.losers_bracket);
+
+            maxRounds.winners = winnersMatches.length > 0
+                ? Math.max(...winnersMatches.map(m => m.round))
+                : 0;
+            maxRounds.losers = losersMatches.length > 0
+                ? Math.max(...losersMatches.map(m => m.round))
+                : 0;
+        } else {
+            // Estimate rounds from participant count
+            const participantCount = tournament.participants_count || 0;
+            if (participantCount > 0) {
+                maxRounds.winners = Math.ceil(Math.log2(participantCount));
+                if (tournament.tournament_type === 'double_elimination') {
+                    // Losers bracket has roughly 2x the rounds
+                    maxRounds.losers = maxRounds.winners * 2 - 1;
+                }
+            }
+        }
+
+        // Get stored custom labels
+        const customLabels = tournamentDb.getRoundLabels(tournament.id) || {};
+
+        // Build labels response with defaults and custom values
+        const labels = {
+            winners: {},
+            losers: {}
+        };
+
+        // Helper to compute default round name
+        const getDefaultRoundName = (round, maxRound, bracketType) => {
+            const roundsFromEnd = maxRound - round;
+            if (bracketType === 'losers') {
+                return `Losers Round ${round}`;
+            }
+            switch (roundsFromEnd) {
+                case 0: return 'Finals';
+                case 1: return 'Semi-Finals';
+                case 2: return 'Quarter-Finals';
+                default: return `Round ${round}`;
+            }
+        };
+
+        // Build winners bracket labels
+        for (let round = 1; round <= maxRounds.winners; round++) {
+            const roundStr = String(round);
+            labels.winners[roundStr] = {
+                default: getDefaultRoundName(round, maxRounds.winners, 'winners'),
+                custom: customLabels.winners?.[roundStr] || null
+            };
+        }
+
+        // Build losers bracket labels (for double elimination)
+        if (tournament.tournament_type === 'double_elimination' && maxRounds.losers > 0) {
+            for (let round = 1; round <= maxRounds.losers; round++) {
+                const roundStr = String(round);
+                labels.losers[roundStr] = {
+                    default: getDefaultRoundName(round, maxRounds.losers, 'losers'),
+                    custom: customLabels.losers?.[roundStr] || null
+                };
+            }
+        }
+
+        res.json({
+            success: true,
+            tournamentId: tournament.id,
+            tournamentType: tournament.tournament_type,
+            maxRounds,
+            labels,
+            customLabels
+        });
+    } catch (error) {
+        logger.error('getRoundLabels', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// ============================================
+// PUT /api/tournament/:tournamentId/round-labels - Update custom round labels
+// ============================================
+router.put('/:tournamentId/round-labels', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+        const { winners, losers } = req.body;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({
+                success: false,
+                error: 'Tournament not found'
+            });
+        }
+
+        // Validate tenant access (allows superadmin or owner)
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied - tournament belongs to another user'
+            });
+        }
+
+        // Build labels object
+        const labels = {};
+        if (winners && typeof winners === 'object') {
+            labels.winners = winners;
+        }
+        if (losers && typeof losers === 'object') {
+            labels.losers = losers;
+        }
+
+        // Save to database (null if empty)
+        const updatedTournament = tournamentDb.setRoundLabels(
+            tournament.id,
+            Object.keys(labels).length > 0 ? labels : null
+        );
+
+        logger.log('setRoundLabels:success', {
+            tournamentId: tournament.id,
+            hasWinners: !!labels.winners,
+            hasLosers: !!labels.losers
+        });
+
+        // Broadcast to bracket displays via WebSocket
+        if (io) {
+            const userId = tournament.user_id;
+            io.to(`user:${userId}`).emit('bracket:control', {
+                action: 'setRoundLabels',
+                tournamentId: tournament.id,
+                labels: updatedTournament.round_labels
+            });
+            logger.log('setRoundLabels:broadcast', { userId, tournamentId: tournament.id });
+        }
+
+        res.json({
+            success: true,
+            tournament: transformTournament(updatedTournament),
+            roundLabels: updatedTournament.round_labels
+        });
+    } catch (error) {
+        logger.error('setRoundLabels', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// ============================================
 // POST /api/tournaments/:tournamentId/swiss/next-round - Generate next Swiss round
 // ============================================
 router.post('/:tournamentId/swiss/next-round', async (req, res) => {
@@ -1085,6 +1639,60 @@ router.post('/:tournamentId/swiss/next-round', async (req, res) => {
 });
 
 // ============================================
+// Helper: Write tournament-state.json for backward compatibility
+// ============================================
+async function writeTournamentStateFile(tournament) {
+    try {
+        const stateFilePath = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
+        const stateDir = path.dirname(stateFilePath);
+
+        // Ensure directory exists
+        await fs.mkdir(stateDir, { recursive: true });
+
+        const bracketUrl = `${process.env.BRACKET_API_URL || 'http://localhost:2053'}/bracket/${tournament.url_slug}`;
+
+        await fs.writeFile(stateFilePath, JSON.stringify({
+            tournamentId: tournament.url_slug,
+            tournamentDbId: tournament.id,
+            tournamentName: tournament.name,
+            gameName: tournament.game_name,
+            bracketUrl,
+            deployedAt: new Date().toISOString(),
+            lastUpdated: new Date().toISOString()
+        }, null, 2));
+
+        logger.log('writeTournamentStateFile:success', { tournamentId: tournament.url_slug });
+    } catch (err) {
+        logger.error('writeTournamentStateFile', err);
+        // Don't throw - state file is optional enhancement
+    }
+}
+
+// ============================================
+// Helper: Clear tournament-state.json when no active tournament
+// ============================================
+async function clearTournamentStateFile() {
+    try {
+        const stateFilePath = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
+
+        await fs.writeFile(stateFilePath, JSON.stringify({
+            tournamentId: null,
+            tournamentDbId: null,
+            tournamentName: null,
+            gameName: null,
+            bracketUrl: null,
+            deployedAt: null,
+            lastUpdated: new Date().toISOString()
+        }, null, 2));
+
+        logger.log('clearTournamentStateFile:success', {});
+    } catch (err) {
+        logger.error('clearTournamentStateFile', err);
+        // Don't throw - state file is optional enhancement
+    }
+}
+
+// ============================================
 // Helper: Transform tournament for API response
 // ============================================
 function transformTournament(t) {
@@ -1121,7 +1729,9 @@ function transformTournament(t) {
         byeStrategy: formatSettings.byeStrategy || 'traditional',
         compactBracket: !!formatSettings.compactBracket,
         seedingSource: formatSettings.seedingSource || 'manual',
-        seedingConfig: formatSettings.seedingConfig || null
+        seedingConfig: formatSettings.seedingConfig || null,
+        // Custom round labels
+        roundLabels: t.round_labels || null
     };
 }
 

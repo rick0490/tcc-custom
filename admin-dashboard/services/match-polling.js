@@ -3,12 +3,18 @@
  *
  * Local database match polling and push to MagicMirror displays.
  * Simplified from Challonge polling to direct database queries.
+ *
+ * Supports multi-tenant mode: polls for each user's active tournament
+ * and broadcasts to user-specific WebSocket rooms.
  */
 
 const path = require('path');
 const fsSync = require('fs');
 const axios = require('axios');
 const crypto = require('crypto');
+const { createLogger } = require('./debug-logger');
+
+const logger = createLogger('match-polling');
 
 // References set by init
 let io = null;
@@ -18,6 +24,8 @@ let participantDb = null;
 let wsConnections = null;
 let broadcastMatchData = null;
 let needsHttpFallback = null;
+let activeTournamentService = null;
+let systemDb = null;
 
 // Match polling state
 const matchPollingState = {
@@ -25,7 +33,9 @@ const matchPollingState = {
 	isPolling: false,
 	lastPollTime: null,
 	pollIntervalMs: 5000,  // 5 seconds - faster since no external API limits
-	activeTournamentId: null
+	activeTournamentId: null,  // Legacy: single tournament mode
+	multiTenantMode: false,    // New: poll per-user active tournaments
+	userLastPoll: new Map()    // Track last poll time per user
 };
 
 // Match data cache for resilience
@@ -48,7 +58,10 @@ function init({
 	participantDb: participantDbService,
 	wsConnections: wsConnectionsRef,
 	broadcastMatchData: broadcastFn,
-	needsHttpFallback: fallbackFn
+	needsHttpFallback: fallbackFn,
+	activeTournamentService: activeTournamentSvc,
+	systemDb: systemDbModule,
+	multiTenantMode = true
 }) {
 	io = ioServer;
 	matchDb = matchDbService;
@@ -57,6 +70,9 @@ function init({
 	wsConnections = wsConnectionsRef;
 	broadcastMatchData = broadcastFn;
 	needsHttpFallback = fallbackFn;
+	activeTournamentService = activeTournamentSvc;
+	systemDb = systemDbModule;
+	matchPollingState.multiTenantMode = multiTenantMode;
 
 	// Load cache on init
 	loadMatchDataCache();
@@ -92,9 +108,9 @@ function saveMatchDataCache(tournamentId, payload) {
 	try {
 		ensureCacheDirectory();
 		fsSync.writeFileSync(MATCH_CACHE_FILE, JSON.stringify(cacheEntry, null, 2));
-		console.log('[Match Cache] Saved to file:', MATCH_CACHE_FILE);
+		logger.log('cache:saved', { file: MATCH_CACHE_FILE, tournamentId });
 	} catch (error) {
-		console.warn('[Match Cache] Failed to save cache file:', error.message);
+		logger.warn('cache:saveError', error.message, { tournamentId });
 	}
 }
 
@@ -110,11 +126,11 @@ function loadMatchDataCache() {
 			matchDataCache.data = cacheEntry.data;
 			matchDataCache.timestamp = cacheEntry.timestamp;
 			matchDataCache.tournamentId = cacheEntry.tournamentId;
-			console.log('[Match Cache] Loaded from file, timestamp:', cacheEntry.timestamp);
+			logger.log('cache:loaded', { timestamp: cacheEntry.timestamp, tournamentId: cacheEntry.tournamentId });
 			return true;
 		}
 	} catch (error) {
-		console.warn('[Match Cache] Failed to load cache file:', error.message);
+		logger.warn('cache:loadError', error.message);
 	}
 	return false;
 }
@@ -178,16 +194,16 @@ function findNextSuggestedMatch(matches, assignedStations = []) {
 	// Filter open matches that are not underway and have both players
 	const openMatches = matches.filter(m =>
 		m.state === 'open' &&
-		!m.underway_at &&
-		m.player1_id &&
-		m.player2_id
+		!m.underwayAt &&
+		m.player1Id &&
+		m.player2Id
 	);
 
 	if (openMatches.length === 0) return null;
 
 	// Sort by suggested play order
 	openMatches.sort((a, b) =>
-		(a.suggested_play_order || 9999) - (b.suggested_play_order || 9999)
+		(a.suggestedPlayOrder || 9999) - (b.suggestedPlayOrder || 9999)
 	);
 
 	return openMatches[0];
@@ -202,19 +218,19 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 	let tournamentId = tournamentIdOverride || matchPollingState.activeTournamentId;
 
 	if (!tournamentId) {
-		const stateFile = process.env.MATCH_STATE_FILE || '/root/tcc-custom/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json';
+		const stateFile = process.env.MATCH_STATE_FILE || '/root/tcc-custom/admin-dashboard/tournament-state.json';
 
 		let tournamentState;
 		try {
 			const data = fsSync.readFileSync(stateFile, 'utf8');
 			tournamentState = JSON.parse(data);
 		} catch (error) {
-			console.error('[Match Polling] Error reading tournament state:', error.message);
+			logger.error('fetchAndPush', error, { message: 'Error reading tournament state' });
 			return;
 		}
 
 		if (!tournamentState || !tournamentState.tournamentId) {
-			console.log('[Match Polling] No tournament configured - skipping');
+			logger.log('fetchAndPush:skipped', { reason: 'No tournament configured' });
 			return;
 		}
 
@@ -222,12 +238,12 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 	}
 
 	try {
-		console.log('[Match Polling] Fetching matches for tournament:', tournamentId);
+		const logComplete = logger.start('fetchAndPush', { tournamentId });
 
 		// Get tournament from local DB
 		const tournament = tournamentDb.getById(tournamentId);
 		if (!tournament) {
-			console.error('[Match Polling] Tournament not found:', tournamentId);
+			logger.error('fetchAndPush', new Error('Tournament not found'), { tournamentId });
 			return;
 		}
 
@@ -247,8 +263,8 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 		const stationMap = {};
 		const matchStationMap = {};
 		try {
-			const db = require('../analytics-db');
-			const stations = db.db.prepare(`
+			const tournamentsDb = require('../db/tournaments-db');
+			const stations = tournamentsDb.getDb().prepare(`
 				SELECT id, name FROM tcc_stations
 				WHERE tournament_id = ? AND active = 1
 			`).all(tournamentId);
@@ -264,7 +280,7 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 				}
 			});
 		} catch (stationError) {
-			console.warn('[Match Polling] Could not fetch stations:', stationError.message);
+			logger.warn('fetchAndPush:stations', stationError.message, { tournamentId });
 		}
 
 		// Available stations from stationMap
@@ -287,18 +303,19 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 				state: match.state,
 				round: match.round,
 				identifier: match.identifier,
-				suggested_play_order: match.suggested_play_order != null ? match.suggested_play_order : 9999,
-				player1_id: match.player1_id,
-				player2_id: match.player2_id,
-				player1_name: p1Name,
-				player2_name: p2Name,
-				player1_score: match.player1_score,
-				player2_score: match.player2_score,
-				station_name: stationName,
-				underway_at: match.underway_at,
-				winner_id: match.winner_id || null,
-				losers_bracket: match.losers_bracket || false,
-				is_grand_finals: match.is_grand_finals || false
+				suggestedPlayOrder: match.suggested_play_order != null ? match.suggested_play_order : 9999,
+				player1Id: match.player1_id,
+				player2Id: match.player2_id,
+				player1Name: p1Name,
+				player2Name: p2Name,
+				player1Score: match.player1_score,
+				player2Score: match.player2_score,
+				stationId: match.station_id,
+				stationName: stationName,
+				underwayAt: match.underway_at,
+				winnerId: match.winner_id || null,
+				losersBracket: match.losers_bracket || false,
+				isGrandFinals: match.is_grand_finals || false
 			};
 		});
 
@@ -344,8 +361,8 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 
 		// Calculate match statistics for metadata
 		const completedCount = simplified.filter(m => m.state === 'complete').length;
-		const underwayCount = simplified.filter(m => m.state === 'open' && m.underway_at).length;
-		const openCount = simplified.filter(m => m.state === 'open' && !m.underway_at).length;
+		const underwayCount = simplified.filter(m => m.state === 'open' && m.underwayAt).length;
+		const openCount = simplified.filter(m => m.state === 'open' && !m.underwayAt).length;
 		const pendingCount = simplified.filter(m => m.state === 'pending').length;
 		const totalCount = simplified.length;
 
@@ -366,8 +383,8 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 			metadata: {
 				nextMatchId: nextMatch?.id || null,
 				nextMatchPlayers: nextMatch ? {
-					player1: nextMatch.player1_name,
-					player2: nextMatch.player2_name
+					player1: nextMatch.player1Name,
+					player2: nextMatch.player2Name
 				} : null,
 				completedCount,
 				underwayCount,
@@ -403,19 +420,29 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 			const matchApiUrl = process.env.MATCH_API_URL || 'http://localhost:2052';
 			try {
 				await axios.post(`${matchApiUrl}/api/matches/push`, payload, { timeout: 5000 });
-				console.log(`[Match Polling] HTTP fallback push (${hasConnectedDisplays ? 'no ACK received' : 'no WS displays'})`);
+				logger.log('fetchAndPush:httpFallback', {
+					reason: hasConnectedDisplays ? 'no ACK received' : 'no WS displays'
+				});
 			} catch (httpError) {
-				console.warn(`[Match Polling] HTTP fallback failed: ${httpError.message}`);
+				logger.warn('fetchAndPush:httpFallbackFailed', httpError.message);
 			}
 		} else {
-			console.log(`[Match Polling] WebSocket delivery confirmed, skipping HTTP push`);
+			logger.log('fetchAndPush:wsDelivered', { displayCount });
 		}
 
 		matchPollingState.lastPollTime = pushTimestamp;
-		console.log(`[Match Polling] Pushed ${simplified.length} matches (WS: ${displayCount} displays${shouldHttpFallback ? ', HTTP fallback' : ''})`);
+		logComplete({
+			matchCount: simplified.length,
+			displayCount,
+			completedCount,
+			underwayCount,
+			openCount,
+			httpFallback: shouldHttpFallback,
+			nextMatchId: nextMatch?.id || null
+		});
 
 	} catch (error) {
-		console.error('[Match Polling] Error:', error.message);
+		logger.error('fetchAndPush', error, { tournamentId });
 
 		// If fetch failed, try to push cached data with stale indicator
 		const cachedData = getMatchDataCache(tournamentId);
@@ -429,11 +456,247 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
 					isStale: true,
 					cacheAgeMs: cachedData.cacheAgeMs
 				}, { timeout: 5000 });
-				console.log('[Match Polling] Pushed cached data (stale) to MagicMirror');
+				logger.log('fetchAndPush:cachedFallback', { cacheAgeMs: cachedData.cacheAgeMs });
 			} catch (pushError) {
-				console.error('[Match Polling] Failed to push cached data:', pushError.message);
+				logger.error('fetchAndPush:cachedFallbackFailed', pushError);
 			}
 		}
+	}
+}
+
+/**
+ * Fetch and push matches for a specific user's active tournament
+ * @param {number} userId - User ID to poll for
+ */
+async function fetchAndPushMatchesForUser(userId) {
+	if (!activeTournamentService) {
+		logger.warn('fetchAndPushForUser:noService', { userId });
+		return;
+	}
+
+	try {
+		const activeResult = activeTournamentService.getActiveTournament(userId);
+		if (!activeResult.tournament) {
+			logger.log('fetchAndPushForUser:noActive', { userId });
+			return;
+		}
+
+		const tournament = activeResult.tournament;
+		if (tournament.state !== 'underway') {
+			logger.log('fetchAndPushForUser:notUnderway', { userId, state: tournament.state });
+			return;
+		}
+
+		const logComplete = logger.start('fetchAndPushForUser', { userId, tournamentId: tournament.id });
+
+		// Get participants from local DB
+		const participants = participantDb.getByTournament(tournament.id);
+		const participantMap = {};
+		const participantsCache = {};
+		participants.forEach(p => {
+			participantMap[String(p.id)] = p.name || p.display_name || 'Player ' + p.id;
+			participantsCache[String(p.id)] = p.name || p.display_name || 'Player ' + p.id;
+		});
+
+		// Get matches from local DB
+		const matchesRaw = matchDb.getByTournament(tournament.id);
+
+		// Get stations from local DB
+		const stationMap = {};
+		const matchStationMap = {};
+		try {
+			const tournamentsDb = require('../db/tournaments-db');
+			const stations = tournamentsDb.getDb().prepare(`
+				SELECT id, name FROM tcc_stations
+				WHERE tournament_id = ? AND active = 1
+			`).all(tournament.id);
+
+			stations.forEach(s => {
+				stationMap[String(s.id)] = s.name;
+			});
+
+			// Build match->station mapping
+			matchesRaw.forEach(m => {
+				if (m.station_id) {
+					matchStationMap[String(m.id)] = stationMap[String(m.station_id)] || null;
+				}
+			});
+		} catch (stationError) {
+			logger.warn('fetchAndPushForUser:stations', stationError.message, { userId, tournamentId: tournament.id });
+		}
+
+		// Available stations from stationMap
+		const availableStations = new Set(Object.values(stationMap));
+
+		// Simplify matches for display
+		const simplified = matchesRaw.map(match => {
+			const p1Name = match.player1_id && participantMap[String(match.player1_id)]
+				? participantMap[String(match.player1_id)]
+				: match.player1_id ? 'Player ' + match.player1_id : 'TBD';
+
+			const p2Name = match.player2_id && participantMap[String(match.player2_id)]
+				? participantMap[String(match.player2_id)]
+				: match.player2_id ? 'Player ' + match.player2_id : 'TBD';
+
+			const stationName = match.station_id ? stationMap[String(match.station_id)] : null;
+
+			return {
+				id: match.id,
+				state: match.state,
+				round: match.round,
+				identifier: match.identifier,
+				suggestedPlayOrder: match.suggested_play_order != null ? match.suggested_play_order : 9999,
+				player1Id: match.player1_id,
+				player2Id: match.player2_id,
+				player1Name: p1Name,
+				player2Name: p2Name,
+				player1Score: match.player1_score,
+				player2Score: match.player2_score,
+				stationId: match.station_id,
+				stationName: stationName,
+				underwayAt: match.underway_at,
+				winnerId: match.winner_id || null,
+				losersBracket: match.losers_bracket || false,
+				isGrandFinals: match.is_grand_finals || false
+			};
+		});
+
+		// Check if tournament is complete for podium
+		const has3rdPlaceMatch = matchesRaw.some(m => m.identifier === '3P');
+		let podium = { isComplete: false, first: null, second: null, third: null, has3rdPlace: has3rdPlaceMatch };
+
+		if (tournament.state === 'complete' || (matchesRaw.length > 0 && matchesRaw.every(m => m.state === 'complete'))) {
+			let finalsMatch = null;
+			matchesRaw.forEach(m => {
+				if (m.is_grand_finals || (m.round > 0 && m.identifier !== '3P')) {
+					if (!finalsMatch || m.round > finalsMatch.round) {
+						finalsMatch = m;
+					}
+				}
+			});
+
+			if (finalsMatch && finalsMatch.winner_id) {
+				const winnerId = finalsMatch.winner_id;
+				const secondId = finalsMatch.loser_id;
+				const thirdMatch = matchesRaw.find(m => m.identifier === '3P' && m.state === 'complete');
+				const thirdId = thirdMatch ? thirdMatch.winner_id : null;
+
+				const nameForId = id => {
+					if (!id) return null;
+					return participantMap[String(id)] || 'Player ' + id;
+				};
+
+				podium = {
+					isComplete: true,
+					first: nameForId(winnerId),
+					second: nameForId(secondId),
+					third: thirdId ? nameForId(thirdId) : null,
+					has3rdPlace: has3rdPlaceMatch
+				};
+			}
+		}
+
+		// Build payload
+		const pushTimestamp = new Date().toISOString();
+		const completedCount = simplified.filter(m => m.state === 'complete').length;
+		const underwayCount = simplified.filter(m => m.state === 'open' && m.underwayAt).length;
+		const openCount = simplified.filter(m => m.state === 'open' && !m.underwayAt).length;
+		const pendingCount = simplified.filter(m => m.state === 'pending').length;
+		const totalCount = simplified.length;
+
+		const assignedStations = Object.keys(matchStationMap);
+		const nextMatch = findNextSuggestedMatch(simplified, assignedStations);
+
+		const payload = {
+			tournamentId: tournament.url_slug,
+			tournamentName: tournament.name,
+			tournamentType: tournament.tournament_type,
+			matches: simplified,
+			podium: podium,
+			availableStations: Array.from(availableStations),
+			participantsCache: participantsCache,
+			timestamp: pushTimestamp,
+			source: 'local',
+			userId: userId,  // Include userId for multi-tenant identification
+			metadata: {
+				nextMatchId: nextMatch?.id || null,
+				nextMatchPlayers: nextMatch ? {
+					player1: nextMatch.player1Name,
+					player2: nextMatch.player2Name
+				} : null,
+				completedCount,
+				underwayCount,
+				openCount,
+				pendingCount,
+				totalCount,
+				progressPercent: totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
+			}
+		};
+
+		// Compute hash for deduplication
+		const payloadHash = crypto
+			.createHash('md5')
+			.update(JSON.stringify({ matches: simplified, podium: podium }))
+			.digest('hex');
+
+		// Broadcast to user-specific rooms
+		if (io) {
+			io.to(`user:${userId}`).emit('matches:update', {
+				...payload,
+				hash: payloadHash
+			});
+			logger.log('fetchAndPushForUser:broadcast', { userId, matchCount: simplified.length });
+		}
+
+		matchPollingState.userLastPoll.set(userId, pushTimestamp);
+		logComplete({ matchCount: simplified.length, completedCount, underwayCount });
+
+	} catch (error) {
+		logger.error('fetchAndPushForUser', error, { userId });
+	}
+}
+
+/**
+ * Poll all users with active underway tournaments (multi-tenant mode)
+ */
+async function pollAllActiveUsers() {
+	if (!systemDb || !activeTournamentService) {
+		logger.warn('pollAllActiveUsers:missingDeps');
+		return;
+	}
+
+	try {
+		// Get all users who might have active tournaments
+		const users = systemDb.getDb().prepare('SELECT id FROM users WHERE is_active = 1').all();
+		let polledCount = 0;
+
+		for (const user of users) {
+			try {
+				const activeResult = activeTournamentService.getActiveTournament(user.id);
+				if (activeResult.tournament && activeResult.tournament.state === 'underway') {
+					await fetchAndPushMatchesForUser(user.id);
+					polledCount++;
+				}
+			} catch (err) {
+				logger.warn('pollAllActiveUsers:userError', { userId: user.id, error: err.message });
+			}
+		}
+
+		if (polledCount > 0) {
+			logger.log('pollAllActiveUsers:complete', { usersPolled: polledCount });
+		}
+	} catch (error) {
+		logger.error('pollAllActiveUsers', error);
+	}
+}
+
+/**
+ * Trigger immediate poll for a specific user
+ * @param {number} userId - User ID to poll for
+ */
+async function triggerImmediatePollForUser(userId) {
+	if (matchPollingState.multiTenantMode && activeTournamentService) {
+		await fetchAndPushMatchesForUser(userId);
 	}
 }
 
@@ -443,12 +706,12 @@ async function fetchAndPushMatches(tournamentIdOverride = null) {
  */
 function setActiveTournament(tournamentId) {
 	matchPollingState.activeTournamentId = tournamentId;
-	console.log('[Match Polling] Active tournament set to:', tournamentId);
+	logger.log('setActiveTournament', { tournamentId });
 }
 
 /**
  * Start match polling
- * @param {number|string} tournamentId - Optional tournament ID to poll
+ * @param {number|string} tournamentId - Optional tournament ID to poll (ignored in multi-tenant mode)
  */
 function startMatchPolling(tournamentId = null) {
 	if (matchPollingState.intervalId) {
@@ -456,17 +719,38 @@ function startMatchPolling(tournamentId = null) {
 		matchPollingState.intervalId = null;
 	}
 
+	const interval = getMatchPollInterval();
+
+	// Multi-tenant mode: poll all users with active tournaments
+	if (matchPollingState.multiTenantMode && activeTournamentService) {
+		logger.log('startPolling:multiTenant', { intervalSeconds: interval / 1000 });
+
+		matchPollingState.isPolling = true;
+
+		// Poll immediately
+		pollAllActiveUsers();
+
+		// Then at interval
+		matchPollingState.intervalId = setInterval(() => {
+			pollAllActiveUsers();
+		}, interval);
+		return;
+	}
+
+	// Legacy single-tenant mode
 	if (tournamentId) {
 		matchPollingState.activeTournamentId = tournamentId;
 	}
 
 	if (!matchPollingState.activeTournamentId) {
-		console.log('[Match Polling] No tournament configured - not starting');
+		logger.log('startPolling:skipped', { reason: 'No tournament configured' });
 		return;
 	}
 
-	const interval = getMatchPollInterval();
-	console.log(`[Match Polling] Starting - polling every ${interval / 1000} seconds for tournament ${matchPollingState.activeTournamentId}`);
+	logger.log('startPolling', {
+		tournamentId: matchPollingState.activeTournamentId,
+		intervalSeconds: interval / 1000
+	});
 
 	matchPollingState.isPolling = true;
 
@@ -498,7 +782,7 @@ function stopMatchPolling() {
 		matchPollingState.intervalId = null;
 	}
 	matchPollingState.isPolling = false;
-	console.log('[Match Polling] Stopped');
+	logger.log('stopPolling', { tournamentId: matchPollingState.activeTournamentId });
 }
 
 /**
@@ -546,6 +830,9 @@ module.exports = {
 	findNextSuggestedMatch,
 	setActiveTournament,
 	fetchAndPushMatches,
+	fetchAndPushMatchesForUser,
+	pollAllActiveUsers,
+	triggerImmediatePollForUser,
 	startMatchPolling,
 	stopMatchPolling,
 	updateMatchPolling,

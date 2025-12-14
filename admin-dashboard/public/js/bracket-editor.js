@@ -12,9 +12,8 @@ const BracketEditor = (function() {
 		participants: [],
 		originalSeeds: new Map(),  // participant.id -> original seed
 		currentSeeds: new Map(),   // participant.id -> current seed
-		hasChanges: false,
-		sortableInstance: null,
-		isLoading: false
+		isLoading: false,
+		isSaving: false  // Prevent concurrent saves
 	};
 
 	// DOM Elements
@@ -36,21 +35,12 @@ const BracketEditor = (function() {
 	 */
 	function cacheElements() {
 		elements.tournamentSelect = document.getElementById('tournamentSelect');
-		elements.pendingChanges = document.getElementById('pendingChanges');
 		elements.bracketContainer = document.getElementById('bracketContainer');
 		elements.bracketCanvas = document.getElementById('bracketCanvas');
 		elements.emptyState = document.getElementById('emptyState');
 		elements.formatBadge = document.getElementById('formatBadge');
 		elements.zoomLevel = document.getElementById('zoomLevel');
 		elements.seedingTools = document.getElementById('seedingTools');
-		elements.participantList = document.getElementById('participantList');
-		elements.participantCount = document.getElementById('participantCount');
-		elements.participantSearch = document.getElementById('participantSearch');
-		elements.participantEmptyState = document.getElementById('participantEmptyState');
-		elements.participantPanel = document.getElementById('participantPanel');
-		elements.actionButtons = document.getElementById('actionButtons');
-		elements.applyBtn = document.getElementById('applyBtn');
-		elements.discardBtn = document.getElementById('discardBtn');
 	}
 
 	/**
@@ -60,17 +50,35 @@ const BracketEditor = (function() {
 		if (elements.tournamentSelect) {
 			elements.tournamentSelect.addEventListener('change', handleTournamentChange);
 		}
-		if (elements.participantSearch) {
-			elements.participantSearch.addEventListener('input', handleSearch);
+
+		// Register swap callback with BracketCanvas
+		BracketCanvas.setSwapCallback(handleCanvasSwap);
+	}
+
+	/**
+	 * Handle swap from canvas drag-drop - saves immediately
+	 * @param {number} sourceId - Source participant ID
+	 * @param {number} targetId - Target participant ID
+	 */
+	async function handleCanvasSwap(sourceId, targetId) {
+		FrontendDebug.action('BracketEditor', 'Canvas swap', { sourceId, targetId });
+
+		// Get current seeds
+		const sourceSeed = state.currentSeeds.get(sourceId);
+		const targetSeed = state.currentSeeds.get(targetId);
+
+		if (!sourceSeed || !targetSeed) {
+			FrontendDebug.error('BracketEditor', 'Invalid swap - seeds not found');
+			return;
 		}
 
-		// Warn before leaving with unsaved changes
-		window.addEventListener('beforeunload', (e) => {
-			if (state.hasChanges) {
-				e.preventDefault();
-				e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-			}
-		});
+		// Swap seeds locally
+		state.currentSeeds.set(sourceId, targetSeed);
+		state.currentSeeds.set(targetId, sourceSeed);
+
+		// Save immediately and refresh preview
+		await saveSeeds();
+		await generateBracketPreview();
 	}
 
 	/**
@@ -108,13 +116,50 @@ const BracketEditor = (function() {
 			if (!response.ok) throw new Error('Failed to load tournaments');
 
 			const data = await response.json();
-			state.tournaments = data.tournaments || [];
+			// API returns { tournaments: { pending: [...], inProgress: [...], completed: [...] } }
+			state.tournaments = data.tournaments?.pending || [];
 
 			renderTournamentOptions();
+
+			// Auto-select active tournament if it's pending
+			await selectActiveTournament();
+
 			FrontendDebug.log('BracketEditor', 'Tournaments loaded', { count: state.tournaments.length });
 		} catch (error) {
 			FrontendDebug.error('BracketEditor', 'Error loading tournaments', error);
 			showAlert('Failed to load tournaments', 'error');
+		}
+	}
+
+	/**
+	 * Auto-select the active tournament if it's in the pending state
+	 */
+	async function selectActiveTournament() {
+		try {
+			const response = await fetch('/api/tournament/active');
+			if (!response.ok) return;
+
+			const data = await response.json();
+			if (data.success && data.tournament && data.tournament.state === 'pending') {
+				// Check if active tournament is in our dropdown (pending tournaments only)
+				const tournamentId = data.tournament.id;
+				const option = Array.from(elements.tournamentSelect.options).find(opt =>
+					opt.value === String(tournamentId)
+				);
+
+				if (option) {
+					elements.tournamentSelect.value = option.value;
+					FrontendDebug.log('BracketEditor', 'Auto-selected active tournament', {
+						tournament: data.tournament.name,
+						mode: data.mode
+					});
+					// Trigger load
+					await handleTournamentChange();
+				}
+			}
+		} catch (error) {
+			FrontendDebug.warn('BracketEditor', 'Could not fetch active tournament', error);
+			// Silently fail - user can still manually select
 		}
 	}
 
@@ -125,8 +170,9 @@ const BracketEditor = (function() {
 		const options = ['<option value="">Select a tournament...</option>'];
 
 		state.tournaments.forEach(t => {
-			const participantCount = t.participant_count || 0;
-			const format = formatTournamentType(t.tournament_type);
+			// API uses 'participants' not 'participant_count'
+			const participantCount = t.participants || t.participant_count || 0;
+			const format = formatTournamentType(t.tournamentType || t.tournament_type);
 			options.push(`<option value="${t.id}">${escapeHtml(t.name)} (${participantCount} players, ${format})</option>`);
 		});
 
@@ -142,15 +188,6 @@ const BracketEditor = (function() {
 		if (!tournamentId) {
 			clearEditor();
 			return;
-		}
-
-		// Check for unsaved changes
-		if (state.hasChanges) {
-			const confirmed = confirm('You have unsaved changes. Discard them?');
-			if (!confirmed) {
-				elements.tournamentSelect.value = state.selectedTournament?.id || '';
-				return;
-			}
 		}
 
 		await loadTournament(tournamentId);
@@ -169,7 +206,15 @@ const BracketEditor = (function() {
 			// Fetch tournament details
 			const tournamentRes = await csrfFetch(`/api/tournaments/${tournamentId}`);
 			if (!tournamentRes.ok) throw new Error('Failed to load tournament');
-			state.selectedTournament = await tournamentRes.json();
+			const tournamentData = await tournamentRes.json();
+
+			// Check for API error
+			if (!tournamentData.success) {
+				throw new Error(tournamentData.error || 'Failed to load tournament');
+			}
+
+			// Extract tournament from response
+			state.selectedTournament = tournamentData.tournament;
 
 			// Verify tournament is pending
 			if (state.selectedTournament.state !== 'pending') {
@@ -192,12 +237,8 @@ const BracketEditor = (function() {
 				state.currentSeeds.set(p.id, p.seed);
 			});
 
-			state.hasChanges = false;
-
 			// Update UI
 			updateFormatBadge();
-			renderParticipantList();
-			initSortable();
 			await generateBracketPreview();
 			showEditorUI();
 
@@ -256,128 +297,46 @@ const BracketEditor = (function() {
 	}
 
 	/**
-	 * Render participant list with drag handles
+	 * Save seeds immediately to the server
 	 */
-	function renderParticipantList() {
-		if (state.participants.length === 0) {
-			elements.participantList.innerHTML = `
-				<div class="p-4 text-center text-gray-400">
-					<p>No participants in tournament</p>
-				</div>`;
-			elements.participantCount.textContent = '0 players';
-			return;
-		}
+	async function saveSeeds() {
+		if (state.isSaving || !state.selectedTournament) return;
+		state.isSaving = true;
 
-		// Sort by current seed
-		const sorted = [...state.participants].sort((a, b) => {
-			return (state.currentSeeds.get(a.id) || 999) - (state.currentSeeds.get(b.id) || 999);
-		});
+		try {
+			FrontendDebug.api('BracketEditor', 'Saving seeds');
 
-		const html = sorted.map(p => {
-			const currentSeed = state.currentSeeds.get(p.id);
-			const originalSeed = state.originalSeeds.get(p.id);
-			const isChanged = currentSeed !== originalSeed;
-			const displayName = p.display_name || p.name;
+			// Build seed updates array
+			const seedUpdates = [];
+			state.currentSeeds.forEach((seed, participantId) => {
+				seedUpdates.push({ participantId, seed });
+			});
 
-			return `
-				<div class="participant-item flex items-center gap-3 px-4 py-3 border-b border-gray-700 hover:bg-gray-750 ${isChanged ? 'bg-yellow-900/20' : ''}"
-					 data-id="${p.id}" data-seed="${currentSeed}">
-					<div class="drag-handle text-gray-500 cursor-grab">
-						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path>
-						</svg>
-					</div>
-					<span class="seed-badge px-2 py-1 rounded text-sm font-mono ${isChanged ? 'bg-yellow-600' : 'bg-blue-600'} text-white">
-						${currentSeed}
-					</span>
-					<span class="text-white flex-1 truncate">${escapeHtml(displayName)}</span>
-					${isChanged ? `<span class="text-xs text-yellow-400">(was ${originalSeed})</span>` : ''}
-				</div>`;
-		}).join('');
+			const response = await csrfFetch(`/api/bracket-editor/apply-seeds/${state.selectedTournament.id}`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ seeds: seedUpdates })
+			});
 
-		elements.participantList.innerHTML = html;
-		elements.participantCount.textContent = `${state.participants.length} players`;
-	}
+			if (!response.ok) throw new Error('Failed to save seeds');
 
-	/**
-	 * Initialize SortableJS for drag-drop reordering
-	 */
-	function initSortable() {
-		if (state.sortableInstance) {
-			state.sortableInstance.destroy();
-		}
+			// Update original seeds to match current
+			state.currentSeeds.forEach((seed, id) => {
+				state.originalSeeds.set(id, seed);
+			});
 
-		if (typeof Sortable === 'undefined') {
-			FrontendDebug.error('BracketEditor', 'SortableJS not loaded');
-			return;
-		}
+			FrontendDebug.log('BracketEditor', 'Seeds saved successfully');
 
-		state.sortableInstance = new Sortable(elements.participantList, {
-			animation: 150,
-			handle: '.drag-handle',
-			ghostClass: 'sortable-ghost',
-			chosenClass: 'sortable-chosen',
-			onEnd: handleSortEnd
-		});
-
-		FrontendDebug.log('BracketEditor', 'Sortable initialized');
-	}
-
-	/**
-	 * Handle drag-drop sort end
-	 */
-	function handleSortEnd(evt) {
-		FrontendDebug.action('BracketEditor', 'Drag-drop completed', {
-			from: evt.oldIndex,
-			to: evt.newIndex
-		});
-
-		// Rebuild seed order based on DOM order
-		const items = elements.participantList.querySelectorAll('.participant-item');
-
-		items.forEach((item, index) => {
-			const participantId = parseInt(item.dataset.id);
-			state.currentSeeds.set(participantId, index + 1);
-		});
-
-		checkForChanges();
-		renderParticipantList();
-		generateBracketPreview();
-	}
-
-	/**
-	 * Check if there are unsaved changes
-	 */
-	function checkForChanges() {
-		let hasChanges = false;
-
-		state.currentSeeds.forEach((seed, id) => {
-			if (seed !== state.originalSeeds.get(id)) {
-				hasChanges = true;
-			}
-		});
-
-		state.hasChanges = hasChanges;
-		updateChangeIndicator();
-	}
-
-	/**
-	 * Update UI to show/hide change indicator
-	 */
-	function updateChangeIndicator() {
-		elements.pendingChanges.classList.toggle('hidden', !state.hasChanges);
-		elements.applyBtn.disabled = !state.hasChanges;
-		elements.discardBtn.disabled = !state.hasChanges;
-
-		if (state.hasChanges) {
-			elements.participantPanel?.classList.add('has-changes');
-		} else {
-			elements.participantPanel?.classList.remove('has-changes');
+		} catch (error) {
+			FrontendDebug.error('BracketEditor', 'Error saving seeds', error);
+			showAlert('Failed to save seeding changes', 'error');
+		} finally {
+			state.isSaving = false;
 		}
 	}
 
 	/**
-	 * Randomize seeds
+	 * Randomize seeds - saves immediately
 	 */
 	async function randomizeSeeds() {
 		FrontendDebug.action('BracketEditor', 'Randomizing seeds');
@@ -395,13 +354,12 @@ const BracketEditor = (function() {
 			state.currentSeeds.set(id, index + 1);
 		});
 
-		checkForChanges();
-		renderParticipantList();
+		await saveSeeds();
 		await generateBracketPreview();
 	}
 
 	/**
-	 * Apply Elo-based seeding
+	 * Apply Elo-based seeding - saves to server via API
 	 */
 	async function applyEloSeeding() {
 		if (!state.selectedTournament?.game_id) {
@@ -420,17 +378,15 @@ const BracketEditor = (function() {
 
 			const data = await response.json();
 
-			// Update current seeds from response
+			// Update both current and original seeds from response (API already saved)
 			if (data.participants) {
 				data.participants.forEach(p => {
 					state.currentSeeds.set(p.id, p.seed);
+					state.originalSeeds.set(p.id, p.seed);
 				});
 			}
 
-			checkForChanges();
-			renderParticipantList();
 			await generateBracketPreview();
-
 			showAlert('Elo seeding applied', 'success');
 		} catch (error) {
 			FrontendDebug.error('BracketEditor', 'Error applying Elo seeding', error);
@@ -439,7 +395,7 @@ const BracketEditor = (function() {
 	}
 
 	/**
-	 * Sort participants alphabetically
+	 * Sort participants alphabetically - saves immediately
 	 */
 	async function sortAlphabetically() {
 		FrontendDebug.action('BracketEditor', 'Sorting alphabetically');
@@ -456,13 +412,12 @@ const BracketEditor = (function() {
 			state.currentSeeds.set(p.id, index + 1);
 		});
 
-		checkForChanges();
-		renderParticipantList();
+		await saveSeeds();
 		await generateBracketPreview();
 	}
 
 	/**
-	 * Reverse seed order
+	 * Reverse seed order - saves immediately
 	 */
 	async function reverseSeeds() {
 		FrontendDebug.action('BracketEditor', 'Reversing seed order');
@@ -473,13 +428,12 @@ const BracketEditor = (function() {
 			state.currentSeeds.set(id, maxSeed - seed + 1);
 		});
 
-		checkForChanges();
-		renderParticipantList();
+		await saveSeeds();
 		await generateBracketPreview();
 	}
 
 	/**
-	 * Reset to original seeds
+	 * Reset to original seeds - saves immediately
 	 */
 	async function resetToOriginal() {
 		FrontendDebug.action('BracketEditor', 'Resetting to original seeds');
@@ -488,92 +442,8 @@ const BracketEditor = (function() {
 			state.currentSeeds.set(id, seed);
 		});
 
-		state.hasChanges = false;
-		updateChangeIndicator();
-		renderParticipantList();
+		await saveSeeds();
 		await generateBracketPreview();
-	}
-
-	/**
-	 * Apply seed changes to server
-	 */
-	async function applyChanges() {
-		if (!state.hasChanges || !state.selectedTournament) return;
-
-		elements.applyBtn.disabled = true;
-		elements.applyBtn.innerHTML = `
-			<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-				<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-				<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-			</svg>
-			Applying...`;
-
-		try {
-			FrontendDebug.api('BracketEditor', 'Applying seed changes');
-
-			// Build seed updates array
-			const seedUpdates = [];
-			state.currentSeeds.forEach((seed, participantId) => {
-				seedUpdates.push({ participantId, seed });
-			});
-
-			const response = await csrfFetch(`/api/bracket-editor/apply-seeds/${state.selectedTournament.id}`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ seeds: seedUpdates })
-			});
-
-			if (!response.ok) throw new Error('Failed to apply seeds');
-
-			// Update original seeds to match current
-			state.currentSeeds.forEach((seed, id) => {
-				state.originalSeeds.set(id, seed);
-			});
-
-			state.hasChanges = false;
-			updateChangeIndicator();
-			renderParticipantList();
-
-			showAlert('Seeding changes applied successfully', 'success');
-			FrontendDebug.log('BracketEditor', 'Seeds applied successfully');
-
-		} catch (error) {
-			FrontendDebug.error('BracketEditor', 'Error applying changes', error);
-			showAlert('Failed to apply seeding changes', 'error');
-		} finally {
-			elements.applyBtn.disabled = false;
-			elements.applyBtn.innerHTML = `
-				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-				</svg>
-				Apply Changes`;
-		}
-	}
-
-	/**
-	 * Discard pending changes
-	 */
-	function discardChanges() {
-		if (!state.hasChanges) return;
-
-		const confirmed = confirm('Discard all unsaved changes?');
-		if (confirmed) {
-			resetToOriginal();
-			showAlert('Changes discarded', 'info');
-		}
-	}
-
-	/**
-	 * Handle search input
-	 */
-	function handleSearch(e) {
-		const query = e.target.value.toLowerCase().trim();
-		const items = elements.participantList.querySelectorAll('.participant-item');
-
-		items.forEach(item => {
-			const name = item.querySelector('.text-white')?.textContent?.toLowerCase() || '';
-			item.style.display = name.includes(query) ? '' : 'none';
-		});
 	}
 
 	/**
@@ -611,12 +481,8 @@ const BracketEditor = (function() {
 		FrontendDebug.ws('BracketEditor', 'Participant change', data);
 
 		if (state.selectedTournament && data.tournamentId === state.selectedTournament.id) {
-			// Reload tournament if we have no unsaved changes
-			if (!state.hasChanges) {
-				loadTournament(state.selectedTournament.id);
-			} else {
-				showAlert('Participant data changed. Reload to see updates.', 'info');
-			}
+			// Reload tournament to get updated participant data
+			loadTournament(state.selectedTournament.id);
 		}
 	}
 
@@ -626,10 +492,6 @@ const BracketEditor = (function() {
 	function showEditorUI() {
 		elements.emptyState.classList.add('hidden');
 		elements.seedingTools.classList.remove('hidden');
-		elements.actionButtons.classList.remove('hidden');
-		if (elements.participantEmptyState) {
-			elements.participantEmptyState.classList.add('hidden');
-		}
 	}
 
 	/**
@@ -640,23 +502,12 @@ const BracketEditor = (function() {
 		state.participants = [];
 		state.originalSeeds.clear();
 		state.currentSeeds.clear();
-		state.hasChanges = false;
 
 		elements.tournamentSelect.value = '';
 		elements.emptyState.classList.remove('hidden');
 		elements.seedingTools.classList.add('hidden');
-		elements.actionButtons.classList.add('hidden');
 		elements.formatBadge.classList.add('hidden');
-		if (elements.participantEmptyState) {
-			elements.participantEmptyState.classList.remove('hidden');
-		}
-		elements.participantList.innerHTML = `
-			<div id="participantEmptyState" class="p-4 text-center text-gray-400">
-				<p>No tournament selected</p>
-			</div>`;
-		elements.participantCount.textContent = '0 players';
 
-		updateChangeIndicator();
 		BracketCanvas.clear();
 	}
 
@@ -691,8 +542,6 @@ const BracketEditor = (function() {
 		applyEloSeeding,
 		sortAlphabetically,
 		reverseSeeds,
-		resetToOriginal,
-		applyChanges,
-		discardChanges
+		resetToOriginal
 	};
 })();

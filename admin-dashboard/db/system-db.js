@@ -51,11 +51,12 @@ function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_games_user_id ON games(user_id);
 
         -- User accounts (replaces users.json)
+        -- Note: Role column removed - each tenant has one user, no admin/user distinction
+        -- Superadmin is determined by userId === 1
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'user' CHECK(role IN ('admin', 'user', 'viewer')),
             email TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -268,9 +269,116 @@ function initDatabase() {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        -- =============================================================================
+        -- PHASE 2: Performance Monitoring Tables
+        -- =============================================================================
+
+        -- Store historical metrics for trend charts
+        CREATE TABLE IF NOT EXISTS metrics_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metric_type TEXT NOT NULL,  -- 'api_latency', 'memory', 'cpu', 'display_health'
+            metric_name TEXT NOT NULL,  -- endpoint name or resource name
+            value REAL NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_metrics_type_time ON metrics_history(metric_type, timestamp);
+
+        -- Alert thresholds configuration
+        CREATE TABLE IF NOT EXISTS alert_thresholds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metric_type TEXT NOT NULL UNIQUE,
+            warning_threshold REAL,
+            critical_threshold REAL,
+            enabled INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Alert history
+        CREATE TABLE IF NOT EXISTS alert_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metric_type TEXT NOT NULL,
+            metric_name TEXT,
+            severity TEXT CHECK(severity IN ('warning', 'critical')),
+            message TEXT NOT NULL,
+            value REAL,
+            acknowledged INTEGER DEFAULT 0,
+            acknowledged_by INTEGER,
+            acknowledged_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (acknowledged_by) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_history_unacked ON alert_history(acknowledged, created_at);
+
+        -- Insert default alert thresholds
+        INSERT OR IGNORE INTO alert_thresholds (metric_type, warning_threshold, critical_threshold) VALUES
+            ('api_latency', 500, 1000),        -- ms
+            ('memory_usage', 70, 90),           -- percent
+            ('cpu_usage', 70, 90),              -- percent
+            ('display_offline', 1, 3),          -- count
+            ('database_size', 500, 900);        -- MB
+
+        -- =============================================================================
+        -- PHASE 2: Display Fleet Management Tables
+        -- =============================================================================
+
+        -- Command history for audit
+        CREATE TABLE IF NOT EXISTS display_commands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            display_id TEXT NOT NULL,
+            user_id INTEGER,  -- Which user owns this display (multi-tenant)
+            command TEXT NOT NULL,  -- 'reboot', 'shutdown', 'refresh', 'debug_on', 'debug_off'
+            issued_by INTEGER NOT NULL,
+            issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            executed_at DATETIME,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'executed', 'failed', 'cancelled')),
+            error_message TEXT,
+            FOREIGN KEY (issued_by) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_display_commands_display ON display_commands(display_id, issued_at);
+        CREATE INDEX IF NOT EXISTS idx_display_commands_status ON display_commands(status);
+
+        -- =============================================================================
+        -- PHASE 2: Automated Backup System Tables
+        -- =============================================================================
+
+        -- Backup schedules
+        CREATE TABLE IF NOT EXISTS backup_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            database TEXT NOT NULL CHECK(database IN ('all', 'tournaments', 'players', 'system')),
+            cron_expression TEXT NOT NULL,  -- e.g., '0 2 * * *' for 2am daily
+            retention_days INTEGER DEFAULT 7,
+            enabled INTEGER DEFAULT 1,
+            last_run DATETIME,
+            last_status TEXT CHECK(last_status IN ('success', 'failed')),
+            next_run DATETIME,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        -- Backup history with status
+        CREATE TABLE IF NOT EXISTS backup_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER,  -- NULL for manual backups
+            filename TEXT NOT NULL,
+            database TEXT NOT NULL,
+            size_bytes INTEGER,
+            status TEXT CHECK(status IN ('success', 'failed', 'in_progress')),
+            error_message TEXT,
+            created_by INTEGER,
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            FOREIGN KEY (schedule_id) REFERENCES backup_schedules(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_history_schedule ON backup_history(schedule_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_backup_history_status ON backup_history(status);
+
         -- Indexes
         CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-        CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
         CREATE INDEX IF NOT EXISTS idx_auth_tracking_username ON auth_tracking(username);
         CREATE INDEX IF NOT EXISTS idx_auth_tracking_locked ON auth_tracking(locked_until);
         CREATE INDEX IF NOT EXISTS idx_system_settings_key ON system_settings(key);
@@ -290,6 +398,19 @@ function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_discord_settings_user ON discord_settings(user_id);
         CREATE INDEX IF NOT EXISTS idx_discord_settings_enabled ON discord_settings(is_enabled);
     `);
+
+    // Migration: Add active_tournament_id column to users table if not exists
+    // This column stores manual override for active tournament (NULL = auto-select)
+    try {
+        const userColumns = db.prepare("PRAGMA table_info(users)").all();
+        const hasActiveTournament = userColumns.some(col => col.name === 'active_tournament_id');
+        if (!hasActiveTournament) {
+            db.exec('ALTER TABLE users ADD COLUMN active_tournament_id INTEGER');
+            console.log('[System DB] Added active_tournament_id column to users table');
+        }
+    } catch (err) {
+        console.error('[System DB] Error adding active_tournament_id column:', err.message);
+    }
 
     console.log('[System DB] Database initialized at', DB_PATH);
     return db;
@@ -612,11 +733,12 @@ function getUserById(id) {
 
 /**
  * Create user
+ * Note: Role parameter removed - each tenant has one user
  */
-function createUser(username, passwordHash, role = 'user') {
+function createUser(username, passwordHash) {
     const result = getDb().prepare(
-        'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)'
-    ).run(username, passwordHash, role);
+        'INSERT INTO users (username, password_hash) VALUES (?, ?)'
+    ).run(username, passwordHash);
     return getUserById(result.lastInsertRowid);
 }
 
@@ -634,8 +756,52 @@ function updateUserPassword(id, passwordHash) {
  */
 function getAllUsers() {
     return getDb().prepare(
-        'SELECT id, username, role, email, created_at, updated_at FROM users'
+        'SELECT id, username, email, created_at, updated_at FROM users'
     ).all();
+}
+
+// =============================================================================
+// ACTIVE TOURNAMENT HELPERS
+// =============================================================================
+
+/**
+ * Get manually set active tournament ID for a user
+ * Returns NULL if user is in auto-select mode
+ * @param {number} userId - User ID
+ * @returns {number|null} Tournament ID or null
+ */
+function getManualActiveTournamentId(userId) {
+    const user = getDb().prepare('SELECT active_tournament_id FROM users WHERE id = ?').get(userId);
+    return user ? user.active_tournament_id : null;
+}
+
+/**
+ * Set manual active tournament for a user (overrides auto-select)
+ * Pass NULL to revert to auto-select mode
+ * @param {number} userId - User ID
+ * @param {number|null} tournamentId - Tournament ID or null for auto-select
+ */
+function setManualActiveTournamentId(userId, tournamentId) {
+    getDb().prepare(
+        'UPDATE users SET active_tournament_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(tournamentId, userId);
+}
+
+/**
+ * Clear manual active tournament (revert to auto-select)
+ * @param {number} userId - User ID
+ */
+function clearManualActiveTournament(userId) {
+    setManualActiveTournamentId(userId, null);
+}
+
+/**
+ * Check if user is in manual override mode for active tournament
+ * @param {number} userId - User ID
+ * @returns {boolean} True if manual override is set
+ */
+function isManualActiveTournamentMode(userId) {
+    return getManualActiveTournamentId(userId) !== null;
 }
 
 // =============================================================================
@@ -1406,6 +1572,453 @@ function getEnabledDiscordUsers() {
     `).all();
 }
 
+// =============================================================================
+// PHASE 2: METRICS HELPERS
+// =============================================================================
+
+/**
+ * Record a metric value
+ * @param {string} metricType - Type of metric (api_latency, memory, cpu, etc.)
+ * @param {string} metricName - Name of the specific metric
+ * @param {number} value - The metric value
+ */
+function recordMetric(metricType, metricName, value) {
+    getDb().prepare(`
+        INSERT INTO metrics_history (metric_type, metric_name, value)
+        VALUES (?, ?, ?)
+    `).run(metricType, metricName, value);
+}
+
+/**
+ * Get metrics history for a specific type
+ * @param {string} metricType - Type of metric
+ * @param {Object} options - Query options
+ * @returns {Array} Metric records
+ */
+function getMetricsHistory(metricType, options = {}) {
+    const { hours = 24, metricName = null, limit = 1000 } = options;
+    const cutoff = new Date();
+    cutoff.setHours(cutoff.getHours() - hours);
+
+    let sql = `
+        SELECT metric_type, metric_name, value, timestamp
+        FROM metrics_history
+        WHERE metric_type = ? AND timestamp >= ?
+    `;
+    const params = [metricType, cutoff.toISOString()];
+
+    if (metricName) {
+        sql += ' AND metric_name = ?';
+        params.push(metricName);
+    }
+
+    sql += ' ORDER BY timestamp DESC LIMIT ?';
+    params.push(limit);
+
+    return getDb().prepare(sql).all(...params);
+}
+
+/**
+ * Get latest metric values grouped by name
+ * @param {string} metricType - Type of metric
+ * @returns {Array} Latest values per metric name
+ */
+function getLatestMetrics(metricType) {
+    return getDb().prepare(`
+        SELECT metric_name, value, timestamp
+        FROM metrics_history m1
+        WHERE metric_type = ?
+        AND timestamp = (
+            SELECT MAX(timestamp)
+            FROM metrics_history m2
+            WHERE m2.metric_type = m1.metric_type
+            AND m2.metric_name = m1.metric_name
+        )
+    `).all(metricType);
+}
+
+/**
+ * Clean up old metrics
+ * @param {number} daysToKeep - Days to retain
+ * @returns {number} Number of deleted records
+ */
+function cleanupOldMetrics(daysToKeep = 7) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - daysToKeep);
+
+    const result = getDb().prepare(`
+        DELETE FROM metrics_history WHERE timestamp < ?
+    `).run(cutoff.toISOString());
+
+    return result.changes;
+}
+
+// =============================================================================
+// PHASE 2: ALERT HELPERS
+// =============================================================================
+
+/**
+ * Get all alert thresholds
+ * @returns {Array} Alert threshold records
+ */
+function getAlertThresholds() {
+    return getDb().prepare('SELECT * FROM alert_thresholds ORDER BY metric_type').all();
+}
+
+/**
+ * Update an alert threshold
+ * @param {string} metricType - Metric type
+ * @param {Object} data - Threshold data
+ */
+function updateAlertThreshold(metricType, data) {
+    const { warningThreshold, criticalThreshold, enabled } = data;
+    getDb().prepare(`
+        UPDATE alert_thresholds SET
+            warning_threshold = COALESCE(?, warning_threshold),
+            critical_threshold = COALESCE(?, critical_threshold),
+            enabled = COALESCE(?, enabled),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE metric_type = ?
+    `).run(warningThreshold, criticalThreshold, enabled, metricType);
+}
+
+/**
+ * Create an alert
+ * @param {Object} data - Alert data
+ * @returns {number} Alert ID
+ */
+function createAlert(data) {
+    const { metricType, metricName, severity, message, value } = data;
+    const result = getDb().prepare(`
+        INSERT INTO alert_history (metric_type, metric_name, severity, message, value)
+        VALUES (?, ?, ?, ?, ?)
+    `).run(metricType, metricName || null, severity, message, value);
+    return result.lastInsertRowid;
+}
+
+/**
+ * Get active (unacknowledged) alerts
+ * @returns {Array} Active alerts
+ */
+function getActiveAlerts() {
+    return getDb().prepare(`
+        SELECT * FROM alert_history
+        WHERE acknowledged = 0
+        ORDER BY created_at DESC
+    `).all();
+}
+
+/**
+ * Acknowledge an alert
+ * @param {number} alertId - Alert ID
+ * @param {number} userId - User acknowledging
+ */
+function acknowledgeAlert(alertId, userId) {
+    getDb().prepare(`
+        UPDATE alert_history SET
+            acknowledged = 1,
+            acknowledged_by = ?,
+            acknowledged_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(userId, alertId);
+}
+
+/**
+ * Get alert history
+ * @param {Object} options - Query options
+ * @returns {Array} Alert records
+ */
+function getAlertHistory(options = {}) {
+    const { limit = 100, offset = 0, severity = null, acknowledged = null } = options;
+
+    let sql = 'SELECT * FROM alert_history WHERE 1=1';
+    const params = [];
+
+    if (severity) {
+        sql += ' AND severity = ?';
+        params.push(severity);
+    }
+    if (acknowledged !== null) {
+        sql += ' AND acknowledged = ?';
+        params.push(acknowledged ? 1 : 0);
+    }
+
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    return getDb().prepare(sql).all(...params);
+}
+
+// =============================================================================
+// PHASE 2: DISPLAY COMMAND HELPERS
+// =============================================================================
+
+/**
+ * Record a display command
+ * @param {Object} data - Command data
+ * @returns {number} Command ID
+ */
+function recordDisplayCommand(data) {
+    const { displayId, userId, command, issuedBy } = data;
+    const result = getDb().prepare(`
+        INSERT INTO display_commands (display_id, user_id, command, issued_by)
+        VALUES (?, ?, ?, ?)
+    `).run(displayId, userId || null, command, issuedBy);
+    return result.lastInsertRowid;
+}
+
+/**
+ * Get display commands
+ * @param {Object} options - Query options
+ * @returns {Array} Command records
+ */
+function getDisplayCommands(options = {}) {
+    const { displayId = null, limit = 100, offset = 0 } = options;
+
+    let sql = `
+        SELECT dc.*, u.username as issued_by_username
+        FROM display_commands dc
+        LEFT JOIN users u ON dc.issued_by = u.id
+        WHERE 1=1
+    `;
+    const params = [];
+
+    if (displayId) {
+        sql += ' AND dc.display_id = ?';
+        params.push(displayId);
+    }
+
+    sql += ' ORDER BY dc.issued_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    return getDb().prepare(sql).all(...params);
+}
+
+/**
+ * Update display command status
+ * @param {number} commandId - Command ID
+ * @param {string} status - New status
+ * @param {string} errorMessage - Error message if failed
+ */
+function updateDisplayCommandStatus(commandId, status, errorMessage = null) {
+    getDb().prepare(`
+        UPDATE display_commands SET
+            status = ?,
+            executed_at = CASE WHEN ? IN ('executed', 'failed') THEN CURRENT_TIMESTAMP ELSE executed_at END,
+            error_message = ?
+        WHERE id = ?
+    `).run(status, status, errorMessage, commandId);
+}
+
+/**
+ * Get pending display commands for a specific display
+ * @param {string} displayId - Display ID
+ * @returns {Array} Pending commands
+ */
+function getPendingDisplayCommands(displayId) {
+    return getDb().prepare(`
+        SELECT * FROM display_commands
+        WHERE display_id = ? AND status = 'pending'
+        ORDER BY issued_at ASC
+    `).all(displayId);
+}
+
+// =============================================================================
+// PHASE 2: BACKUP SCHEDULE HELPERS
+// =============================================================================
+
+/**
+ * Get all backup schedules
+ * @returns {Array} Schedule records
+ */
+function getBackupSchedules() {
+    return getDb().prepare(`
+        SELECT bs.*, u.username as created_by_username
+        FROM backup_schedules bs
+        LEFT JOIN users u ON bs.created_by = u.id
+        ORDER BY bs.name
+    `).all();
+}
+
+/**
+ * Get backup schedule by ID
+ * @param {number} id - Schedule ID
+ * @returns {Object|null} Schedule record
+ */
+function getBackupScheduleById(id) {
+    return getDb().prepare(`
+        SELECT bs.*, u.username as created_by_username
+        FROM backup_schedules bs
+        LEFT JOIN users u ON bs.created_by = u.id
+        WHERE bs.id = ?
+    `).get(id);
+}
+
+/**
+ * Create a backup schedule
+ * @param {Object} data - Schedule data
+ * @returns {Object} Created schedule
+ */
+function createBackupSchedule(data) {
+    const { name, database, cronExpression, retentionDays, enabled, nextRun, createdBy } = data;
+    const result = getDb().prepare(`
+        INSERT INTO backup_schedules (name, database, cron_expression, retention_days, enabled, next_run, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(name, database, cronExpression, retentionDays || 7, enabled !== false ? 1 : 0, nextRun || null, createdBy);
+    return getBackupScheduleById(result.lastInsertRowid);
+}
+
+/**
+ * Update a backup schedule
+ * @param {number} id - Schedule ID
+ * @param {Object} data - Fields to update
+ * @returns {Object} Updated schedule
+ */
+function updateBackupSchedule(id, data) {
+    const updates = [];
+    const params = [];
+
+    if (data.name !== undefined) {
+        updates.push('name = ?');
+        params.push(data.name);
+    }
+    if (data.database !== undefined) {
+        updates.push('database = ?');
+        params.push(data.database);
+    }
+    if (data.cronExpression !== undefined) {
+        updates.push('cron_expression = ?');
+        params.push(data.cronExpression);
+    }
+    if (data.retentionDays !== undefined) {
+        updates.push('retention_days = ?');
+        params.push(data.retentionDays);
+    }
+    if (data.enabled !== undefined) {
+        updates.push('enabled = ?');
+        params.push(data.enabled ? 1 : 0);
+    }
+    if (data.nextRun !== undefined) {
+        updates.push('next_run = ?');
+        params.push(data.nextRun);
+    }
+
+    if (updates.length > 0) {
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(id);
+        getDb().prepare(`UPDATE backup_schedules SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    }
+
+    return getBackupScheduleById(id);
+}
+
+/**
+ * Delete a backup schedule
+ * @param {number} id - Schedule ID
+ * @returns {boolean} True if deleted
+ */
+function deleteBackupSchedule(id) {
+    const result = getDb().prepare('DELETE FROM backup_schedules WHERE id = ?').run(id);
+    return result.changes > 0;
+}
+
+/**
+ * Update schedule last run info
+ * @param {number} id - Schedule ID
+ * @param {string} status - 'success' or 'failed'
+ * @param {string} nextRun - Next run datetime
+ */
+function updateScheduleLastRun(id, status, nextRun) {
+    getDb().prepare(`
+        UPDATE backup_schedules SET
+            last_run = CURRENT_TIMESTAMP,
+            last_status = ?,
+            next_run = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(status, nextRun, id);
+}
+
+// =============================================================================
+// PHASE 2: BACKUP HISTORY HELPERS
+// =============================================================================
+
+/**
+ * Record backup start
+ * @param {Object} data - Backup info
+ * @returns {number} Backup history ID
+ */
+function recordBackupStart(data) {
+    const { scheduleId, filename, database, createdBy } = data;
+    const result = getDb().prepare(`
+        INSERT INTO backup_history (schedule_id, filename, database, status, created_by)
+        VALUES (?, ?, ?, 'in_progress', ?)
+    `).run(scheduleId || null, filename, database, createdBy || null);
+    return result.lastInsertRowid;
+}
+
+/**
+ * Record backup completion
+ * @param {number} id - Backup history ID
+ * @param {string} status - 'success' or 'failed'
+ * @param {number} sizeBytes - File size in bytes
+ * @param {string} errorMessage - Error message if failed
+ */
+function recordBackupComplete(id, status, sizeBytes = null, errorMessage = null) {
+    getDb().prepare(`
+        UPDATE backup_history SET
+            status = ?,
+            size_bytes = ?,
+            error_message = ?,
+            completed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(status, sizeBytes, errorMessage, id);
+}
+
+/**
+ * Get backup history
+ * @param {Object} options - Query options
+ * @returns {Array} Backup history records
+ */
+function getBackupHistory(options = {}) {
+    const { scheduleId = null, limit = 100, offset = 0 } = options;
+
+    let sql = `
+        SELECT bh.*, bs.name as schedule_name, u.username as created_by_username
+        FROM backup_history bh
+        LEFT JOIN backup_schedules bs ON bh.schedule_id = bs.id
+        LEFT JOIN users u ON bh.created_by = u.id
+        WHERE 1=1
+    `;
+    const params = [];
+
+    if (scheduleId) {
+        sql += ' AND bh.schedule_id = ?';
+        params.push(scheduleId);
+    }
+
+    sql += ' ORDER BY bh.started_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    return getDb().prepare(sql).all(...params);
+}
+
+/**
+ * Clean up old backup records (not files, just DB records)
+ * @param {number} daysToKeep - Days to retain records
+ * @returns {number} Number of deleted records
+ */
+function cleanupOldBackupRecords(daysToKeep = 90) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - daysToKeep);
+
+    const result = getDb().prepare(`
+        DELETE FROM backup_history WHERE started_at < ?
+    `).run(cutoff.toISOString());
+
+    return result.changes;
+}
+
 module.exports = {
     // Core functions
     initDatabase,
@@ -1438,6 +2051,12 @@ module.exports = {
     createUser,
     updateUserPassword,
     getAllUsers,
+
+    // Active Tournament
+    getManualActiveTournamentId,
+    setManualActiveTournamentId,
+    clearManualActiveTournament,
+    isManualActiveTournamentMode,
 
     // Auth tracking
     getAuthTracking,
@@ -1491,5 +2110,39 @@ module.exports = {
     getDiscordSettings,
     saveDiscordSettings,
     deleteDiscordSettings,
-    getEnabledDiscordUsers
+    getEnabledDiscordUsers,
+
+    // Phase 2: Metrics
+    recordMetric,
+    getMetricsHistory,
+    cleanupOldMetrics,
+    getLatestMetrics,
+
+    // Phase 2: Alerts
+    getAlertThresholds,
+    updateAlertThreshold,
+    createAlert,
+    getActiveAlerts,
+    acknowledgeAlert,
+    getAlertHistory,
+
+    // Phase 2: Display Commands
+    recordDisplayCommand,
+    getDisplayCommands,
+    updateDisplayCommandStatus,
+    getPendingDisplayCommands,
+
+    // Phase 2: Backup Schedules
+    getBackupSchedules,
+    getBackupScheduleById,
+    createBackupSchedule,
+    updateBackupSchedule,
+    deleteBackupSchedule,
+    updateScheduleLastRun,
+
+    // Phase 2: Backup History
+    recordBackupStart,
+    recordBackupComplete,
+    getBackupHistory,
+    cleanupOldBackupRecords
 };

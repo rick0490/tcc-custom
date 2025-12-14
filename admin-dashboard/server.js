@@ -13,6 +13,7 @@ const sharp = require('sharp');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
+const os = require('os');
 const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const webpush = require('web-push');
@@ -32,6 +33,7 @@ const sponsorService = require('./services/sponsor');
 const bracketEngine = require('./services/bracket-engine');
 const bracketRenderer = require('./services/bracket-renderer');
 const discordNotify = require('./services/discord-notify');
+const activeTournamentService = require('./services/active-tournament');
 
 // PDF Report Color Palette
 const PDF_COLORS = {
@@ -641,7 +643,7 @@ async function readStateFile(filePath) {
 
 // Initialize routes with dependencies
 localRoutes.tournaments.init({ io });
-localRoutes.matches.init({ io });
+localRoutes.matches.init({ io, recordMatchChange });
 localRoutes.participants.init({ participantDb, tournamentDb, readStateFile, io });
 localRoutes.stations.init({ io });
 localRoutes.flyers.init({ axios, requireAuthAPI, logActivity, io });
@@ -663,6 +665,10 @@ app.use('/api/bracket-editor', localRoutes.bracketEditor.router);
 
 // Signup routes (public - no auth required)
 app.use('/api/auth', localRoutes.signup);
+
+// Public tournament API (for tournament signup PWA - no auth required)
+localRoutes.publicTournament.init({ tournamentDb, participantDb, io });
+app.use('/api/public', localRoutes.publicTournament);
 
 // Platform/Admin routes (superadmin only - god mode)
 app.use('/api/admin', localRoutes.platform);
@@ -840,14 +846,16 @@ const rateLimitedAxios = {
 // ============================================
 // MATCH POLLING SCHEDULER (Centralized)
 // ============================================
-// Polls Challonge for matches and pushes to MagicMirror when in ACTIVE mode or dev mode
+// Polls local database for matches and pushes to displays
+// Multi-tenant mode: polls all users with active underway tournaments
 
 const matchPollingState = {
 	intervalId: null,
 	isPolling: false,
 	lastPollTime: null,
 	pollIntervalMs: 15000,  // 15 seconds default
-	devModePollIntervalMs: 5000  // 5 seconds in dev mode
+	devModePollIntervalMs: 5000,  // 5 seconds in dev mode
+	multiTenantMode: true  // Always-Live Displays: poll all users with active tournaments
 };
 
 // ============================================
@@ -1376,6 +1384,207 @@ async function fetchAndPushMatches(specificTournamentId = null) {
 	}
 }
 
+// ============================================
+// MULTI-TENANT MATCH POLLING (Always-Live Displays)
+// ============================================
+
+/**
+ * Fetch and push matches for a specific user's active tournament
+ * Uses activeTournamentService to determine which tournament to poll
+ * @param {number} userId - User ID
+ */
+async function fetchAndPushMatchesForUser(userId) {
+	if (!userId) {
+		console.log('[Match Polling] No userId provided for user-specific poll');
+		return;
+	}
+
+	try {
+		// Get user's active tournament via the active tournament service
+		const activeResult = activeTournamentService.getActiveTournament(userId);
+
+		if (!activeResult.tournament) {
+			// No active tournament for this user - skip silently
+			return;
+		}
+
+		const tournament = activeResult.tournament;
+
+		// Only poll underway tournaments
+		if (tournament.state !== 'underway') {
+			return;
+		}
+
+		const dbTournamentId = tournament.id;
+		console.log(`[Match Polling] User ${userId}: Polling tournament "${tournament.name}" (${tournament.url_slug})`);
+
+		// Fetch data from local database
+		const matches = matchDb.getByTournament(dbTournamentId);
+		const participants = participantDb.getByTournament(dbTournamentId);
+		const stations = stationDb.getByTournament(dbTournamentId);
+
+		// Build participant name lookup
+		const participantsCache = {};
+		participants.forEach(p => {
+			participantsCache[String(p.id)] = p.name || p.display_name || `Seed ${p.seed}`;
+		});
+
+		// Build station maps
+		const stationMap = {};
+		const matchStationMap = {};
+		stations.forEach(s => {
+			stationMap[String(s.id)] = s.name;
+			if (s.current_match_id) {
+				matchStationMap[String(s.current_match_id)] = s.name;
+			}
+		});
+
+		// Transform matches to camelCase
+		const simplified = matches.map(m => ({
+			id: m.id,
+			state: m.state,
+			round: m.round,
+			identifier: m.identifier,
+			suggestedPlayOrder: m.suggested_play_order || 9999,
+			player1Id: m.player1_id,
+			player2Id: m.player2_id,
+			player1Name: m.player1_name || participantsCache[String(m.player1_id)] || 'TBD',
+			player2Name: m.player2_name || participantsCache[String(m.player2_id)] || 'TBD',
+			stationId: m.station_id,
+			stationName: m.station_name || matchStationMap[String(m.id)] || null,
+			underwayAt: m.underway_at,
+			winnerId: m.winner_id,
+			winnerName: m.winner_name
+		}));
+
+		// Calculate tournament completion for podium
+		let podium = { isComplete: false, first: null, second: null, third: null, has3rdPlace: false };
+		const has3rdPlaceMatch = matches.some(m => m.identifier === '3P');
+		podium.has3rdPlace = has3rdPlaceMatch;
+
+		if (matches.length > 0 && matches.every(m => m.state === 'complete')) {
+			const finalsMatch = matches
+				.filter(m => m.round > 0 && m.identifier !== '3P')
+				.sort((a, b) => b.round - a.round)[0];
+
+			if (finalsMatch && finalsMatch.winner_id) {
+				const loserId = finalsMatch.winner_id === finalsMatch.player1_id
+					? finalsMatch.player2_id
+					: finalsMatch.player1_id;
+
+				podium.isComplete = true;
+				podium.first = participantsCache[String(finalsMatch.winner_id)] || 'Unknown';
+				podium.second = participantsCache[String(loserId)] || 'Unknown';
+
+				const thirdMatch = matches.find(m => m.identifier === '3P' && m.state === 'complete');
+				if (thirdMatch && thirdMatch.winner_id) {
+					podium.third = participantsCache[String(thirdMatch.winner_id)] || null;
+				}
+			}
+		}
+
+		// Calculate match statistics
+		const completedCount = simplified.filter(m => m.state === 'complete').length;
+		const underwayCount = simplified.filter(m => m.state === 'underway' || (m.state === 'open' && m.underwayAt)).length;
+		const openCount = simplified.filter(m => m.state === 'open' && !m.underwayAt).length;
+		const totalCount = simplified.length;
+
+		// Find next suggested match
+		const nextMatch = findNextSuggestedMatch(simplified, Object.keys(matchStationMap));
+
+		const pushTimestamp = new Date().toISOString();
+		const payload = {
+			tournamentId: tournament.url_slug,
+			matches: simplified,
+			podium: podium,
+			availableStations: Object.values(stationMap),
+			participantsCache: participantsCache,
+			timestamp: pushTimestamp,
+			source: 'local',
+			userId: userId,  // Include userId for display targeting
+			metadata: {
+				nextMatchId: nextMatch?.id || null,
+				nextMatchPlayers: nextMatch ? {
+					player1: nextMatch.player1Name,
+					player2: nextMatch.player2Name
+				} : null,
+				completedCount,
+				underwayCount,
+				openCount,
+				totalCount,
+				progressPercent: totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
+			}
+		};
+
+		// Compute hash for deduplication
+		const payloadHash = require('crypto')
+			.createHash('md5')
+			.update(JSON.stringify({ matches: simplified, podium: podium, userId }))
+			.digest('hex');
+
+		// Save to cache (per-user)
+		saveMatchDataCache(dbTournamentId, payload);
+
+		// Broadcast to user's displays only (multi-tenant isolation)
+		broadcastMatchDataToUser(userId, payload, payloadHash);
+
+		console.log(`[Match Polling] User ${userId}: Pushed ${simplified.length} matches for "${tournament.name}"`);
+
+	} catch (error) {
+		console.error(`[Match Polling] Error for user ${userId}:`, error.message);
+	}
+}
+
+/**
+ * Poll all active users who have underway tournaments
+ * This is the multi-tenant polling entry point
+ */
+async function pollAllActiveUsers() {
+	try {
+		// Get all users from system database
+		const users = systemDb.getAllUsers();
+
+		if (!users || users.length === 0) {
+			return;
+		}
+
+		let polledCount = 0;
+
+		for (const user of users) {
+			try {
+				// Check if user has an underway active tournament
+				const activeResult = activeTournamentService.getActiveTournament(user.id);
+
+				if (activeResult.tournament && activeResult.tournament.state === 'underway') {
+					await fetchAndPushMatchesForUser(user.id);
+					polledCount++;
+				}
+			} catch (userError) {
+				console.error(`[Match Polling] Error polling for user ${user.id}:`, userError.message);
+			}
+		}
+
+		if (polledCount > 0) {
+			console.log(`[Match Polling] Multi-tenant poll complete: ${polledCount} active tournaments`);
+		}
+	} catch (error) {
+		console.error('[Match Polling] Error in pollAllActiveUsers:', error.message);
+	}
+}
+
+/**
+ * Trigger immediate poll for a specific user
+ * Call this after match updates for faster display sync
+ * @param {number} userId - User ID
+ */
+function triggerImmediatePollForUser(userId) {
+	if (userId) {
+		fetchAndPushMatchesForUser(userId).catch(err => {
+			console.error(`[Match Polling] Immediate poll failed for user ${userId}:`, err.message);
+		});
+	}
+}
+
 // Start match polling
 function startMatchPolling() {
 	if (matchPollingState.intervalId) {
@@ -1390,17 +1599,28 @@ function startMatchPolling() {
 	}
 
 	const interval = getMatchPollInterval();
-	console.log(`[Match Polling] Starting - polling every ${interval / 1000} seconds`);
+	const modeLabel = matchPollingState.multiTenantMode ? 'multi-tenant' : 'single-tenant';
+	console.log(`[Match Polling] Starting ${modeLabel} mode - polling every ${interval / 1000} seconds`);
 
 	matchPollingState.isPolling = true;
 
 	// Poll immediately
-	fetchAndPushMatches();
+	if (matchPollingState.multiTenantMode) {
+		// Multi-tenant: poll all users with active underway tournaments
+		pollAllActiveUsers();
+	} else {
+		// Legacy single-tenant: use tournament-state.json
+		fetchAndPushMatches();
+	}
 
 	// Then at interval
 	matchPollingState.intervalId = setInterval(() => {
 		if (shouldPollMatches()) {
-			fetchAndPushMatches();
+			if (matchPollingState.multiTenantMode) {
+				pollAllActiveUsers();
+			} else {
+				fetchAndPushMatches();
+			}
 		} else {
 			stopMatchPolling();
 		}
@@ -1688,22 +1908,23 @@ function requireAuthAPI(req, res, next) {
 	});
 }
 
-// Admin-only middleware
+// Admin-only middleware (DEPRECATED - now alias for requireAuthAPI)
+// Role distinction removed - all authenticated users have full tenant access
 function requireAdmin(req, res, next) {
-	if (req.session && req.session.userId && req.session.role === 'admin') {
+	if (req.session && req.session.userId) {
 		return next();
 	}
-	res.status(403).json({
+	res.status(401).json({
 		success: false,
-		error: 'Admin access required'
+		error: 'Authentication required'
 	});
 }
 
-// Check if user is superadmin (admin with userId 1, or configured superadmin)
+// Check if user is superadmin (userId 1 is superadmin)
+// Role distinction removed - superadmin is simply userId === 1
 function isSuperadmin(req) {
 	if (!req.session || !req.session.userId) return false;
-	// Legacy support: admin with userId 1 is superadmin
-	return req.session.role === 'admin' && req.session.userId === 1;
+	return req.session.userId === 1;
 }
 
 // API Token OR Session auth middleware (for device access like Stream Deck)
@@ -1819,6 +2040,47 @@ io.on('connection', (socket) => {
 			}
 		} catch (err) {
 			console.error(`[WebSocket] Error sending sponsor state: ${err.message}`);
+		}
+
+		// Send active tournament for this user (Always-Live Displays feature)
+		if (userId) {
+			try {
+				const activeResult = activeTournamentService.getActiveTournament(userId);
+				if (activeResult.tournament) {
+					const tournament = activeResult.tournament;
+					const participants = participantDb.getByTournament(tournament.id);
+					const matches = matchDb.getByTournament(tournament.id);
+
+					socket.emit('tournament:activated', {
+						tournament: {
+							id: tournament.id,
+							url_slug: tournament.url_slug,
+							name: tournament.name,
+							game_name: tournament.game_name,
+							tournament_type: tournament.tournament_type,
+							state: tournament.state,
+							bracketUrl: `${process.env.BRACKET_API_URL || 'http://localhost:2053'}/bracket/${tournament.url_slug}`
+						},
+						participants,
+						matches,
+						mode: activeResult.mode,
+						timestamp: new Date().toISOString()
+					});
+					console.log(`[WebSocket] Sent active tournament "${tournament.name}" to ${displayType} (${activeResult.mode} mode)`);
+				} else {
+					// No active tournament - send null so display shows appropriate message
+					socket.emit('tournament:activated', {
+						tournament: null,
+						participants: [],
+						matches: [],
+						mode: activeResult.mode,
+						timestamp: new Date().toISOString()
+					});
+					console.log(`[WebSocket] No active tournament for user:${userId}, sent null`);
+				}
+			} catch (err) {
+				console.error(`[WebSocket] Error sending active tournament: ${err.message}`);
+			}
 		}
 
 		// Acknowledge registration
@@ -2082,7 +2344,6 @@ app.post('/api/auth/login', async (req, res) => {
 	clearFailedAttempts(username);
 	req.session.userId = user.id;
 	req.session.username = user.username;
-	req.session.role = user.role;
 
 	// Log activity
 	logActivity(user.id, user.username, ACTIVITY_TYPES.ADMIN_LOGIN, {
@@ -2102,8 +2363,7 @@ app.post('/api/auth/login', async (req, res) => {
 			success: true,
 			user: {
 				id: user.id,
-				username: user.username,
-				role: user.role
+				username: user.username
 			}
 		});
 	});
@@ -2151,8 +2411,7 @@ app.get('/api/auth/status', requireAuthAPI, (req, res) => {
 		isSuperadmin: isSuperadmin(req),
 		user: {
 			id: user.id,
-			username: user.username,
-			role: user.role
+			username: user.username
 		},
 		session: {
 			timeoutMs: sessionTimeoutMs,
@@ -3042,6 +3301,16 @@ app.use('/api/status', requireTokenOrSessionAuth);
 app.use('/api/tournament', requireAuthAPI);
 // Note: /api/flyers handles auth internally (preview routes are public)
 app.use('/api/flyer', requireAuthAPI);
+// Public endpoint for bracket-display service to get theme settings (no auth required)
+app.get('/api/settings/bracket-display', (req, res) => {
+	const systemSettings = loadSystemSettings();
+	const bracketDisplay = systemSettings?.bracketDisplay || {};
+	res.json({
+		success: true,
+		theme: bracketDisplay.theme || 'midnight'
+	});
+});
+
 app.use('/api/tournaments', requireAuthAPI);
 app.use('/api/test-connection', requireAuthAPI);
 app.use('/api/participants', requireTokenOrSessionAuth);
@@ -3079,6 +3348,12 @@ app.get('/api/status', async (req, res) => {
 					state: bracketState,
 					port: 2053
 				}
+			},
+			server: {
+				hostname: os.hostname(),
+				nodeVersion: process.version,
+				uptime: process.uptime(),
+				memoryUsage: process.memoryUsage()
 			}
 		});
 	} catch (error) {
@@ -3478,8 +3753,14 @@ app.get('/api/matches/cache-status', requireAuthAPI, (req, res) => {
 });
 
 // Setup tournament on both modules (tcc-custom: uses local database)
+// DEPRECATED: Use POST /api/tournament/activate/:tournamentId instead
+// This endpoint is maintained for backward compatibility
 app.post('/api/tournament/setup', async (req, res) => {
 	const { tournamentId, registrationWindowHours, signupCap } = req.body;
+	const userId = req.session?.userId;
+
+	// Log deprecation warning
+	console.warn('[DEPRECATED] POST /api/tournament/setup called. Use POST /api/tournament/activate/:tournamentId instead.');
 
 	// Validation - only tournamentId is required
 	if (!tournamentId) {
@@ -3501,6 +3782,36 @@ app.post('/api/tournament/setup', async (req, res) => {
 				success: false,
 				error: 'Tournament not found in local database'
 			});
+		}
+
+		// Always-Live Displays: Set this as the active tournament (manual override)
+		if (userId) {
+			const activateResult = activeTournamentService.setActiveTournament(userId, tournament.id);
+			if (activateResult.success) {
+				console.log(`[Tournament Setup] Activated tournament "${tournament.name}" for user:${userId}`);
+
+				// Broadcast activation to user's displays
+				if (io) {
+					const participants = participantDb.getByTournament(tournament.id);
+					const matches = matchDb.getByTournament(tournament.id);
+
+					io.to(`user:${userId}`).emit('tournament:activated', {
+						tournament: {
+							id: tournament.id,
+							url_slug: tournament.url_slug,
+							name: tournament.name,
+							game_name: tournament.game_name,
+							tournament_type: tournament.tournament_type,
+							state: tournament.state,
+							bracketUrl: `${process.env.BRACKET_API_URL || 'http://localhost:2053'}/bracket/${tournament.url_slug}`
+						},
+						participants,
+						matches,
+						mode: 'manual',
+						timestamp: new Date().toISOString()
+					});
+				}
+			}
 		}
 
 		// Build bracket URL for native rendering (tcc-custom uses local bracket display)
@@ -3527,11 +3838,16 @@ app.post('/api/tournament/setup', async (req, res) => {
 			errors.push(`Match module: ${matchErr.message}`);
 		}
 
+		// Get bracket display theme from settings (used for both HTTP and WebSocket)
+		const bracketSettings = loadSystemSettings()?.bracketDisplay || {};
+		const bracketTheme = bracketSettings.theme || 'midnight';
+
 		// Try bracket module
 		try {
 			const bracketResponse = await axios.post(`${process.env.BRACKET_API_URL}/api/bracket/update`, {
 				tournamentId: tournamentId,
-				bracketUrl: bracketUrl
+				bracketUrl: bracketUrl,
+				theme: bracketTheme
 			}, { timeout: 5000 });
 			results.bracket = bracketResponse.data;
 		} catch (bracketErr) {
@@ -3540,7 +3856,15 @@ app.post('/api/tournament/setup', async (req, res) => {
 		}
 
 		// Broadcast tournament deployed event so dashboard updates immediately
-		// Include full tournament object for bracket-display to render without HTTP fetch
+		// Include full tournament object and participants for bracket-display to render without HTTP fetch
+		// This enables bracket preview even before tournament starts (shows seeded positions)
+		let participants = [];
+		try {
+			participants = participantDb.getByTournament(tournament.id);
+		} catch (pErr) {
+			console.error('Failed to fetch participants for broadcast:', pErr.message);
+		}
+
 		if (io) {
 			io.emit('tournament:deployed', {
 				tournamentId: tournamentId,
@@ -3552,7 +3876,9 @@ app.post('/api/tournament/setup', async (req, res) => {
 					tournament_type: tournament.tournament_type,
 					state: tournament.state,
 					bracketUrl: bracketUrl
-				}
+				},
+				participants: participants,
+				theme: bracketTheme
 			});
 		}
 
@@ -4447,8 +4773,18 @@ app.get('/api/matches/:tournamentId/history', requireTokenOrSessionAuth, (req, r
 app.post('/api/matches/:tournamentId/undo', requireTokenOrSessionAuth, async (req, res) => {
 	const { tournamentId } = req.params;
 	const username = req.session?.user?.username || req.tokenUsername || 'unknown';
+	const userId = req.session?.userId;
 
-	const history = matchHistory.get(tournamentId);
+	// Resolve tournament (may be ID or slug)
+	const tournament = tournamentDb.getById(parseInt(tournamentId)) || tournamentDb.getBySlug(tournamentId);
+	if (!tournament) {
+		return res.status(404).json({
+			success: false,
+			message: 'Tournament not found'
+		});
+	}
+
+	const history = matchHistory.get(tournament.id.toString()) || matchHistory.get(tournamentId);
 	if (!history || history.length === 0) {
 		return res.json({
 			success: false,
@@ -4459,43 +4795,9 @@ app.post('/api/matches/:tournamentId/undo', requireTokenOrSessionAuth, async (re
 	const lastChange = history[0];
 
 	try {
-		// Reopen the match to allow changes
-		let reopenSuccess = false;
-		try {
-			const reopenResponse = await challongeV2Request('PUT', `/tournaments/${tournamentId}/matches/${lastChange.matchId}/change_state.json`, {
-				data: {
-					type: 'MatchState',
-					attributes: {
-						state: 'reopen'
-					}
-				}
-			});
-			reopenSuccess = true;
-		} catch (v2Error) {
-			// If v2.1 returns 500, fall back to v1 API
-			if (v2Error.response?.status === 500) {
-				console.log('[Undo] v2.1 API returned 500, trying v1 fallback...');
-				try {
-					const apiKey = getLegacyApiKey();
-					if (apiKey) {
-						await rateLimitedAxios.post(
-							`https://api.challonge.com/v1/tournaments/${tournamentId}/matches/${lastChange.matchId}/reopen.json`,
-							null,
-							{
-								params: { api_key: apiKey },
-								timeout: 15000
-							}
-						);
-						reopenSuccess = true;
-						console.log('[Undo] v1 fallback succeeded');
-					}
-				} catch (v1Error) {
-					console.error('[Undo] v1 fallback also failed:', v1Error.message);
-				}
-			}
-		}
-
-		if (!reopenSuccess) {
+		// Reopen the match using local database
+		const reopenedMatch = matchDb.reopen(lastChange.matchId);
+		if (!reopenedMatch) {
 			return res.status(500).json({
 				success: false,
 				message: 'Failed to reopen match for undo'
@@ -4506,38 +4808,40 @@ app.post('/api/matches/:tournamentId/undo', requireTokenOrSessionAuth, async (re
 		history.shift();
 
 		// Invalidate matches cache
-		cacheDb.invalidateCache('matches', tournamentId);
+		cacheDb.invalidateCache('matches', tournament.id.toString());
 
-		// Trigger match data refresh
-		fetchAndPushMatches().catch(err => {
-			console.error('[Undo] Background fetch/push failed:', err.message);
-		});
+		// Broadcast match update to refresh displays (multi-tenant)
+		const matches = matchDb.getByTournament(tournament.id);
+		broadcastToUser('matches:update', {
+			tournamentId: tournament.url_slug,
+			matches: matches,
+			action: 'undo'
+		}, userId);
 
 		// Log activity
-		logActivity({
-			action: 'match_undo',
-			details: `Match ${lastChange.matchId} undone by ${username} (was: ${lastChange.action})`,
-			user: username,
-			tournamentId,
-			matchId: lastChange.matchId
+		logActivity(userId, username, 'match_undo', {
+			matchId: lastChange.matchId,
+			undoneAction: lastChange.action,
+			tournamentId: tournament.url_slug
 		});
 
-		// Broadcast undo event
-		io.emit('match:undo', {
-			tournamentId,
+		// Broadcast undo event (multi-tenant)
+		broadcastToUser('match:undo', {
+			tournamentId: tournament.url_slug,
 			matchId: lastChange.matchId,
 			undoneAction: lastChange.action,
 			undoneBy: username,
 			timestamp: new Date().toISOString()
-		});
+		}, userId);
 
-		console.log(`[UNDO] Match ${lastChange.matchId} undone by ${username}`);
+		console.log(`[UNDO] Match ${lastChange.matchId} undone by ${username} (tournament: ${tournament.url_slug})`);
 
 		res.json({
 			success: true,
 			message: `Undone: ${lastChange.action} on match ${lastChange.matchId}`,
 			undoneChange: lastChange,
-			remainingHistory: history.length
+			remainingHistory: history.length,
+			reopenedMatch: reopenedMatch
 		});
 	} catch (error) {
 		console.error('[Undo] Error:', error.message);
@@ -6662,7 +6966,6 @@ app.get('/api/users', requireAuthAPI, requireAdmin, (req, res) => {
 	const safeUsers = usersData.users.map(u => ({
 		id: u.id,
 		username: u.username,
-		role: u.role,
 		createdAt: u.createdAt
 	}));
 
@@ -6674,7 +6977,7 @@ app.get('/api/users', requireAuthAPI, requireAdmin, (req, res) => {
 
 // Add new user (admin only)
 app.post('/api/users', requireAuthAPI, requireAdmin, async (req, res) => {
-	const { username, password, role } = req.body;
+	const { username, password } = req.body;
 
 	if (!username || !password) {
 		return res.status(400).json({
@@ -6709,7 +7012,6 @@ app.post('/api/users', requireAuthAPI, requireAdmin, async (req, res) => {
 		id: Math.max(...usersData.users.map(u => u.id), 0) + 1,
 		username,
 		password: hashedPassword,
-		role: role || 'user',
 		createdAt: new Date().toISOString()
 	};
 
@@ -6721,7 +7023,6 @@ app.post('/api/users', requireAuthAPI, requireAdmin, async (req, res) => {
 		user: {
 			id: newUser.id,
 			username: newUser.username,
-			role: newUser.role,
 			createdAt: newUser.createdAt
 		}
 	});
@@ -6730,7 +7031,7 @@ app.post('/api/users', requireAuthAPI, requireAdmin, async (req, res) => {
 // Update user (admin only)
 app.put('/api/users/:id', requireAuthAPI, requireAdmin, async (req, res) => {
 	const userId = parseInt(req.params.id);
-	const { username, password, role } = req.body;
+	const { username, password } = req.body;
 
 	const usersData = loadUsers();
 	const userIndex = usersData.users.findIndex(u => u.id === userId);
@@ -6767,10 +7068,6 @@ app.put('/api/users/:id', requireAuthAPI, requireAdmin, async (req, res) => {
 		usersData.users[userIndex].password = hashedPassword;
 	}
 
-	if (role) {
-		usersData.users[userIndex].role = role;
-	}
-
 	saveUsers(usersData);
 
 	res.json({
@@ -6778,7 +7075,6 @@ app.put('/api/users/:id', requireAuthAPI, requireAdmin, async (req, res) => {
 		user: {
 			id: usersData.users[userIndex].id,
 			username: usersData.users[userIndex].username,
-			role: usersData.users[userIndex].role,
 			createdAt: usersData.users[userIndex].createdAt
 		}
 	});
@@ -7521,11 +7817,12 @@ discordNotify.init({
 	}
 });
 
-// Initialize settings routes with Discord notification service
+// Initialize settings routes with Discord notification service and Socket.IO
 localRoutes.settings.init({
 	rateLimiter: null,  // Not used in tcc-custom
 	broadcastPushNotification,
-	discordNotify
+	discordNotify,
+	io
 });
 
 // Set Discord notification service on routes that need it

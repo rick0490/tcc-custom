@@ -13,30 +13,143 @@ let stationSettings = { autoAssign: false, onlyStartWithStations: false };
 let tournamentState = null;
 let isPollingActive = true;
 
+// WebSocket state
+let wsConnected = false;
+let unsubscribeWs = null;
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
-	console.log('Match Control page loaded');
+	FrontendDebug.log('Matches', 'Initializing match control page...');
 
 	// Initialize last updated timestamp
 	initLastUpdated('matchesLastUpdated', refreshMatches, { prefix: 'Updated', thresholds: { fresh: 15, stale: 60 } });
 
 	await loadTournaments();
 
-	// Start polling with visibility awareness
+	// Initialize WebSocket for real-time updates
+	initWebSocket();
+
+	// Start polling with visibility awareness (as fallback if WebSocket not available)
 	startPolling();
 	setupVisibilityHandler(
-		() => { isPollingActive = true; if (selectedTournamentId) refreshMatches(); },
+		() => { isPollingActive = true; if (selectedTournamentId && !wsConnected) refreshMatches(); },
 		() => { isPollingActive = false; }
 	);
+
+	FrontendDebug.log('Matches', 'Initialization complete', { selectedTournamentId, wsConnected });
 });
 
-function startPolling() {
+// WebSocket initialization for real-time match updates
+function initWebSocket() {
+	if (!WebSocketManager.init()) {
+		FrontendDebug.warn('Matches', 'WebSocket not available, using polling');
+		return;
+	}
+
+	// Subscribe to match and station events
+	unsubscribeWs = WebSocketManager.subscribeMany({
+		'matches:update': handleMatchUpdate,
+		[WS_EVENTS.MATCH_UPDATED]: handleMatchUpdatedEvent,
+		[WS_EVENTS.MATCH_SCORED]: handleMatchUpdatedEvent,
+		[WS_EVENTS.MATCH_STARTED]: handleMatchUpdatedEvent,
+		[WS_EVENTS.STATION_CREATED]: handleStationChange,
+		[WS_EVENTS.STATION_DELETED]: handleStationChange,
+		[WS_EVENTS.STATION_ASSIGNED]: handleStationAssigned,
+		[WS_EVENTS.TOURNAMENT_STARTED]: handleTournamentStarted,
+		[WS_EVENTS.TOURNAMENT_RESET]: handleTournamentReset
+	});
+
+	WebSocketManager.onConnection('connect', () => {
+		FrontendDebug.ws('Matches', 'WebSocket connected');
+		wsConnected = true;
+		// Reduce polling interval when WebSocket is connected
+		stopPolling();
+		startPolling(30000); // 30 second backup polling
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		FrontendDebug.ws('Matches', 'WebSocket disconnected, increasing poll rate');
+		wsConnected = false;
+		// Increase polling when WebSocket disconnects
+		stopPolling();
+		startPolling(10000); // Back to 10 second polling
+	});
+}
+
+// Handle match update from WebSocket
+function handleMatchUpdate(data) {
+	// Only handle updates for the currently selected tournament
+	if (!selectedTournamentId || data.tournamentId !== selectedTournamentId) return;
+
+	FrontendDebug.ws('Matches', 'Match update received', { action: data.action, tournamentId: data.tournamentId });
+
+	// Refresh matches to get latest state
+	refreshMatches();
+}
+
+// Handle specific match events
+function handleMatchUpdatedEvent(data) {
+	if (!selectedTournamentId) return;
+	FrontendDebug.ws('Matches', 'Match event received', data);
+	refreshMatches();
+}
+
+// Handle station changes
+function handleStationChange(data) {
+	if (!selectedTournamentId) return;
+	FrontendDebug.ws('Matches', 'Station change event', data);
+	refreshStations();
+}
+
+// Handle station assignment
+function handleStationAssigned(data) {
+	if (!selectedTournamentId) return;
+	FrontendDebug.ws('Matches', 'Station assigned event', data);
+	refreshMatches();
+}
+
+// Handle tournament started - reload matches
+function handleTournamentStarted(data) {
+	if (!selectedTournamentId) return;
+	const tournament = data.tournament;
+	if (tournament && tournament.tournamentId === selectedTournamentId) {
+		FrontendDebug.ws('Matches', 'Tournament started, reloading matches');
+		tournamentState = 'underway';
+		document.getElementById('tournamentStatus').innerHTML = `
+			<span class="tournament-state underway">underway</span>
+		`;
+		refreshMatches();
+	}
+}
+
+// Handle tournament reset - reload everything
+function handleTournamentReset(data) {
+	if (!selectedTournamentId) return;
+	const tournament = data.tournament;
+	if (tournament && tournament.tournamentId === selectedTournamentId) {
+		FrontendDebug.ws('Matches', 'Tournament reset, reloading');
+		tournamentState = 'pending';
+		document.getElementById('tournamentStatus').innerHTML = `
+			<span class="tournament-state pending">pending</span>
+		`;
+		loadTournamentMatches();
+	}
+}
+
+function startPolling(interval = 10000) {
 	if (!refreshInterval) {
 		refreshInterval = setInterval(() => {
 			if (selectedTournamentId && isPollingActive) {
 				refreshMatches();
 			}
-		}, 10000);
+		}, interval);
+	}
+}
+
+function stopPolling() {
+	if (refreshInterval) {
+		clearInterval(refreshInterval);
+		refreshInterval = null;
 	}
 }
 
@@ -60,10 +173,47 @@ async function loadTournaments() {
 				...(data.tournaments.pending || [])
 			];
 			updateTournamentSelect();
+
+			// Auto-select active tournament if available
+			await selectActiveTournament();
 		}
 	} catch (error) {
 		console.error('Failed to load tournaments:', error);
 		showAlert('Failed to load tournaments', 'error');
+	}
+}
+
+// Auto-select the active tournament based on user's active tournament setting
+async function selectActiveTournament() {
+	try {
+		const response = await fetch('/api/tournament/active');
+		if (!response.ok) return;
+
+		const data = await response.json();
+		if (data.success && data.tournament) {
+			// API returns tournamentId (url_slug) and id (numeric)
+			const slugId = data.tournament.tournamentId;
+			const numericId = data.tournament.id;
+			const select = document.getElementById('tournamentSelect');
+
+			// Check if active tournament is in our dropdown (match by slug or numeric id)
+			const option = Array.from(select.options).find(opt =>
+				opt.value === String(slugId) || opt.value === String(numericId)
+			);
+
+			if (option) {
+				select.value = option.value;
+				FrontendDebug.log('Matches', 'Auto-selected active tournament', {
+					tournament: data.tournament.name,
+					mode: data.mode
+				});
+				// Trigger change to load matches
+				await loadTournamentMatches();
+			}
+		}
+	} catch (error) {
+		FrontendDebug.warn('Matches', 'Could not fetch active tournament', error);
+		// Silently fail - user can still manually select
 	}
 }
 
@@ -349,9 +499,9 @@ function getPlayerName(playerId) {
 	return participants[playerId] || `Player ${playerId}`;
 }
 
-// Check if match is underway (Challonge v1 uses underwayAt timestamp, not state='underway')
+// Check if match is underway (state = 'underway')
 function isMatchUnderway(match) {
-	return match.state === 'open' && match.underwayAt != null;
+	return match.state === 'underway';
 }
 
 // Get effective state (accounting for underwayAt)
@@ -438,7 +588,7 @@ async function confirmMarkUnderway() {
 			closeUnderwayModal();
 
 			// Verify the state change by re-fetching matches after a short delay
-			// Challonge API has eventual consistency, so we poll until verified
+			// API has eventual consistency, so we poll until verified
 			const verified = await verifyMatchState(matchId, 'underway', 3);
 
 			if (verified) {
@@ -721,7 +871,7 @@ async function reopenMatch(matchId) {
 	}
 }
 
-// Quick winner - declare winner with default score (Challonge requires scores)
+// Quick winner - declare winner with default score (scores are required)
 async function quickWinner(playerNum) {
 	if (!selectedMatch || !selectedTournamentId) return;
 
@@ -1018,6 +1168,22 @@ async function toggleAutoAssign() {
 			stationSettings = data.stationSettings || stationSettings;
 			showAlert(newValue ? 'Auto-assign enabled' : 'Auto-assign disabled', 'success');
 			updateStationSettingsUI();
+
+			// If enabled, immediately trigger auto-assign for existing open matches
+			if (newValue) {
+				try {
+					const autoResponse = await csrfFetch(`/api/matches/${selectedTournamentId}/auto-assign`, {
+						method: 'POST'
+					});
+					const autoData = await autoResponse.json();
+					if (autoData.success && autoData.assigned > 0) {
+						showAlert(`Auto-assigned ${autoData.assigned} match(es) to stations`, 'success');
+						loadMatches(); // Refresh to show new assignments
+					}
+				} catch (autoError) {
+					console.error('Auto-assign error:', autoError);
+				}
+			}
 		} else {
 			// Revert toggle on failure
 			if (toggle) toggle.checked = !newValue;
@@ -1046,7 +1212,7 @@ function openBatchScoreModal() {
 
 	// Filter matches that can be scored (open or underway, with both players)
 	batchScoreMatches = matches.filter(m =>
-		(m.state === 'open' || m.state === 'underway' || (m.state === 'open' && m.underwayAt)) &&
+		(m.state === 'open' || m.state === 'underway') &&
 		m.player1Id && m.player2Id
 	).slice(0, 20); // Limit to 20 matches
 
@@ -1074,7 +1240,7 @@ function renderBatchScoreTable() {
 		const p1Name = getPlayerName(match.player1Id);
 		const p2Name = getPlayerName(match.player2Id);
 		const roundLabel = match.round > 0 ? `W${match.round}` : `L${Math.abs(match.round)}`;
-		const isUnderway = match.state === 'underway' || (match.state === 'open' && match.underwayAt);
+		const isUnderway = match.state === 'underway';
 
 		return `
 			<tr class="border-b border-gray-700" data-match-id="${match.id}" data-index="${index}">
