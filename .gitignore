@@ -48,3 +48,10 @@ MagicMirror-*/config/config.js
 *.pem
 *.key
 *.crt
+
+# Admin dashboard cache and sessions
+admin-dashboard/cache/
+admin-dashboard/sessions/
+
+# Large backup archives
+backups/*.tar.gz
