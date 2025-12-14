@@ -46,6 +46,20 @@
         <!-- Image or video element will be inserted here -->
     </div>
 
+    <!-- Emergency Mode Overlay -->
+    <div id="emergency-overlay" class="emergency-overlay">
+        <div class="emergency-icon">!</div>
+        <div class="emergency-title">Technical Difficulties</div>
+        <div class="emergency-message">We are experiencing technical issues. Please stand by.</div>
+        <div id="emergency-timestamp" class="emergency-timestamp"></div>
+    </div>
+
+    <!-- Connection Status (debug mode) -->
+    <div id="connection-status" class="connection-status" style="display: none;">
+        <div class="status-dot"></div>
+        <span class="status-text">Connecting...</span>
+    </div>
+
     <!-- Socket.IO from CDN -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 

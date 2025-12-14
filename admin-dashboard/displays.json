@@ -22,7 +22,66 @@
       "externalIp": "12.75.41.120",
       "debugMode": false,
       "debugLogs": [],
-      "displayScaleFactor": 1
+      "displayScaleFactor": 1,
+      "userId": 1
+    },
+    {
+      "id": "aabbccddeef1",
+      "hostname": "test-pi-csrf",
+      "ip": "Unknown",
+      "mac": "aa:bb:cc:dd:ee:f1",
+      "currentView": "match",
+      "assignedView": "match",
+      "status": "offline",
+      "lastHeartbeat": "2025-12-14T10:19:46.689Z",
+      "registeredAt": "2025-12-14T10:07:12.143Z",
+      "uptimeSeconds": 0,
+      "systemInfo": {
+        "cpuTemp": 0,
+        "memoryUsage": 0
+      },
+      "debugMode": false,
+      "debugLogs": []
+    },
+    {
+      "id": "aabbccddeef2",
+      "hostname": "test-pi-heartbeat-csrf",
+      "ip": "Unknown",
+      "mac": "aa:bb:cc:dd:ee:f2",
+      "currentView": "match",
+      "assignedView": "match",
+      "status": "offline",
+      "lastHeartbeat": "2025-12-14T10:19:46.700Z",
+      "registeredAt": "2025-12-14T10:07:12.151Z",
+      "uptimeSeconds": 1000,
+      "systemInfo": {
+        "cpuTemp": 45,
+        "memoryUsage": 50,
+        "wifiQuality": 0,
+        "wifiSignal": 0,
+        "ssid": "Unknown",
+        "voltage": 0
+      },
+      "debugMode": false,
+      "debugLogs": []
+    },
+    {
+      "id": "aabbccddeef3",
+      "hostname": "test-pi-logs-csrf",
+      "ip": "Unknown",
+      "mac": "aa:bb:cc:dd:ee:f3",
+      "currentView": "match",
+      "assignedView": "match",
+      "status": "offline",
+      "lastHeartbeat": "2025-12-14T10:19:46.706Z",
+      "registeredAt": "2025-12-14T10:07:12.166Z",
+      "uptimeSeconds": 0,
+      "systemInfo": {
+        "cpuTemp": 0,
+        "memoryUsage": 0
+      },
+      "debugMode": false,
+      "debugLogs": []
     }
   ],
   "viewMappings": {

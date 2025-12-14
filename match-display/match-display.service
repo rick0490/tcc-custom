@@ -1,0 +1,31 @@
+[Unit]
+Description=Match Display Service
+Documentation=https://github.com/tcc-custom
+After=network.target control-center-admin.service
+Wants=control-center-admin.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/tcc-custom/match-display
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=match-display
+
+# Environment
+Environment=NODE_ENV=production
+Environment=PORT=2052
+
+# Process limits
+LimitNOFILE=65535
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/root/tcc-custom/match-display
+
+[Install]
+WantedBy=multi-user.target

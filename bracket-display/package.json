@@ -1,0 +1,20 @@
+{
+  "name": "bracket-display",
+  "version": "1.0.0",
+  "description": "Standalone bracket display service for tournament management",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "DEBUG_MODE=true node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

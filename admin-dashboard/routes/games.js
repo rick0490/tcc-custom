@@ -7,7 +7,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuthAPI, requireAdmin } = require('../middleware/auth');
+const { requireAuthAPI } = require('../middleware/auth');
 const { attachTenantContext, getTenantFilter, allowViewAllTenants, validateTenantAccess } = require('../middleware/tenant');
 const activityLogger = require('../services/activity-logger');
 const { createLogger } = require('../services/debug-logger');
@@ -141,7 +141,7 @@ router.get('/:gameKey', requireAuthAPI, (req, res) => {
  * POST /api/games
  * Create new game
  */
-router.post('/', requireAuthAPI, requireAdmin, (req, res) => {
+router.post('/', requireAuthAPI, (req, res) => {
     try {
         const { gameKey, name, shortName, rules, prizes, additionalInfo } = req.body;
         const userId = req.tenantId;
@@ -201,7 +201,7 @@ router.post('/', requireAuthAPI, requireAdmin, (req, res) => {
  * PUT /api/games/:gameKey
  * Update game config
  */
-router.put('/:gameKey', requireAuthAPI, requireAdmin, (req, res) => {
+router.put('/:gameKey', requireAuthAPI, (req, res) => {
     try {
         const { gameKey } = req.params;
         const { name, shortName, rules, prizes, additionalInfo, newGameKey } = req.body;
@@ -281,7 +281,7 @@ router.put('/:gameKey', requireAuthAPI, requireAdmin, (req, res) => {
  * DELETE /api/games/:gameKey
  * Delete game
  */
-router.delete('/:gameKey', requireAuthAPI, requireAdmin, (req, res) => {
+router.delete('/:gameKey', requireAuthAPI, (req, res) => {
     try {
         const { gameKey } = req.params;
         const userId = req.tenantId;

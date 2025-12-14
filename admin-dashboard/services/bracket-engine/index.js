@@ -16,6 +16,9 @@ const singleElimination = require('./single-elimination');
 const doubleElimination = require('./double-elimination');
 const roundRobin = require('./round-robin');
 const swiss = require('./swiss');
+const { createLogger } = require('../debug-logger');
+
+const logger = createLogger('bracket-engine');
 
 /**
  * Generate a bracket based on tournament type
@@ -26,40 +29,70 @@ const swiss = require('./swiss');
  * @returns {Object} Generated bracket data with matches array
  */
 function generate(type, participants, options = {}) {
+    const logComplete = logger.start('generate', { type, participantCount: participants?.length, options });
+
     if (!Array.isArray(participants) || participants.length < 2) {
+        logger.error('generate', new Error('Need at least 2 participants'), { participantCount: participants?.length });
         throw new Error('Need at least 2 participants');
     }
 
+    logger.log('generate:participants', {
+        count: participants.length,
+        seeds: participants.map(p => ({ id: p.id, seed: p.seed, name: p.name }))
+    });
+
+    let result;
     switch (type) {
         case 'single_elimination':
-            return singleElimination.generate(participants, {
-                holdThirdPlaceMatch: options.hold_third_place_match || options.holdThirdPlaceMatch || false,
-                sequentialPairings: options.sequential_pairings || options.sequentialPairings || false
-            });
+            // Check if compact bracket mode is enabled
+            if (options.compact_bracket || options.compactBracket) {
+                result = singleElimination.generateCompactBracket(participants, {
+                    holdThirdPlaceMatch: options.hold_third_place_match || options.holdThirdPlaceMatch || false,
+                    sequentialPairings: options.sequential_pairings || options.sequentialPairings || false
+                });
+            } else {
+                result = singleElimination.generate(participants, {
+                    holdThirdPlaceMatch: options.hold_third_place_match || options.holdThirdPlaceMatch || false,
+                    sequentialPairings: options.sequential_pairings || options.sequentialPairings || false,
+                    byeStrategy: options.bye_strategy || options.byeStrategy || 'traditional'
+                });
+            }
+            break;
 
         case 'double_elimination':
-            return doubleElimination.generate(participants, {
+            result = doubleElimination.generate(participants, {
                 grandFinalsModifier: options.grand_finals_modifier || options.grandFinalsModifier || null,
                 sequentialPairings: options.sequential_pairings || options.sequentialPairings || false
             });
+            break;
 
         case 'round_robin':
-            return roundRobin.generate(participants, {
+            result = roundRobin.generate(participants, {
                 iterations: options.iterations || 1,
                 rankedBy: options.ranked_by || options.rankedBy || 'match wins',
                 pointsPerResult: options.pointsPerResult || { win: 1, draw: 0.5, loss: 0 },
                 allowTies: options.allow_ties || options.allowTies || false
             });
+            break;
 
         case 'swiss':
-            return swiss.generate(participants, {
+            result = swiss.generate(participants, {
                 rounds: options.swiss_rounds || options.swissRounds || swiss.recommendedRounds(participants.length),
                 allowRematches: options.allow_rematches !== false
             });
+            break;
 
         default:
+            logger.error('generate', new Error(`Unknown tournament type: ${type}`), { type });
             throw new Error(`Unknown tournament type: ${type}`);
     }
+
+    logComplete({
+        matchCount: result?.matches?.length || 0,
+        rounds: result?.totalRounds,
+        byeCount: result?.matches?.filter(m => m.is_bye)?.length || 0
+    });
+    return result;
 }
 
 /**
@@ -276,7 +309,9 @@ function getDefaultOptions(type) {
         case 'single_elimination':
             return {
                 holdThirdPlaceMatch: false,
-                sequentialPairings: false
+                sequentialPairings: false,
+                byeStrategy: 'traditional',
+                compactBracket: false
             };
 
         case 'double_elimination':
@@ -305,10 +340,21 @@ function getDefaultOptions(type) {
 }
 
 /**
+ * Valid BYE strategies for elimination brackets
+ */
+const VALID_BYE_STRATEGIES = ['traditional', 'spread', 'bottom_half', 'random'];
+
+/**
  * Validate tournament options
  */
 function validateOptions(type, options) {
     const errors = [];
+
+    if (type === 'single_elimination' || type === 'double_elimination') {
+        if (options.byeStrategy && !VALID_BYE_STRATEGIES.includes(options.byeStrategy)) {
+            errors.push(`byeStrategy must be one of: ${VALID_BYE_STRATEGIES.join(', ')}`);
+        }
+    }
 
     if (type === 'double_elimination' && options.grandFinalsModifier) {
         if (!['single', 'skip'].includes(options.grandFinalsModifier)) {
@@ -355,6 +401,7 @@ module.exports = {
     getDefaultOptions,
     validateOptions,
     TOURNAMENT_TYPES,
+    VALID_BYE_STRATEGIES,
 
     // Direct access to format-specific modules
     singleElimination,

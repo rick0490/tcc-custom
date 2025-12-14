@@ -22,6 +22,7 @@ let activityLogger = null;
 let pushNotifications = null;
 let io = null;
 let discordNotify = null;
+let recordMatchChange = null;
 
 /**
  * Initialize matches routes with dependencies
@@ -30,6 +31,7 @@ function init(deps) {
     activityLogger = deps.activityLogger;
     pushNotifications = deps.pushNotifications;
     io = deps.io;
+    recordMatchChange = deps.recordMatchChange;
 }
 
 /**
@@ -338,13 +340,24 @@ router.post('/:tournamentId/:matchId/score', async (req, res) => {
             }
         }
 
+        const user = getUserInfo(req);
+
+        // Record match state before change (for undo functionality)
+        if (recordMatchChange) {
+            recordMatchChange(
+                match.tournament_id.toString(),
+                match.id,
+                { state: match.state, winnerId: match.winner_id, scores: match.scores_csv },
+                'score_recorded',
+                user.username
+            );
+        }
+
         const updatedMatch = matchDb.setWinner(match.id, actualWinnerId, {
             player1_score: parseInt(player1Score) || 0,
             player2_score: parseInt(player2Score) || 0,
             scores_csv: `${player1Score || 0}-${player2Score || 0}`
         });
-
-        const user = getUserInfo(req);
 
         console.log(`[Matches] Score recorded: ${updatedMatch.identifier} ${player1Score}-${player2Score} by ${user.username}`);
 
@@ -432,9 +445,20 @@ router.post('/:tournamentId/:matchId/winner', async (req, res) => {
         if (player1Score !== undefined) scores.player1_score = parseInt(player1Score);
         if (player2Score !== undefined) scores.player2_score = parseInt(player2Score);
 
-        const updatedMatch = matchDb.setWinner(match.id, parseInt(winnerId), scores);
-
         const user = getUserInfo(req);
+
+        // Record match state before change (for undo functionality)
+        if (recordMatchChange) {
+            recordMatchChange(
+                match.tournament_id.toString(),
+                match.id,
+                { state: match.state, winnerId: match.winner_id, scores: match.scores_csv },
+                'winner_declared',
+                user.username
+            );
+        }
+
+        const updatedMatch = matchDb.setWinner(match.id, parseInt(winnerId), scores);
 
         console.log(`[Matches] Winner declared: ${updatedMatch.identifier} -> ${updatedMatch.winner_name} by ${user.username}`);
 

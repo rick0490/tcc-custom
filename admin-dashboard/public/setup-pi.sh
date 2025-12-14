@@ -64,12 +64,15 @@ else
 fi
 
 # ============================================
-# CONFIGURATION
+# CONFIGURATION (set by interactive prompts)
 # ============================================
-DEFAULT_URL="https://live.despairhardware.com"
-ADMIN_URL="https://admin.despairhardware.com"
+# These variables will be set by the interactive configuration section
+ADMIN_URL=""
+USER_ID=""
+DEFAULT_URL=""
 HEARTBEAT_INTERVAL=30
 CONFIG_CHECK_INTERVAL=60
+WIFI_NETWORKS=()
 
 # Display scale factor for large TVs (1.0 = no scaling)
 # Recommended: 2.0-2.5 for 40"+ TVs viewed from 10+ feet
@@ -128,8 +131,86 @@ else
     echo_info "Performance Mode: Power Saving (SD Card)"
 fi
 echo_info "User: $KIOSK_USER"
-echo_info "Default URL: $DEFAULT_URL"
-echo_info "Admin URL: $ADMIN_URL"
+echo ""
+
+# ============================================
+# INTERACTIVE CONFIGURATION
+# ============================================
+echo ""
+echo "========================================"
+echo "  Configuration"
+echo "========================================"
+echo ""
+
+# Admin Dashboard URL (required)
+while true; do
+    read -p "Enter Admin Dashboard URL (e.g., https://admin.example.com): " ADMIN_URL
+    if [ -z "$ADMIN_URL" ]; then
+        echo_error "Admin URL is required"
+        continue
+    fi
+    # Validate URL format
+    if ! echo "$ADMIN_URL" | grep -qE '^https?://'; then
+        echo_error "URL must start with http:// or https://"
+        continue
+    fi
+    # Remove trailing slash if present
+    ADMIN_URL="${ADMIN_URL%/}"
+    # Test connectivity
+    echo_info "Testing connection to $ADMIN_URL..."
+    if curl -s --connect-timeout 5 "$ADMIN_URL/api/status" >/dev/null 2>&1; then
+        echo_info "Connection successful!"
+        break
+    else
+        echo_warn "Could not connect to $ADMIN_URL"
+        read -p "Continue anyway? (y/n): " CONTINUE
+        [ "$CONTINUE" = "y" ] && break
+    fi
+done
+
+# User ID (required for multi-tenant)
+while true; do
+    read -p "Enter User ID for this display: " USER_ID
+    if [ -z "$USER_ID" ]; then
+        echo_error "User ID is required for multi-tenant displays"
+        continue
+    fi
+    if ! echo "$USER_ID" | grep -qE '^[0-9]+$'; then
+        echo_error "User ID must be a number"
+        continue
+    fi
+    break
+done
+
+# Generate default match display URL
+DEFAULT_URL="${ADMIN_URL}/u/${USER_ID}/match"
+echo_info "Match Display URL: $DEFAULT_URL"
+
+# WiFi Configuration (interactive, can add multiple)
+echo ""
+echo_info "WiFi Network Configuration"
+echo_info "You can add multiple networks. Press Enter without typing to finish."
+PRIORITY=30
+while true; do
+    read -p "Enter WiFi SSID (or press Enter to finish): " WIFI_SSID
+    [ -z "$WIFI_SSID" ] && break
+    read -sp "Enter WiFi password: " WIFI_PASSWORD
+    echo ""
+    if [ -n "$WIFI_PASSWORD" ]; then
+        WIFI_NETWORKS+=("$WIFI_SSID:$WIFI_PASSWORD:$PRIORITY")
+        echo_info "Added: $WIFI_SSID (priority $PRIORITY)"
+        PRIORITY=$((PRIORITY - 10))
+    else
+        echo_warn "Skipping $WIFI_SSID (no password provided)"
+    fi
+done
+
+echo ""
+echo_info "Configuration complete!"
+echo_info "  Admin URL:    $ADMIN_URL"
+echo_info "  User ID:      $USER_ID"
+echo_info "  Display URL:  $DEFAULT_URL"
+echo_info "  WiFi Networks: ${#WIFI_NETWORKS[@]} configured"
 echo ""
 
 # ============================================
@@ -218,13 +299,15 @@ echo_info "[4/9] Creating kiosk configuration..."
 # Create config directory
 mkdir -p "$HOME_DIR/.config/kiosk"
 
-# Create default config file
+# Create default config file with multi-tenant support
 cat > "$HOME_DIR/.config/kiosk/config.json" << EOF
 {
     "url": "$DEFAULT_URL",
     "adminUrl": "$ADMIN_URL",
+    "userId": $USER_ID,
     "heartbeatInterval": $HEARTBEAT_INTERVAL,
     "configCheckInterval": $CONFIG_CHECK_INTERVAL,
+    "displayScaleFactor": 1.0,
     "lastUpdated": "$(date -Iseconds)"
 }
 EOF
@@ -360,28 +443,52 @@ check_debug_mode() {
     fi
 }
 
-# Read URL from config
+# Read URL from config (multi-tenant aware)
 get_url() {
     if [ -f "\$CONFIG_FILE" ]; then
-        jq -r '.url // "https://live.despairhardware.com"' "\$CONFIG_FILE"
+        local url=\$(jq -r '.url // empty' "\$CONFIG_FILE" 2>/dev/null)
+        local admin_url=\$(jq -r '.adminUrl // empty' "\$CONFIG_FILE" 2>/dev/null)
+        local user_id=\$(jq -r '.userId // empty' "\$CONFIG_FILE" 2>/dev/null)
+
+        if [ -n "\$url" ]; then
+            echo "\$url"
+        elif [ -n "\$admin_url" ] && [ -n "\$user_id" ]; then
+            echo "\${admin_url}/u/\${user_id}/match"
+        else
+            # Fallback to admin URL configured during setup
+            echo "$ADMIN_URL"
+        fi
     else
-        echo "https://live.despairhardware.com"
+        echo "$ADMIN_URL"
     fi
 }
 
-# Wait for network connectivity
+# Wait for network connectivity and server availability
 wait_for_network() {
     log "Waiting for network..."
     local i=0
     while [ \$i -lt 30 ]; do
         if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
             log "Network is up!"
-            return 0
+            break
         fi
         sleep 1
         i=\$((i + 1))
     done
-    log "Network timeout - starting anyway"
+
+    # Wait for server to be ready (up to 60 seconds)
+    log "Waiting for server..."
+    local kiosk_url=\$(get_url)
+    local server_wait=0
+    while [ \$server_wait -lt 60 ]; do
+        if curl -s --connect-timeout 2 "\$kiosk_url" >/dev/null 2>&1; then
+            log "Server is ready!"
+            return 0
+        fi
+        sleep 2
+        server_wait=\$((server_wait + 2))
+    done
+    log "Server timeout - starting anyway (will retry)"
     return 1
 }
 
@@ -1123,7 +1230,9 @@ CONFIG_FILE="$HOME/.config/kiosk/config.json"
 STATE_FILE="$HOME/.config/kiosk/state.json"
 LOG_FILE="$HOME/.config/kiosk/manager.log"
 DEBUG_LOG_FILE="$HOME/.config/kiosk/debug.log"
-ADMIN_URL="https://admin.despairhardware.com"
+# Read ADMIN_URL from config, fallback to configured value from setup
+ADMIN_URL=\$(jq -r '.adminUrl // empty' "\$CONFIG_FILE" 2>/dev/null)
+[ -z "\$ADMIN_URL" ] && ADMIN_URL="$ADMIN_URL"
 MAX_LOG_LINES=1000
 MAX_DEBUG_LOG_LINES=2000
 
@@ -1284,21 +1393,38 @@ get_display_info() {
 }
 
 get_current_url() {
-    jq -r '.url // "https://live.despairhardware.com"' "$CONFIG_FILE" 2>/dev/null || echo "https://live.despairhardware.com"
+    if [ -f "$CONFIG_FILE" ]; then
+        local url=$(jq -r '.url // empty' "$CONFIG_FILE" 2>/dev/null)
+        local admin_url=$(jq -r '.adminUrl // empty' "$CONFIG_FILE" 2>/dev/null)
+        local user_id=$(jq -r '.userId // empty' "$CONFIG_FILE" 2>/dev/null)
+
+        if [ -n "$url" ]; then
+            echo "$url"
+        elif [ -n "$admin_url" ] && [ -n "$user_id" ]; then
+            echo "${admin_url}/u/${user_id}/match"
+        else
+            echo "$ADMIN_URL"
+        fi
+    else
+        echo "$ADMIN_URL"
+    fi
 }
 
 get_current_view() {
     local url=$(get_current_url)
-    # Check by domain name or port number
+    # Check by URL pattern, domain, or port number
     case "$url" in
-        *flyer.despairhardware.com*) echo "flyer" ;;
-        *bracket.despairhardware.com*) echo "bracket" ;;
-        *live.despairhardware.com*) echo "match" ;;
-        *:8082*) echo "flyer" ;;
-        *:8081*) echo "bracket" ;;
-        *:8080*) echo "match" ;;
+        # Multi-tenant match display pattern
+        */u/*/match*) echo "match" ;;
+        # Port-based detection (TCC-Custom ports)
+        *:2052*) echo "match" ;;
+        *:2053*|*:8081*) echo "bracket" ;;
+        *:2054*|*:8082*) echo "flyer" ;;
+        # Domain-based detection (external)
         *flyer*) echo "flyer" ;;
         *bracket*) echo "bracket" ;;
+        *match*|*live*) echo "match" ;;
+        # Default to match
         *) echo "match" ;;
     esac
 }
@@ -1307,14 +1433,17 @@ update_url() {
     local new_url="$1"
     local current_url=$(get_current_url)
     local current_scale=$(jq -r '.displayScaleFactor // 1.0' "$CONFIG_FILE" 2>/dev/null || echo "1.0")
+    local current_user_id=$(jq -r '.userId // empty' "$CONFIG_FILE" 2>/dev/null)
+    local current_admin_url=$(jq -r '.adminUrl // empty' "$CONFIG_FILE" 2>/dev/null)
 
     if [ "$new_url" != "$current_url" ]; then
         log "URL changed: $current_url -> $new_url"
         cat > "$CONFIG_FILE" << CONF
 {
     "url": "$new_url",
+    "adminUrl": "${current_admin_url:-$ADMIN_URL}",
+    "userId": ${current_user_id:-0},
     "displayScaleFactor": $current_scale,
-    "adminUrl": "$ADMIN_URL",
     "heartbeatInterval": 30,
     "configCheckInterval": 60,
     "lastUpdated": "$(date -Iseconds)"
@@ -1354,12 +1483,13 @@ register_display() {
     local ip=$(get_ip)
     local external_ip=$(get_external_ip)
     local current_view=$(get_current_view)
+    local user_id=$(jq -r '.userId // empty' "$CONFIG_FILE" 2>/dev/null)
 
-    log "Registering: $CACHED_HOSTNAME, MAC: $CACHED_MAC, IP: $ip, External: $external_ip"
+    log "Registering: $CACHED_HOSTNAME, MAC: $CACHED_MAC, IP: $ip, External: $external_ip, userId: $user_id"
 
     local response=$(curl -s --connect-timeout 10 -X POST "$ADMIN_URL/api/displays/register" \
         -H "Content-Type: application/json" \
-        -d "{\"hostname\":\"$CACHED_HOSTNAME\",\"mac\":\"$CACHED_MAC\",\"ip\":\"$ip\",\"externalIp\":\"$external_ip\",\"currentView\":\"$current_view\"}" 2>/dev/null)
+        -d "{\"hostname\":\"$CACHED_HOSTNAME\",\"mac\":\"$CACHED_MAC\",\"ip\":\"$ip\",\"externalIp\":\"$external_ip\",\"currentView\":\"$current_view\",\"userId\":${user_id:-null}}" 2>/dev/null)
 
     if echo "$response" | jq -e '.success' >/dev/null 2>&1; then
         CACHED_DISPLAY_ID=$(echo "$response" | jq -r '.id')
@@ -1393,6 +1523,7 @@ send_heartbeat() {
     local wifi_quality=$(echo "$wifi_info" | awk '{print $1}')
     local wifi_signal=$(echo "$wifi_info" | awk '{print $2}')
     local uptime_secs=$(get_uptime)
+    local user_id=$(jq -r '.userId // empty' "$CONFIG_FILE" 2>/dev/null)
 
     # Get display info (physical dimensions, diagonal, suggested scale)
     local display_info=$(get_display_info)
@@ -1405,11 +1536,11 @@ send_heartbeat() {
     local cdp_status=$(curl -s --connect-timeout 1 "http://127.0.0.1:9223/health" 2>/dev/null || echo '{}')
     local cdp_connected=$(echo "$cdp_status" | jq -r '.chromiumConnected // false')
 
-    debug_log "Sending heartbeat: CPU=${cpu_temp}C, Mem=${mem_usage}%, WiFi=${wifi_quality}%, View=${current_view}, CDP=${cdp_connected}" "debug" "manager"
+    debug_log "Sending heartbeat: CPU=${cpu_temp}C, Mem=${mem_usage}%, WiFi=${wifi_quality}%, View=${current_view}, userId=${user_id}, CDP=${cdp_connected}" "debug" "manager"
 
     local response=$(curl -s --connect-timeout 5 -X POST "$ADMIN_URL/api/displays/$CACHED_DISPLAY_ID/heartbeat" \
         -H "Content-Type: application/json" \
-        -d "{\"uptimeSeconds\":$uptime_secs,\"cpuTemp\":$cpu_temp,\"memoryUsage\":$mem_usage,\"wifiQuality\":$wifi_quality,\"wifiSignal\":$wifi_signal,\"currentView\":\"$current_view\",\"ip\":\"$ip\",\"externalIp\":\"$external_ip\",\"ssid\":\"$ssid\",\"voltage\":$voltage,\"mac\":\"$CACHED_MAC\",\"hostname\":\"$CACHED_HOSTNAME\",\"displayInfo\":{\"physicalWidth\":$display_width,\"physicalHeight\":$display_height,\"diagonalInches\":$display_diagonal,\"suggestedScale\":$display_suggested},\"cdpEnabled\":$cdp_connected}" 2>/dev/null)
+        -d "{\"uptimeSeconds\":$uptime_secs,\"cpuTemp\":$cpu_temp,\"memoryUsage\":$mem_usage,\"wifiQuality\":$wifi_quality,\"wifiSignal\":$wifi_signal,\"currentView\":\"$current_view\",\"ip\":\"$ip\",\"externalIp\":\"$external_ip\",\"ssid\":\"$ssid\",\"voltage\":$voltage,\"mac\":\"$CACHED_MAC\",\"hostname\":\"$CACHED_HOSTNAME\",\"userId\":${user_id:-null},\"displayInfo\":{\"physicalWidth\":$display_width,\"physicalHeight\":$display_height,\"diagonalInches\":$display_diagonal,\"suggestedScale\":$display_suggested},\"cdpEnabled\":$cdp_connected}" 2>/dev/null)
 
     if ! echo "$response" | jq -e '.success' >/dev/null 2>&1; then
         debug_log "Heartbeat failed - no response or server error" "warn" "manager"
@@ -1808,54 +1939,33 @@ else
 fi
 
 # ============================================
-# STEP 9: Add WiFi Networks
+# STEP 9: Configure WiFi Networks
 # ============================================
-echo_info "[9/9] Adding WiFi networks..."
+echo_info "[9/9] Configuring WiFi networks..."
 
-# Add WiFi networks with autoconnect priorities using NetworkManager
-# Higher priority = preferred when multiple networks available
-# Priority 30 = Primary, 20 = Secondary, 10 = Tertiary
-
-# Primary network (highest priority)
-nmcli connection add \
-    type wifi \
-    con-name "Neils Bahr - Guest" \
-    ssid "Neils Bahr - Guest" \
-    ifname wlan0 \
-    wifi-sec.key-mgmt wpa-psk \
-    wifi-sec.psk "luggage12345" \
-    connection.autoconnect yes \
-    connection.autoconnect-priority 30 \
-    2>/dev/null || echo_warn "WiFi 'Neils Bahr - Guest' may already exist"
-
-# Secondary network
-nmcli connection add \
-    type wifi \
-    con-name "WeaponizedData_5G" \
-    ssid "WeaponizedData_5G" \
-    ifname wlan0 \
-    wifi-sec.key-mgmt wpa-psk \
-    wifi-sec.psk "h00nigan0490" \
-    connection.autoconnect yes \
-    connection.autoconnect-priority 20 \
-    2>/dev/null || echo_warn "WiFi 'WeaponizedData_5G' may already exist"
-
-# Tertiary network (lowest priority)
-nmcli connection add \
-    type wifi \
-    con-name "HTXPokemonCollectors-VZW" \
-    ssid "HTXPokemonCollectors-VZW" \
-    ifname wlan0 \
-    wifi-sec.key-mgmt wpa-psk \
-    wifi-sec.psk "PokemonWifi0490" \
-    connection.autoconnect yes \
-    connection.autoconnect-priority 10 \
-    2>/dev/null || echo_warn "WiFi 'HTXPokemonCollectors-VZW' may already exist"
-
-echo_info "WiFi networks added:"
-echo_info "  - Neils Bahr - Guest (priority 30)"
-echo_info "  - WeaponizedData_5G (priority 20)"
-echo_info "  - HTXPokemonCollectors-VZW (priority 10)"
+# Add WiFi networks from interactive configuration
+# WIFI_NETWORKS array contains entries in format "SSID:PASSWORD:PRIORITY"
+if [ ${#WIFI_NETWORKS[@]} -eq 0 ]; then
+    echo_info "No WiFi networks configured during setup."
+    echo_info "You can add networks later with: nmcli connection add type wifi ..."
+else
+    echo_info "Adding ${#WIFI_NETWORKS[@]} WiFi network(s)..."
+    for network in "${WIFI_NETWORKS[@]}"; do
+        IFS=':' read -r ssid password priority <<< "$network"
+        echo_info "  Adding: $ssid (priority $priority)"
+        nmcli connection add \
+            type wifi \
+            con-name "$ssid" \
+            ssid "$ssid" \
+            ifname wlan0 \
+            wifi-sec.key-mgmt wpa-psk \
+            wifi-sec.psk "$password" \
+            connection.autoconnect yes \
+            connection.autoconnect-priority "$priority" \
+            2>/dev/null || echo_warn "WiFi '$ssid' may already exist"
+    done
+    echo_info "WiFi networks configured successfully."
+fi
 
 # ============================================
 # COMPLETE
@@ -1874,17 +1984,27 @@ else
 echo "  Mode:         Power Saving (SD card wear protection)"
 fi
 echo ""
-echo "Configuration:"
-echo "  Hostname:     $NEW_HOSTNAME"
-echo "  Display URL:  $DEFAULT_URL"
+echo "Multi-Tenant Configuration:"
 echo "  Admin URL:    $ADMIN_URL"
+echo "  User ID:      $USER_ID"
+echo "  Display URL:  $DEFAULT_URL"
+echo "  Hostname:     $NEW_HOSTNAME"
+echo ""
+echo "Browser Settings:"
 echo "  Browser:      Chromium (storage-optimized)"
 echo "  GPU Memory:   256MB"
 echo "  CPU Governor: $CPU_GOVERNOR"
 echo "  Raster Threads: $RASTER_THREADS"
 echo "  GPU Compositing: $ENABLE_GPU_COMPOSITING"
 echo "  Disk Cache:   $((CACHE_SIZE / 1048576))MB"
-echo "  Backup WiFi:  Neils Bahr - Guest (priority 100)"
+echo ""
+echo "WiFi Networks:  ${#WIFI_NETWORKS[@]} configured"
+if [ ${#WIFI_NETWORKS[@]} -gt 0 ]; then
+    for network in "${WIFI_NETWORKS[@]}"; do
+        IFS=':' read -r ssid password priority <<< "$network"
+        echo "  - $ssid (priority $priority)"
+    done
+fi
 echo ""
 echo "Performance Optimizations:"
 echo "  - zram compressed swap (50%)"

@@ -15,6 +15,10 @@
 	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
 	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
 	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Google Fonts -->
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 	<!-- Styles -->
 	<script src="https://cdn.tailwindcss.com"></script>
 	<link rel="stylesheet" href="css/style.css?v=17">
@@ -38,12 +42,18 @@
 				<div class="flex items-center gap-4">
 					<div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
 					<div>
-						<div class="text-sm text-green-300">Currently Active</div>
+						<div class="text-sm text-green-300 flex items-center gap-2">
+							Currently Active
+							<span id="activeTournamentMode" class="text-green-400 text-xs">(Auto)</span>
+						</div>
 						<div id="activeTournamentName" class="text-lg font-bold text-white">Tournament Name</div>
 					</div>
 				</div>
 				<div class="flex items-center gap-3">
 					<span id="activeTournamentState" class="px-3 py-1 bg-green-600/30 text-green-300 rounded-full text-xs font-semibold uppercase">underway</span>
+					<button id="revertToAutoBtn" onclick="revertToAutoSelect()" class="hidden bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md transition text-sm font-medium">
+						Revert to Auto
+					</button>
 					<button onclick="completeTournament()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition text-sm font-medium">
 						Complete Tournament
 					</button>
@@ -60,20 +70,12 @@
 					<h2 class="text-xl font-bold text-white">Select Tournament</h2>
 					<p class="text-sm text-gray-400 mt-1">Choose a pending tournament to configure and deploy</p>
 				</div>
-				<div class="flex items-center gap-3">
-					<button onclick="openCreateWizard()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition text-sm font-medium flex items-center gap-2">
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-						</svg>
-						Create Tournament
-					</button>
-					<button id="refreshTournamentsBtn" onclick="refreshTournaments()" class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-						<svg id="refreshTournamentsIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-						</svg>
-						<span id="refreshTournamentsText">Refresh</span>
-					</button>
-				</div>
+				<button onclick="openCreateWizard()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition text-sm font-medium flex items-center gap-2">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+					</svg>
+					Create Tournament
+				</button>
 			</div>
 
 			<!-- Tournament Tabs -->
@@ -159,18 +161,19 @@
 					</div>
 				</div>
 
-				<!-- Tournament Deployed -->
-				<div class="checklist-item" data-check="deployed">
+				<!-- Active Tournament -->
+				<div class="checklist-item" data-check="active">
 					<div class="checklist-icon">
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
 						</svg>
 					</div>
 					<div class="checklist-content">
-						<div class="checklist-title">Tournament Deployed</div>
-						<div class="checklist-description">Tournament is configured on all display modules</div>
+						<div class="checklist-title">Active Tournament</div>
+						<div class="checklist-description">This tournament is active on all displays</div>
 					</div>
-					<div class="checklist-status" id="checkDeployedStatus">
+					<div class="checklist-status" id="checkActiveStatus">
 						<span class="checklist-badge pending">Checking...</span>
 					</div>
 				</div>
@@ -222,22 +225,6 @@
 						<span class="checklist-badge pending">Checking...</span>
 					</div>
 				</div>
-
-				<!-- Challonge API -->
-				<div class="checklist-item" data-check="api">
-					<div class="checklist-icon">
-						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
-						</svg>
-					</div>
-					<div class="checklist-content">
-						<div class="checklist-title">Challonge API Connected</div>
-						<div class="checklist-description">API connection is active and working</div>
-					</div>
-					<div class="checklist-status" id="checkApiStatus">
-						<span class="checklist-badge pending">Checking...</span>
-					</div>
-				</div>
 			</div>
 
 			<!-- All Clear Banner -->
@@ -268,64 +255,11 @@
 		</div>
 	</section>
 
-	<!-- Configuration Section -->
-	<section id="configSection" class="mb-6 hidden">
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-			<h2 class="text-xl font-bold text-white mb-4">Configuration</h2>
-
-			<!-- Selected Tournament Info -->
-			<div id="selectedTournamentInfo" class="bg-gray-750 rounded-lg p-4 mb-6 border border-gray-600">
-				<div class="flex items-start justify-between">
-					<div>
-						<div class="text-xs text-gray-400 uppercase tracking-wide">Selected Tournament</div>
-						<div id="selectedName" class="text-lg font-bold text-white mt-1">--</div>
-						<div id="selectedGame" class="text-sm text-gray-400">--</div>
-					</div>
-					<div class="text-right">
-						<div id="selectedParticipants" class="text-2xl font-bold text-white">--</div>
-						<div class="text-xs text-gray-400">Participants</div>
-					</div>
-				</div>
-			</div>
-
-			<!-- Registration Settings -->
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-				<div>
-					<label for="registrationWindow" class="block text-sm font-medium text-gray-300 mb-2">
-						Registration Window (hours before start)
-					</label>
-					<input type="number" id="registrationWindow" value="48" min="1" max="336"
-						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
-					<p class="text-xs text-gray-400 mt-1">Default: 48 hours. Max: 336 hours (2 weeks)</p>
-				</div>
-				<div>
-					<label for="signupCap" class="block text-sm font-medium text-gray-300 mb-2">
-						Maximum Participants (optional)
-					</label>
-					<input type="number" id="signupCap" placeholder="Unlimited" min="2" max="256"
-						class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
-					<p class="text-xs text-gray-400 mt-1">Leave empty for unlimited signups</p>
-				</div>
-			</div>
-
-			<!-- Deploy Button -->
-			<div class="flex items-center justify-between pt-4 border-t border-gray-700">
-				<div class="text-sm text-gray-400">
-					This will configure all display modules with the selected tournament
-				</div>
-				<button id="deployBtn" onclick="deployTournament()" disabled
-					class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-md transition font-semibold">
-					Deploy Tournament
-				</button>
-			</div>
-		</div>
-	</section>
-
 	<!-- Tournament Lifecycle Controls -->
 	<section id="lifecycleSection" class="mb-6 hidden">
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
 			<h2 class="text-xl font-bold text-white mb-4">Tournament Controls</h2>
-			<p class="text-sm text-gray-400 mb-6">Manage the tournament lifecycle on Challonge</p>
+			<p class="text-sm text-gray-400 mb-6">Manage the tournament lifecycle</p>
 
 			<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
 				<!-- Start Tournament -->
@@ -803,6 +737,28 @@
 								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
 							</div>
 						</label>
+						<!-- Compact Bracket (for single elimination) -->
+						<label id="compactBracketOption" class="flex items-center justify-between cursor-pointer hidden">
+							<div>
+								<div class="text-white text-sm font-medium">Compact Bracket</div>
+								<div class="text-xs text-gray-400">Use play-in rounds instead of BYEs for non-power-of-2 counts</div>
+							</div>
+							<div class="relative">
+								<input type="checkbox" id="wizardCompactBracket" class="sr-only peer">
+								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+							</div>
+						</label>
+						<!-- BYE Strategy (for elimination formats, hidden when compact bracket enabled) -->
+						<div id="byeStrategyOption" class="hidden">
+							<label class="block text-sm font-medium text-white mb-2">BYE Distribution</label>
+							<select id="wizardByeStrategy" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+								<option value="traditional" selected>Traditional (top seeds get byes)</option>
+								<option value="spread">Spread (evenly distributed)</option>
+								<option value="bottom_half">Bottom Half Only</option>
+								<option value="random">Random</option>
+							</select>
+							<p class="text-xs text-gray-400 mt-1">How BYEs are assigned when participant count isn't a power of 2</p>
+						</div>
 						<label id="showRoundsOption" class="flex items-center justify-between cursor-pointer">
 							<div>
 								<div class="text-white text-sm font-medium">Show Round Labels</div>
@@ -844,14 +800,22 @@
 							class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
 						<p class="text-xs text-gray-400 mt-1">Central Time - when the tournament is scheduled to begin</p>
 					</div>
-					<div class="grid grid-cols-2 gap-4">
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 						<div>
 							<label class="block text-sm font-medium text-gray-300 mb-2">
 								Check-in Duration (minutes)
 							</label>
 							<input type="number" id="wizardCheckIn" placeholder="e.g., 30" min="0" max="1440"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
-							<p class="text-xs text-gray-400 mt-1">Leave empty to skip check-in</p>
+							<p class="text-xs text-gray-400 mt-1">Leave empty to skip</p>
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">
+								Registration Window (hours)
+							</label>
+							<input type="number" id="wizardRegistrationWindow" value="48" min="1" max="336"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Hours before start</p>
 						</div>
 						<div>
 							<label class="block text-sm font-medium text-gray-300 mb-2">
@@ -859,7 +823,15 @@
 							</label>
 							<input type="number" id="wizardSignupCap" placeholder="Unlimited" min="2" max="512"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
-							<p class="text-xs text-gray-400 mt-1">Max participants allowed</p>
+							<p class="text-xs text-gray-400 mt-1">Max participants</p>
+						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">
+								Entry Fee ($)
+							</label>
+							<input type="number" id="wizardEntryFee" placeholder="Free" min="0" max="1000" step="0.01"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Leave empty for free</p>
 						</div>
 					</div>
 
@@ -869,7 +841,7 @@
 						<label class="flex items-center justify-between cursor-pointer">
 							<div>
 								<div class="text-white text-sm font-medium">Open Signup</div>
-								<div class="text-xs text-gray-400">Allow public registration via Challonge signup page</div>
+								<div class="text-xs text-gray-400">Allow public registration via signup form</div>
 							</div>
 							<div class="relative">
 								<input type="checkbox" id="wizardOpenSignup" class="sr-only peer">
@@ -879,24 +851,14 @@
 						<label class="flex items-center justify-between cursor-pointer">
 							<div>
 								<div class="text-white text-sm font-medium">Private Tournament</div>
-								<div class="text-xs text-gray-400">Hide from Challonge search and public indexes</div>
+								<div class="text-xs text-gray-400">Hide from search and public indexes</div>
 							</div>
 							<div class="relative">
 								<input type="checkbox" id="wizardPrivate" class="sr-only peer">
 								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
 							</div>
 						</label>
-						<label class="flex items-center justify-between cursor-pointer">
-							<div>
-								<div class="text-white text-sm font-medium">Hide Forum</div>
-								<div class="text-xs text-gray-400">Disable discussion forum tab on Challonge page</div>
-							</div>
-							<div class="relative">
-								<input type="checkbox" id="wizardHideForum" class="sr-only peer">
-								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-							</div>
-						</label>
-					</div>
+						</div>
 
 					<!-- Match Settings -->
 					<div class="bg-gray-750 p-4 rounded-lg border border-gray-600 space-y-4">
@@ -1034,10 +996,14 @@
 						</div>
 						<div>
 							<label class="block text-sm font-medium text-gray-300 mb-2">Format</label>
-							<div class="px-4 py-2 bg-gray-600 border border-gray-500 rounded-md text-gray-300">
-								<span id="editFormatDisplay">--</span>
-								<span class="text-xs text-gray-400 ml-2">(cannot be changed)</span>
-							</div>
+							<select id="editTournamentType"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed">
+								<option value="single_elimination">Single Elimination</option>
+								<option value="double_elimination">Double Elimination</option>
+								<option value="round_robin">Round Robin</option>
+								<option value="swiss">Swiss</option>
+							</select>
+							<p id="editFormatHelp" class="text-xs text-gray-400 mt-1 hidden">Cannot change format after tournament starts</p>
 						</div>
 					</div>
 
@@ -1051,7 +1017,7 @@
 				<!-- Schedule Section -->
 				<div class="space-y-4">
 					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Schedule</h4>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 						<div>
 							<label class="block text-sm font-medium text-gray-300 mb-2">Start Date & Time (CT)</label>
 							<input type="datetime-local" id="editStartAt"
@@ -1063,24 +1029,36 @@
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
 							<p class="text-xs text-gray-400 mt-1">Leave empty to skip check-in</p>
 						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Registration Window (hours)</label>
+							<input type="number" id="editRegistrationWindow" value="48" min="1" max="336"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Hours before start to open signup</p>
+						</div>
 					</div>
 				</div>
 
 				<!-- Registration Section -->
 				<div class="space-y-4">
 					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Registration</h4>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 						<div>
 							<label class="block text-sm font-medium text-gray-300 mb-2">Participant Cap</label>
 							<input type="number" id="editSignupCap" placeholder="Unlimited" min="2" max="512"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
 							<p class="text-xs text-gray-400 mt-1">Leave empty for unlimited</p>
 						</div>
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-2">Entry Fee ($)</label>
+							<input type="number" id="editEntryFee" placeholder="Free" min="0" max="1000" step="0.01"
+								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
+							<p class="text-xs text-gray-400 mt-1">Leave empty for free</p>
+						</div>
 						<div class="flex items-center">
 							<label for="editOpenSignup" class="flex items-center justify-between cursor-pointer w-full bg-gray-750 p-4 rounded-lg border border-gray-600">
 								<div>
 									<div class="text-white text-sm font-medium">Open Signup</div>
-									<div class="text-xs text-gray-400">Allow public registration via Challonge</div>
+									<div class="text-xs text-gray-400">Allow public registration</div>
 								</div>
 								<div class="relative">
 									<input type="checkbox" id="editOpenSignup" class="sr-only peer">
@@ -1264,6 +1242,42 @@
 					</div>
 				</div>
 
+				<!-- Custom Round Labels Section (for elimination tournaments only) -->
+				<div id="editRoundLabelsSection" class="hidden space-y-4">
+					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Custom Round Labels</h4>
+					<p class="text-sm text-gray-400">Override default round names. Leave blank to use defaults (Round 1, Quarter-Finals, etc.)</p>
+
+					<!-- Loading state -->
+					<div id="roundLabelsLoading" class="text-center py-4 text-gray-500">
+						<svg class="animate-spin h-5 w-5 mx-auto text-gray-400 mb-2" fill="none" viewBox="0 0 24 24">
+							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+						</svg>
+						Loading round labels...
+					</div>
+
+					<!-- Not available state (pending tournaments) -->
+					<div id="roundLabelsNotAvailable" class="hidden text-center py-4 text-gray-500 bg-gray-750 rounded-lg border border-gray-600">
+						<p>Round labels are available after the tournament has started.</p>
+					</div>
+
+					<!-- Winners bracket labels -->
+					<div id="winnersLabelsContainer" class="hidden space-y-2">
+						<h5 class="text-sm font-medium text-gray-300">Winners Bracket</h5>
+						<div id="winnersLabelInputs" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+							<!-- Dynamically generated inputs -->
+						</div>
+					</div>
+
+					<!-- Losers bracket labels (for double elimination only) -->
+					<div id="losersLabelsContainer" class="hidden space-y-2 mt-4">
+						<h5 class="text-sm font-medium text-gray-300">Losers Bracket</h5>
+						<div id="losersLabelInputs" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+							<!-- Dynamically generated inputs -->
+						</div>
+					</div>
+				</div>
+
 				<!-- Display & Privacy Section -->
 				<div class="space-y-4">
 					<h4 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">Display & Privacy</h4>
@@ -1288,17 +1302,7 @@
 								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
 							</div>
 						</label>
-						<label for="editHideForum" class="flex items-center justify-between cursor-pointer bg-gray-750 p-4 rounded-lg border border-gray-600">
-							<div>
-								<div class="text-white text-sm font-medium">Hide Forum</div>
-								<div class="text-xs text-gray-400">Disable discussion forum tab</div>
-							</div>
-							<div class="relative">
-								<input type="checkbox" id="editHideForum" class="sr-only peer">
-								<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-							</div>
-						</label>
-					</div>
+						</div>
 				</div>
 
 				<!-- Match Settings Section -->
@@ -1314,15 +1318,6 @@
 							<div class="w-11 h-6 bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
 						</div>
 					</label>
-					<p class="text-xs text-gray-500 italic">Note: Quick Advance setting is not supported by the Challonge API. Change it on Challonge.com directly.</p>
-				</div>
-
-				<!-- Challonge Link -->
-				<div class="bg-gray-750 p-4 rounded-lg border border-gray-600">
-					<div class="flex items-center justify-between">
-						<span class="text-gray-400 text-sm">Challonge URL:</span>
-						<a id="editChallongeLink" href="#" target="_blank" class="text-blue-400 hover:text-blue-300 text-sm truncate max-w-md">--</a>
-					</div>
 				</div>
 			</div>
 
@@ -1375,10 +1370,12 @@
 		</div>
 	</div>
 
+	<!-- Socket.IO for real-time updates -->
+	<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 	<script src="js/utils.js?v=3"></script>
 	<script src="js/nav.js?v=1"></script>
 	<script src="js/pwa.js?v=2"></script>
-	<script src="js/tournament.js?v=34"></script>
+	<script src="js/tournament.js?v=41"></script>
 	<script>
 		document.addEventListener('DOMContentLoaded', () => {
 			initNavigation('Tournament');

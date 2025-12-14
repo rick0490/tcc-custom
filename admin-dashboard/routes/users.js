@@ -1,105 +1,56 @@
 /**
  * Users Routes
  *
- * User management API endpoints (admin only).
- * Extracted from server.js for modularity.
+ * User profile API endpoints.
+ * Simplified to profile-only operations (no CRUD for other users).
+ * Each tenant has one user - no role-based access control needed.
  */
 
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const { requireAuthAPI, requireAdmin } = require('../middleware/auth');
+const { requireAuthAPI } = require('../middleware/auth');
 const settings = require('../services/settings');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:users');
 
 /**
- * GET /api/users
- * Get all users (admin only)
+ * GET /api/users/me
+ * Get current user profile
  */
-router.get('/', requireAuthAPI, requireAdmin, (req, res) => {
+router.get('/me', requireAuthAPI, (req, res) => {
 	const usersData = settings.loadUsers();
+	const user = usersData.users.find(u => u.id === req.session.userId);
 
-	// Don't send passwords to client
-	const safeUsers = usersData.users.map(u => ({
-		id: u.id,
-		username: u.username,
-		role: u.role,
-		createdAt: u.createdAt
-	}));
-
-	res.json({
-		success: true,
-		users: safeUsers
-	});
-});
-
-/**
- * POST /api/users
- * Add new user (admin only)
- */
-router.post('/', requireAuthAPI, requireAdmin, async (req, res) => {
-	const { username, password, role } = req.body;
-
-	if (!username || !password) {
-		return res.status(400).json({
+	if (!user) {
+		return res.status(404).json({
 			success: false,
-			error: 'Username and password are required'
+			error: 'User not found'
 		});
 	}
-
-	// Validate password
-	const passwordValidation = settings.validatePassword(password);
-	if (!passwordValidation.valid) {
-		return res.status(400).json({
-			success: false,
-			error: passwordValidation.errors.join('. ')
-		});
-	}
-
-	// Check if user already exists
-	const usersData = settings.loadUsers();
-	if (usersData.users.find(u => u.username === username)) {
-		return res.status(409).json({
-			success: false,
-			error: 'Username already exists'
-		});
-	}
-
-	// Hash password
-	const hashedPassword = await bcrypt.hash(password, 10);
-
-	// Create new user
-	const newUser = {
-		id: Math.max(...usersData.users.map(u => u.id), 0) + 1,
-		username,
-		password: hashedPassword,
-		role: role || 'user',
-		createdAt: new Date().toISOString()
-	};
-
-	usersData.users.push(newUser);
-	settings.saveUsers(usersData);
 
 	res.json({
 		success: true,
 		user: {
-			id: newUser.id,
-			username: newUser.username,
-			role: newUser.role,
-			createdAt: newUser.createdAt
+			id: user.id,
+			username: user.username,
+			email: user.email || null,
+			createdAt: user.createdAt
 		}
 	});
 });
 
 /**
- * PUT /api/users/:id
- * Update user (admin only)
+ * PUT /api/users/me
+ * Update current user profile (username, email)
+ * Note: Password changes use /api/settings/change-password endpoint
  */
-router.put('/:id', requireAuthAPI, requireAdmin, async (req, res) => {
-	const userId = parseInt(req.params.id);
-	const { username, password, role } = req.body;
+router.put('/me', requireAuthAPI, async (req, res) => {
+	const { username, email } = req.body;
 
 	const usersData = settings.loadUsers();
-	const userIndex = usersData.users.findIndex(u => u.id === userId);
+	const userIndex = usersData.users.findIndex(u => u.id === req.session.userId);
 
 	if (userIndex === -1) {
 		return res.status(404).json({
@@ -108,79 +59,40 @@ router.put('/:id', requireAuthAPI, requireAdmin, async (req, res) => {
 		});
 	}
 
-	// Update fields
+	// Update username if provided
 	if (username) {
-		// Check if new username already exists
-		if (usersData.users.find(u => u.username === username && u.id !== userId)) {
+		// Check if new username already exists (case-insensitive)
+		const existingUser = usersData.users.find(
+			u => u.username.toLowerCase() === username.toLowerCase() && u.id !== req.session.userId
+		);
+		if (existingUser) {
 			return res.status(409).json({
 				success: false,
 				error: 'Username already exists'
 			});
 		}
 		usersData.users[userIndex].username = username;
+		// Update session username
+		req.session.username = username;
 	}
 
-	if (password) {
-		// Validate password
-		const passwordValidation = settings.validatePassword(password);
-		if (!passwordValidation.valid) {
-			return res.status(400).json({
-				success: false,
-				error: passwordValidation.errors.join('. ')
-			});
-		}
-		const hashedPassword = await bcrypt.hash(password, 10);
-		usersData.users[userIndex].password = hashedPassword;
-	}
-
-	if (role) {
-		usersData.users[userIndex].role = role;
+	// Update email if provided
+	if (email !== undefined) {
+		usersData.users[userIndex].email = email || null;
 	}
 
 	settings.saveUsers(usersData);
+
+	logger.log('profileUpdated', { userId: req.session.userId, username: usersData.users[userIndex].username });
 
 	res.json({
 		success: true,
 		user: {
 			id: usersData.users[userIndex].id,
 			username: usersData.users[userIndex].username,
-			role: usersData.users[userIndex].role,
+			email: usersData.users[userIndex].email || null,
 			createdAt: usersData.users[userIndex].createdAt
 		}
-	});
-});
-
-/**
- * DELETE /api/users/:id
- * Delete user (admin only)
- */
-router.delete('/:id', requireAuthAPI, requireAdmin, (req, res) => {
-	const userId = parseInt(req.params.id);
-
-	// Prevent deleting own account
-	if (req.session.userId === userId) {
-		return res.status(400).json({
-			success: false,
-			error: 'Cannot delete your own account'
-		});
-	}
-
-	const usersData = settings.loadUsers();
-	const userIndex = usersData.users.findIndex(u => u.id === userId);
-
-	if (userIndex === -1) {
-		return res.status(404).json({
-			success: false,
-			error: 'User not found'
-		});
-	}
-
-	usersData.users.splice(userIndex, 1);
-	settings.saveUsers(usersData);
-
-	res.json({
-		success: true,
-		message: 'User deleted successfully'
 	});
 });
 

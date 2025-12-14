@@ -7,6 +7,8 @@ let deleteTarget = null;
 let editTarget = null;
 let currentFilter = 'all';
 let statusRefreshInterval = null;
+let currentUserId = null;  // Current user's ID for URL construction
+let isSuperadminView = false;  // Whether viewing as superadmin
 
 // Collapsible section state
 const SECTION_STATE_KEY = 'sponsorsPageSections';
@@ -141,8 +143,10 @@ async function loadSponsors() {
 		if (data.success) {
 			sponsors = data.sponsors || [];
 			sponsorConfig = data.config || {};
+			currentUserId = data.currentUserId || null;
+			isSuperadminView = data.isSuperadmin || false;
 			// Only update config UI on initial load to avoid overwriting unsaved changes
-			if (!initialConfigLoaded) {
+			if (!initialConfigLoaded && sponsorConfig) {
 				updateConfigUI();
 				initialConfigLoaded = true;
 			}
@@ -293,11 +297,18 @@ function renderGallery() {
 		// Convert percentage to multiplier for display (100% = 1.0x)
 		const sizeMultiplier = ((sponsor.size || 100) / 100).toFixed(1);
 
+		// Build preview URL with user-specific path
+		const previewUrl = getSponsorPreviewUrl(sponsor);
+		// Show owner badge for superadmin view
+		const ownerBadge = isSuperadminView && sponsor.ownerId
+			? `<span class="bg-indigo-600 text-white text-xs px-1.5 py-0.5 rounded font-medium ml-1">User ${sponsor.ownerId}</span>`
+			: '';
+
 		return `
 		<div class="sponsor-card group bg-gray-750 rounded-lg border border-gray-600 overflow-hidden ${!isActive ? 'opacity-60' : ''}">
 			<!-- Image Container -->
 			<div class="relative aspect-video bg-gray-700 cursor-pointer" onclick="previewSponsor('${escapeHtml(sponsor.id)}')">
-				<img src="/api/sponsors/preview/${encodeURIComponent(sponsor.filename)}"
+				<img src="${previewUrl}"
 					 alt="${escapeHtml(sponsor.name)}"
 					 class="w-full h-full object-contain p-2"
 					 style="opacity: ${sponsor.opacity / 100}"
@@ -310,6 +321,7 @@ function renderGallery() {
 					` : `
 						<span class="bg-gray-600 text-gray-300 text-xs px-2 py-0.5 rounded font-medium">Inactive</span>
 					`}
+					${ownerBadge}
 				</div>
 
 				<!-- Type Badge -->
@@ -413,6 +425,21 @@ function getPositionLabel(position) {
 		'bottom-banner': 'Bottom Banner'
 	};
 	return labels[position] || position;
+}
+
+/**
+ * Get preview URL for a sponsor
+ * Uses user-specific path: /api/sponsors/preview/{userId}/{filename}
+ * @param {Object} sponsor - Sponsor object with ownerId and filename
+ * @returns {string} Preview URL
+ */
+function getSponsorPreviewUrl(sponsor) {
+	const userId = sponsor.ownerId || currentUserId;
+	if (userId) {
+		return `/api/sponsors/preview/${userId}/${encodeURIComponent(sponsor.filename)}`;
+	}
+	// Fallback to legacy URL format (will search all directories)
+	return `/api/sponsors/preview/${encodeURIComponent(sponsor.filename)}`;
 }
 
 // Filter by position
@@ -592,7 +619,7 @@ function previewSponsor(sponsorId) {
 	const image = document.getElementById('previewImage');
 	const name = document.getElementById('previewName');
 
-	image.src = `/api/sponsors/preview/${encodeURIComponent(sponsor.filename)}`;
+	image.src = getSponsorPreviewUrl(sponsor);
 	name.textContent = sponsor.name;
 	modal.classList.remove('hidden');
 }

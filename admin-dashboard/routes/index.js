@@ -24,6 +24,7 @@ const analyticsRoutes = require('./analytics');
 const exportsRoutes = require('./exports');
 const apiRoutes = require('./api');
 const bracketEditorRoutes = require('./bracket-editor');
+const publicTournamentRoutes = require('./public-tournament');
 
 module.exports = {
 	auth: authRoutes,
@@ -44,5 +45,6 @@ module.exports = {
 	analytics: analyticsRoutes,
 	exports: exportsRoutes,
 	api: apiRoutes,
-	bracketEditor: bracketEditorRoutes
+	bracketEditor: bracketEditorRoutes,
+	publicTournament: publicTournamentRoutes
 };

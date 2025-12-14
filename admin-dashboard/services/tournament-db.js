@@ -3,7 +3,11 @@
  * Local tournament management - replaces Challonge API
  */
 
-const analyticsDb = require('../analytics-db');
+const tournamentsDb = require('../db/tournaments-db');
+const systemDb = require('../db/system-db');
+const { createLogger } = require('./debug-logger');
+
+const logger = createLogger('tournament-db');
 
 /**
  * Generate a URL-safe slug for a tournament
@@ -49,18 +53,61 @@ function generateUrlSlug(name, gameName, startDate) {
 }
 
 /**
- * Create a new tournament
+ * Add game name to tournament object (cross-db helper)
  */
-function create(data) {
-    const db = analyticsDb.getDb();
+function enrichWithGameName(tournament) {
+    if (!tournament) return tournament;
+
+    if (tournament.game_id) {
+        const game = systemDb.getGameById(tournament.game_id);
+        tournament.game_name = game ? game.name : null;
+    } else {
+        tournament.game_name = null;
+    }
+
+    return tournament;
+}
+
+/**
+ * Parse format_settings_json, round_labels_json, and add game name (combined enrichment helper)
+ */
+function enrichTournament(tournament) {
+    if (!tournament) return tournament;
+
+    // Add game name from system.db
+    enrichWithGameName(tournament);
+
+    // Parse format_settings JSON
+    tournament.format_settings = tournament.format_settings_json
+        ? JSON.parse(tournament.format_settings_json)
+        : null;
+
+    // Parse round_labels JSON
+    tournament.round_labels = tournament.round_labels_json
+        ? JSON.parse(tournament.round_labels_json)
+        : null;
+
+    return tournament;
+}
+
+/**
+ * Create a new tournament
+ * @param {Object} data - Tournament data
+ * @param {number} userId - Owner user ID for tenant isolation (optional for backward compatibility)
+ */
+function create(data, userId = null) {
+    const logComplete = logger.start('create', { name: data.name, type: data.tournament_type, userId });
+    const db = tournamentsDb.getDb();
 
     // Generate URL slug if not provided
     const urlSlug = data.url_slug || generateUrlSlug(data.name, data.game_name, data.starts_at);
 
-    // Look up game_id from game name
+    // Look up game_id from game name if needed
+    // Auto-create game if it doesn't exist
     let gameId = data.game_id;
     if (!gameId && data.game_name) {
-        const game = db.prepare('SELECT id FROM games WHERE name = ?').get(data.game_name);
+        const game = systemDb.getGameByName(data.game_name) ||
+                     systemDb.ensureGame(data.game_name);
         if (game) {
             gameId = game.id;
         }
@@ -72,8 +119,8 @@ function create(data) {
             signup_cap, open_signup, check_in_duration, registration_open_at,
             starts_at, hold_third_place_match, grand_finals_modifier,
             swiss_rounds, ranked_by, show_rounds, hide_seeds, sequential_pairings,
-            private, format_settings_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            private, format_settings_json, user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -96,28 +143,28 @@ function create(data) {
         data.hide_seeds ? 1 : 0,
         data.sequential_pairings ? 1 : 0,
         data.private ? 1 : 0,
-        data.format_settings_json ? JSON.stringify(data.format_settings_json) : null
+        data.format_settings_json ? JSON.stringify(data.format_settings_json) : null,
+        userId
     );
 
-    return getById(result.lastInsertRowid);
+    const tournament = getById(result.lastInsertRowid);
+    logComplete({ tournamentId: tournament.id, urlSlug: tournament.url_slug, userId });
+    return tournament;
 }
 
 /**
  * Get tournament by ID
  */
 function getById(id) {
-    const db = analyticsDb.getDb();
+    logger.log('getById', { id });
+    const db = tournamentsDb.getDb();
     const tournament = db.prepare(`
-        SELECT t.*, g.name as game_name
-        FROM tcc_tournaments t
-        LEFT JOIN games g ON t.game_id = g.id
-        WHERE t.id = ?
+        SELECT * FROM tcc_tournaments WHERE id = ?
     `).get(id);
 
     if (tournament) {
-        tournament.format_settings = tournament.format_settings_json
-            ? JSON.parse(tournament.format_settings_json)
-            : null;
+        // Enrich with game name and parse format_settings
+        enrichTournament(tournament);
 
         // Get participant count
         const countResult = db.prepare(`
@@ -134,18 +181,14 @@ function getById(id) {
  * Get tournament by URL slug
  */
 function getBySlug(slug) {
-    const db = analyticsDb.getDb();
+    const db = tournamentsDb.getDb();
     const tournament = db.prepare(`
-        SELECT t.*, g.name as game_name
-        FROM tcc_tournaments t
-        LEFT JOIN games g ON t.game_id = g.id
-        WHERE t.url_slug = ?
+        SELECT * FROM tcc_tournaments WHERE url_slug = ?
     `).get(slug);
 
     if (tournament) {
-        tournament.format_settings = tournament.format_settings_json
-            ? JSON.parse(tournament.format_settings_json)
-            : null;
+        // Enrich with game name and parse format_settings
+        enrichTournament(tournament);
 
         const countResult = db.prepare(`
             SELECT COUNT(*) as count FROM tcc_participants
@@ -159,18 +202,26 @@ function getBySlug(slug) {
 
 /**
  * List tournaments with optional filters
+ * @param {Object} filters - Filter options
+ * @param {number|null} userId - User ID for tenant filtering (null = all users, for superadmin)
  */
-function list(filters = {}) {
-    const db = analyticsDb.getDb();
+function list(filters = {}, userId = null) {
+    logger.log('list', { filters, userId });
+    const db = tournamentsDb.getDb();
 
     let sql = `
-        SELECT t.*, g.name as game_name,
+        SELECT t.*,
                (SELECT COUNT(*) FROM tcc_participants WHERE tournament_id = t.id AND active = 1) as participants_count
         FROM tcc_tournaments t
-        LEFT JOIN games g ON t.game_id = g.id
         WHERE 1=1
     `;
     const params = [];
+
+    // Tenant isolation: filter by user_id unless null (superadmin viewing all)
+    if (userId !== null) {
+        sql += ' AND t.user_id = ?';
+        params.push(userId);
+    }
 
     if (filters.state) {
         if (Array.isArray(filters.state)) {
@@ -203,7 +254,7 @@ function list(filters = {}) {
     }
 
     // Default sort: pending first (by starts_at), then others by created_at desc
-    sql += ' ORDER BY CASE WHEN t.state = "pending" THEN 0 ELSE 1 END, t.starts_at ASC, t.created_at DESC';
+    sql += " ORDER BY CASE WHEN t.state = 'pending' THEN 0 ELSE 1 END, t.starts_at ASC, t.created_at DESC";
 
     if (filters.limit) {
         sql += ' LIMIT ?';
@@ -212,17 +263,38 @@ function list(filters = {}) {
 
     const tournaments = db.prepare(sql).all(...params);
 
-    return tournaments.map(t => {
+    // Enrich each tournament with game name
+    const result = tournaments.map(t => {
+        enrichWithGameName(t);
         t.format_settings = t.format_settings_json ? JSON.parse(t.format_settings_json) : null;
         return t;
     });
+    logger.log('list:result', { count: result.length, userId });
+    return result;
 }
 
 /**
  * Update tournament
  */
 function update(id, data) {
-    const db = analyticsDb.getDb();
+    const logComplete = logger.start('update', { id, fields: Object.keys(data) });
+    const db = tournamentsDb.getDb();
+
+    // Handle game_name -> game_id lookup (similar to create())
+    // If game_name is provided but game_id is not, look up or create the game
+    if (data.game_name !== undefined && data.game_id === undefined) {
+        if (data.game_name) {
+            // Try to find existing game, or create it
+            const game = systemDb.getGameByName(data.game_name) ||
+                         systemDb.ensureGame(data.game_name);
+            if (game) {
+                data.game_id = game.id;
+            }
+        } else {
+            // Empty string or null means clear the game
+            data.game_id = null;
+        }
+    }
 
     // Build dynamic update query
     const updates = [];
@@ -234,13 +306,13 @@ function update(id, data) {
         'starts_at', 'started_at', 'completed_at',
         'hold_third_place_match', 'grand_finals_modifier', 'swiss_rounds',
         'ranked_by', 'show_rounds', 'hide_seeds', 'sequential_pairings',
-        'private', 'format_settings_json'
+        'private', 'format_settings_json', 'round_labels_json'
     ];
 
     for (const field of allowedFields) {
         if (data[field] !== undefined) {
             updates.push(`${field} = ?`);
-            if (field === 'format_settings_json' && typeof data[field] === 'object') {
+            if ((field === 'format_settings_json' || field === 'round_labels_json') && typeof data[field] === 'object') {
                 params.push(JSON.stringify(data[field]));
             } else if (typeof data[field] === 'boolean') {
                 params.push(data[field] ? 1 : 0);
@@ -251,6 +323,7 @@ function update(id, data) {
     }
 
     if (updates.length === 0) {
+        logComplete({ noChanges: true });
         return getById(id);
     }
 
@@ -261,14 +334,17 @@ function update(id, data) {
     const sql = `UPDATE tcc_tournaments SET ${updates.join(', ')} WHERE id = ?`;
     db.prepare(sql).run(...params);
 
-    return getById(id);
+    const tournament = getById(id);
+    logComplete({ updatedFields: updates.length - 1 });
+    return tournament;
 }
 
 /**
  * Update tournament state
  */
 function updateState(id, newState) {
-    const db = analyticsDb.getDb();
+    const logComplete = logger.start('updateState', { id, newState });
+    const db = tournamentsDb.getDb();
     const now = new Date().toISOString();
 
     const updates = { state: newState, updated_at: now };
@@ -288,18 +364,22 @@ function updateState(id, newState) {
 
     db.prepare(sql).run(...Object.values(updates), id);
 
-    return getById(id);
+    const tournament = getById(id);
+    logComplete({ previousState: tournament?.state, newState });
+    return tournament;
 }
 
 /**
  * Delete tournament
  */
 function deleteTournament(id) {
-    const db = analyticsDb.getDb();
+    logger.log('delete', { id });
+    const db = tournamentsDb.getDb();
 
     // Cascading delete will handle matches, participants, stations, standings
     const result = db.prepare('DELETE FROM tcc_tournaments WHERE id = ?').run(id);
 
+    logger.log('delete:result', { id, deleted: result.changes > 0 });
     return result.changes > 0;
 }
 
@@ -307,7 +387,7 @@ function deleteTournament(id) {
  * Get tournament stats
  */
 function getStats(id) {
-    const db = analyticsDb.getDb();
+    const db = tournamentsDb.getDb();
 
     const stats = db.prepare(`
         SELECT
@@ -333,7 +413,7 @@ function canStart(id) {
         return { canStart: false, reason: `Tournament is already ${tournament.state}` };
     }
 
-    const db = analyticsDb.getDb();
+    const db = tournamentsDb.getDb();
     const participantCount = db.prepare(`
         SELECT COUNT(*) as count FROM tcc_participants
         WHERE tournament_id = ? AND active = 1
@@ -360,16 +440,121 @@ function canReset(id) {
     return { canReset: true };
 }
 
+/**
+ * Get tournament owner (user_id) by tournament ID
+ * Used for tenant access validation
+ */
+function getOwnerId(tournamentId) {
+    const db = tournamentsDb.getDb();
+    const result = db.prepare('SELECT user_id FROM tcc_tournaments WHERE id = ?').get(tournamentId);
+    return result ? result.user_id : null;
+}
+
+/**
+ * Check if user owns tournament
+ * @param {number} tournamentId - Tournament ID
+ * @param {number} userId - User ID to check
+ * @returns {boolean}
+ */
+function isOwner(tournamentId, userId) {
+    const ownerId = getOwnerId(tournamentId);
+    return ownerId === userId;
+}
+
+/**
+ * List tournaments for a specific user
+ * Convenience function that calls list with userId
+ */
+function listByUser(userId, filters = {}) {
+    return list(filters, userId);
+}
+
+/**
+ * Get custom round labels for a tournament
+ * @param {number} id - Tournament ID
+ * @returns {Object|null} - Parsed round labels object or null
+ */
+function getRoundLabels(id) {
+    logger.log('getRoundLabels', { id });
+    const db = tournamentsDb.getDb();
+    const result = db.prepare('SELECT round_labels_json FROM tcc_tournaments WHERE id = ?').get(id);
+
+    if (!result || !result.round_labels_json) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(result.round_labels_json);
+    } catch (e) {
+        logger.log('getRoundLabels:parseError', { id, error: e.message });
+        return null;
+    }
+}
+
+/**
+ * Set custom round labels for a tournament
+ * @param {number} id - Tournament ID
+ * @param {Object} labels - Round labels object { winners: { "1": "Label", ... }, losers: { ... } }
+ * @returns {Object} - Updated tournament
+ */
+function setRoundLabels(id, labels) {
+    logger.log('setRoundLabels', { id, labels });
+    const db = tournamentsDb.getDb();
+
+    // Validate labels structure
+    if (labels !== null && typeof labels !== 'object') {
+        throw new Error('Round labels must be an object or null');
+    }
+
+    // Clean empty labels (remove entries where value is empty string)
+    let cleanedLabels = null;
+    if (labels) {
+        cleanedLabels = {};
+        for (const bracket of ['winners', 'losers']) {
+            if (labels[bracket] && typeof labels[bracket] === 'object') {
+                cleanedLabels[bracket] = {};
+                for (const [round, label] of Object.entries(labels[bracket])) {
+                    if (label && typeof label === 'string' && label.trim()) {
+                        cleanedLabels[bracket][round] = label.trim();
+                    }
+                }
+                // Remove bracket key if empty
+                if (Object.keys(cleanedLabels[bracket]).length === 0) {
+                    delete cleanedLabels[bracket];
+                }
+            }
+        }
+        // Set to null if no labels remain
+        if (Object.keys(cleanedLabels).length === 0) {
+            cleanedLabels = null;
+        }
+    }
+
+    const jsonValue = cleanedLabels ? JSON.stringify(cleanedLabels) : null;
+    db.prepare(`
+        UPDATE tcc_tournaments
+        SET round_labels_json = ?, updated_at = ?
+        WHERE id = ?
+    `).run(jsonValue, new Date().toISOString(), id);
+
+    return getById(id);
+}
+
 module.exports = {
     generateUrlSlug,
     create,
     getById,
     getBySlug,
     list,
+    listByUser,
     update,
     updateState,
     delete: deleteTournament,
     getStats,
     canStart,
-    canReset
+    canReset,
+    getOwnerId,
+    isOwner,
+    getRoundLabels,
+    setRoundLabels
 };

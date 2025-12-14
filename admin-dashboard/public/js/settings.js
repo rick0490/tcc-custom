@@ -38,14 +38,78 @@ document.addEventListener('DOMContentLoaded', async () => {
 	}
 
 	// Setup form handlers
+	setupProfileForm();
 	setupChangePasswordForm();
 
-	// Load system settings if admin
-	if (currentUser && currentUser.role === 'admin') {
+	// Load profile data
+	loadProfile();
+
+	// Load system settings (all authenticated users have full access - single user per tenant)
+	if (currentUser) {
 		loadSystemSettings();
 		document.getElementById('adminSettings').classList.remove('hidden');
 	}
 });
+
+// Load user profile
+async function loadProfile() {
+	try {
+		const response = await fetch('/api/users/me');
+		const data = await response.json();
+
+		if (data.success && data.user) {
+			document.getElementById('profileUsername').value = data.user.username || '';
+			document.getElementById('profileEmail').value = data.user.email || '';
+		}
+	} catch (error) {
+		FrontendDebug.error('Settings', 'Failed to load profile', error);
+	}
+}
+
+// Setup profile form
+function setupProfileForm() {
+	const form = document.getElementById('profileForm');
+
+	form.addEventListener('submit', async (e) => {
+		e.preventDefault();
+
+		const username = document.getElementById('profileUsername').value.trim();
+		const email = document.getElementById('profileEmail').value.trim();
+
+		// Validate username
+		if (username.length < 3) {
+			showAlert('Username must be at least 3 characters', 'error');
+			return;
+		}
+
+		try {
+			const response = await csrfFetch('/api/users/me', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ username, email: email || null })
+			});
+
+			const data = await response.json();
+
+			if (data.success) {
+				showAlert('Profile updated successfully', 'success');
+				// Update currentUser
+				if (currentUser) {
+					currentUser.username = username;
+				}
+				// Update hidden username field for password form accessibility
+				const usernameField = document.getElementById('changePasswordUsername');
+				if (usernameField) {
+					usernameField.value = username;
+				}
+			} else {
+				showAlert(data.error || 'Failed to update profile', 'error');
+			}
+		} catch (error) {
+			showAlert('Error updating profile', 'error');
+		}
+	});
+}
 
 // Note: showAlert and escapeHtml are now in utils.js
 
@@ -212,9 +276,6 @@ function switchSettingsTab(tabName) {
 		case 'notifications':
 			contentDiv.innerHTML = renderNotificationsTab();
 			loadPushNotificationStatus();
-			break;
-		case 'display':
-			contentDiv.innerHTML = renderDisplayTab();
 			break;
 		case 'bracketDisplay':
 			contentDiv.innerHTML = renderBracketDisplayTab();
@@ -422,60 +483,6 @@ function renderNotificationsTab() {
 	`;
 }
 
-// Render Display Settings tab
-function renderDisplayTab() {
-	return `
-		<form id="displayForm" onsubmit="saveSettingsSection(event, 'display')" class="max-w-2xl">
-			<div class="setting-group">
-				<label for="matchRefreshInterval" class="block text-sm font-medium text-gray-300 mb-2">
-					Match Display Refresh Interval (seconds)
-				</label>
-				<input
-					type="number"
-					id="matchRefreshInterval"
-					value="${systemSettings.display.matchRefreshInterval / 1000}"
-					min="5"
-					max="300"
-					class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-				>
-				<p class="text-xs text-gray-400 mt-2">How often to poll for match updates (default: 30 seconds)</p>
-			</div>
-
-			<div class="setting-group">
-				<label for="bracketRefreshInterval" class="block text-sm font-medium text-gray-300 mb-2">
-					Bracket Display Refresh Interval (seconds)
-				</label>
-				<input
-					type="number"
-					id="bracketRefreshInterval"
-					value="${systemSettings.display.bracketRefreshInterval / 1000}"
-					min="30"
-					max="600"
-					class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-				>
-			</div>
-
-			<div class="setting-group">
-				<label for="flyerRefreshInterval" class="block text-sm font-medium text-gray-300 mb-2">
-					Flyer Display Refresh Interval (seconds)
-				</label>
-				<input
-					type="number"
-					id="flyerRefreshInterval"
-					value="${systemSettings.display.flyerRefreshInterval / 1000}"
-					min="30"
-					max="600"
-					class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-				>
-			</div>
-
-			<button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-md transition">
-				Save Display Settings
-			</button>
-		</form>
-	`;
-}
-
 // Render Bracket Display tab
 function renderBracketDisplayTab() {
 	// Get current theme from settings (with fallback)
@@ -594,13 +601,6 @@ async function saveSettingsSection(event, section) {
 				smtpPassword: document.getElementById('smtpPassword').value,
 				fromAddress: document.getElementById('fromAddress').value
 			};
-			break;
-
-		case 'display':
-			formData.matchRefreshInterval = parseInt(document.getElementById('matchRefreshInterval').value) * 1000; // seconds to ms
-			formData.bracketRefreshInterval = parseInt(document.getElementById('bracketRefreshInterval').value) * 1000;
-			formData.flyerRefreshInterval = parseInt(document.getElementById('flyerRefreshInterval').value) * 1000;
-			formData.defaultFlyer = systemSettings.display.defaultFlyer; // Keep existing
 			break;
 
 		case 'bracketDisplay':

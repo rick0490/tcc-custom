@@ -18,8 +18,7 @@ const authDataFilePath = path.join(__dirname, '../../auth-data.json');
 // Test user credentials
 const TEST_ADMIN = {
 	username: 'csrftestadmin',
-	password: 'testpassword123',
-	role: 'admin'
+	password: 'testpassword123'
 };
 
 describe('CSRF Protection', () => {
@@ -48,7 +47,6 @@ describe('CSRF Protection', () => {
 					id: 999,
 					username: TEST_ADMIN.username,
 					password: adminHash,
-					role: TEST_ADMIN.role,
 					createdAt: new Date().toISOString()
 				}
 			]

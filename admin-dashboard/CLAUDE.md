@@ -542,7 +542,7 @@ describe('My API', () => {
 
 ### Match Polling
 
-The admin dashboard polls the local database for match data and pushes updates to MagicMirror-match via WebSocket.
+The admin dashboard polls the local database for match data and pushes updates to displays via WebSocket.
 
 ```javascript
 // Match polling state (server.js)
@@ -554,7 +554,7 @@ const matchPollingState = {
 };
 
 // Key functions
-fetchAndPushMatches()    // Fetches from local DB, pushes to MagicMirror
+fetchAndPushMatches()    // Fetches from local DB, pushes to displays
 startMatchPolling()      // Starts interval timer
 stopMatchPolling()       // Stops interval timer
 ```
@@ -573,7 +573,7 @@ Match actions trigger immediate `fetchAndPushMatches()` for faster TV updates:
 
 ### Real-Time WebSocket (Socket.IO)
 
-The admin dashboard runs a Socket.IO server for real-time updates to MagicMirror displays. This provides near-instant updates (< 100ms) instead of waiting for polling intervals.
+The admin dashboard runs a Socket.IO server for real-time updates to displays. This provides near-instant updates (< 100ms) instead of waiting for polling intervals.
 
 **WebSocket Server Setup (server.js):**
 ```javascript
@@ -716,7 +716,7 @@ The `/api/tournament/setup` endpoint:
 3. Broadcasts `tournament:deployed` WebSocket event
 4. Writes `tournament-state.json` file for deployment checklist verification
 
-**State file written to:** `$MATCH_STATE_FILE` or default `/root/tcc-custom/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json`
+**State file written to:** `$MATCH_STATE_FILE` or default `/root/tcc-custom/admin-dashboard/tournament-state.json`
 
 **State file format:**
 ```json
@@ -1089,7 +1089,7 @@ POST   /api/sponsors/config              - Update sponsor config
 
 **Types:** `corner` (200x100px base) or `banner` (full width, 80px height)
 
-**WebSocket Events (to MagicMirror displays):**
+**WebSocket Events (to displays):**
 | Event | Direction | Purpose |
 |-------|-----------|---------|
 | `sponsor:show` | Server→Client | Display sponsor(s) at positions |
@@ -2450,6 +2450,12 @@ drawConnector(startX, startY, endX, endY) // Draw bracket lines
 handleMouseDown/Move/Up()    // Pan via mouse drag
 handleWheel()                // Zoom via scroll wheel
 zoomIn/Out/Reset()           // Zoom controls
+
+// Theming
+setTheme(themeId)            // Set color theme (saves to localStorage)
+getTheme()                   // Get current theme ID
+getThemes()                  // Get all available themes
+loadTheme()                  // Load theme from localStorage (called on init)
 ```
 
 **Canvas Constants:**
@@ -2463,17 +2469,35 @@ zoomIn/Out/Reset()           // Zoom controls
 | MIN_ZOOM | 0.3 | Minimum zoom level |
 | MAX_ZOOM | 3.0 | Maximum zoom level |
 
-**Color Scheme:**
-| Element | Color | Usage |
-|---------|-------|-------|
-| Background | #111827 | Canvas background |
-| Match BG | #1f2937 | Match box fill |
-| Match Border | #374151 | Match box stroke |
-| Text | #ffffff | Player names |
-| Seed Badge | #3b82f6 | Normal seed number |
-| Changed Seed | #f59e0b | Modified seed highlight |
-| BYE | #4b5563 | BYE slot styling |
-| Connectors | #4b5563 | Bracket lines |
+**Bracket Color Themes:**
+Five selectable color themes for bracket visualization, configurable via Settings > Bracket Display:
+
+| Theme | ID | Description |
+|-------|-----|-------------|
+| Midnight | `midnight` | Professional esports aesthetic (dark, default) |
+| Arctic Light | `arctic` | Clean, bright theme for well-lit venues |
+| Neon Arcade | `neon` | Vibrant cyberpunk/retro gaming |
+| Royal Tournament | `royal` | Classic gold/navy sports feel |
+| Forest | `forest` | Nature-inspired, calming green tones |
+
+**Theme Storage:**
+- Settings: `system-settings.json` → `bracketDisplay.theme`
+- Client cache: `localStorage.bracketTheme`
+- Default: `midnight`
+
+**Theme Properties (per theme):**
+| Property | Usage |
+|----------|-------|
+| background | Canvas background |
+| matchBg | Match box fill |
+| matchBorder | Match box stroke |
+| text | Player names |
+| seed | Normal seed number |
+| seedChanged | Modified seed highlight |
+| bye | BYE slot styling |
+| connector | Bracket lines |
+| winner | Winner highlight |
+| roundHeader | Round name text |
 
 **External Dependencies:**
 - SortableJS (CDN): `https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js`
@@ -2485,11 +2509,12 @@ zoomIn/Out/Reset()           // Zoom controls
 **Sections:**
 - User Management (table with add/edit/delete)
 - Change Password (current + new)
-- System Settings (admin only, 7 tabs):
+- System Settings (admin only, 8 tabs):
   - System Defaults
   - Security
   - Notifications
   - Display Settings
+  - Bracket Display (theme selector with visual previews)
   - Data Retention
   - Activity Log
   - System Monitoring
@@ -3452,7 +3477,7 @@ node -e "require('bcrypt').hash('newpass', 10).then(console.log)"
 ```bash
 # Test APIs directly
 curl http://localhost:2052/api/tournament/status  # Match Display
-curl http://localhost:2053/api/tournament/status  # Bracket Display
+curl http://localhost:2053/api/bracket/status     # Bracket Display
 curl http://localhost:2054/api/flyer/status       # Flyer Display
 ```
 
@@ -3526,7 +3551,7 @@ The setup script prompts for configuration during installation:
 | Port | Display Type | URL Pattern |
 |------|--------------|-------------|
 | 2052 | Match | `/u/:userId/match` or `:2052` |
-| 2053/8081 | Bracket | `:2053` or `:8081` |
+| 2053 | Bracket | `/u/:userId/bracket` or `:2053` |
 | 2054 | Flyer | `/u/:userId/flyer` or `:2054` |
 
 **Storage Detection (Performance Tuning):**
@@ -3620,12 +3645,12 @@ const CONFIG = {
         { name: 'tournament-signup', port: 3001, description: 'Tournament Signup' },
         { name: 'match-display', port: 2052, description: 'Match Display' },
         { name: 'flyer-display', port: 2054, description: 'Flyer Display' },
-        { name: 'magic-mirror-bracket', port: 2053, description: 'Bracket Display API' }
+        { name: 'bracket-display', port: 2053, description: 'Bracket Display' }
     ],
     apiEndpoints: [
         { name: 'Match Display Status', url: 'http://localhost:2052/api/health' },
         { name: 'Flyer Display Status', url: 'http://localhost:2054/api/health' },
-        { name: 'Bracket Module Status', url: 'http://localhost:2053/api/bracket/status' }
+        { name: 'Bracket Display Status', url: 'http://localhost:2053/api/bracket/status' }
     ],
     networkTargets: [
         { name: 'Google DNS', host: '8.8.8.8' },
@@ -3697,6 +3722,8 @@ Single-page tournament control dashboard for solo operators. Consolidates critic
 | Escape | Close modal / Deselect | Any time |
 | R | Refresh all data | No modal open |
 | T | Open ticker modal | No modal open |
+| P | Toggle emergency mode | No modal open |
+| Z | Undo last match | No modal open |
 | ? | Toggle keyboard help | Any time |
 
 ### Features
@@ -3752,3 +3779,43 @@ The DQ timer now supports server-side tracking with match/player association:
 - `timer:dq:warning` - 30 seconds remaining
 - `timer:dq:expired` - Timer expired, action taken
 - `timer:dq:cancelled` - Timer cancelled
+
+### Emergency Controls (Panic Mode)
+
+Emergency mode for fast recovery from issues during a tournament.
+
+**Quick Actions Buttons:**
+- **STOP** (red) - Activate emergency mode, show "Technical Difficulties" on all displays
+- **Resume** (amber pulse) - Deactivate emergency mode, resume normal operation
+- **Undo** - Rollback last match result
+- **Reboot TVs** - Queue reboot command for all registered Pi displays
+
+**API Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/emergency/status` | GET | Get current emergency state |
+| `/api/emergency/activate` | POST | Trigger panic mode (body: {reason}) |
+| `/api/emergency/deactivate` | POST | Resume normal operation |
+| `/api/matches/:id/history` | GET | Get match change history (last 10) |
+| `/api/matches/:id/undo` | POST | Undo last match result |
+
+**WebSocket Events:**
+- `emergency:activated` - Emergency mode triggered
+- `emergency:deactivated` - Normal operation resumed
+- `emergency:status` - Emergency status update
+
+**Match Rollback:**
+Match history tracked in memory for undo functionality:
+- `recordMatchChange()` captures state before each score update
+- History stored per tournament (Map structure)
+- Undo reopens match, clears winner/loser
+
+**Key Functions (command-center.js):**
+```javascript
+activateEmergencyMode()      // POST /api/emergency/activate
+deactivateEmergencyMode()    // POST /api/emergency/deactivate
+loadEmergencyStatus()        // GET /api/emergency/status on page load
+updateEmergencyModeUI()      // Toggle CSS classes and banner
+undoLastMatch()              // GET history, POST undo
+rebootAllDisplays()          // Iterate displays, POST reboot each
+```

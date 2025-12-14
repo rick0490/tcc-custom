@@ -1,12 +1,12 @@
 [Unit]
-Description=Tournament Control Center - Admin Dashboard
-Documentation=https://github.com/rick0490/tournament-control-center
-After=network.target magic-mirror-match.service magic-mirror-bracket.service
+Description=TCC Custom - Admin Dashboard
+Documentation=https://github.com/rick0490/tcc-custom
+After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/tournament-control-center/admin-dashboard
+WorkingDirectory=/root/tcc-custom/admin-dashboard
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=10
@@ -14,9 +14,9 @@ StandardOutput=journal
 StandardError=journal
 
 # Environment variables
-EnvironmentFile=/root/tournament-control-center/admin-dashboard/.env
+EnvironmentFile=/root/tcc-custom/admin-dashboard/.env
 
-# Security hardening (optional - can be adjusted)
+# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 

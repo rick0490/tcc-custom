@@ -27,9 +27,9 @@ const CONFIG = {
 	services: [
 		{ name: 'control-center-admin', port: 3000, description: 'Admin Dashboard' },
 		{ name: 'control-center-signup', port: 3001, description: 'Tournament Signup' },
-		{ name: 'magic-mirror-match', port: 2052, description: 'Match Display API' },
-		{ name: 'magic-mirror-bracket', port: 2053, description: 'Bracket Display API' },
-		{ name: 'magic-mirror-flyer', port: 2054, description: 'Flyer Display API' }
+		{ name: 'match-display', port: 2052, description: 'Match Display' },
+		{ name: 'bracket-display', port: 2053, description: 'Bracket Display' },
+		{ name: 'flyer-display', port: 2054, description: 'Flyer Display' }
 	],
 	apiEndpoints: [
 		{ name: 'Match Module Status', url: 'http://localhost:2052/api/tournament/status', method: 'GET' },

@@ -287,6 +287,14 @@
 		let gameConfigData = null;
 		let tournamentData = null;
 
+		// Helper function to escape HTML and prevent XSS
+		function escapeHtml(text) {
+			if (text === null || text === undefined) return '';
+			const div = document.createElement('div');
+			div.textContent = String(text);
+			return div.innerHTML;
+		}
+
 		// Theme Management
 		function initTheme() {
 			const savedTheme = localStorage.getItem('theme');
@@ -363,36 +371,59 @@
 			}
 		}
 
-		// Render rules dynamically
+		// Render rules dynamically (XSS-safe)
 		function renderRules(rules) {
 			const container = document.getElementById('rules-container');
 			container.innerHTML = '';
 
 			if (!rules || rules.length === 0) {
-				container.innerHTML = '<p class="text-gray-400 text-center">No rules available</p>';
+				const emptyP = document.createElement('p');
+				emptyP.className = 'text-gray-400 text-center';
+				emptyP.textContent = 'No rules available';
+				container.appendChild(emptyP);
 				return;
 			}
 
 			rules.forEach((rule, index) => {
 				const ruleDiv = document.createElement('div');
 				ruleDiv.className = 'rule-item';
-				ruleDiv.innerHTML = `
-					<div class="rule-number">${index + 1}</div>
-					<div class="flex-1 text-gray-300">
-						<strong class="text-white">${rule.title}:</strong> ${rule.description}
-					</div>
-				`;
+
+				// Create rule number badge
+				const numberDiv = document.createElement('div');
+				numberDiv.className = 'rule-number';
+				numberDiv.textContent = index + 1;
+
+				// Create content container
+				const contentDiv = document.createElement('div');
+				contentDiv.className = 'flex-1 text-gray-300';
+
+				// Create title (safe textContent)
+				const titleEl = document.createElement('strong');
+				titleEl.className = 'text-white';
+				titleEl.textContent = rule.title + ':';
+
+				// Create description (safe textContent)
+				const descSpan = document.createElement('span');
+				descSpan.textContent = ' ' + rule.description;
+
+				contentDiv.appendChild(titleEl);
+				contentDiv.appendChild(descSpan);
+				ruleDiv.appendChild(numberDiv);
+				ruleDiv.appendChild(contentDiv);
 				container.appendChild(ruleDiv);
 			});
 		}
 
-		// Render prizes dynamically
+		// Render prizes dynamically (XSS-safe)
 		function renderPrizes(prizes) {
 			const container = document.getElementById('prizes-container');
 			container.innerHTML = '';
 
 			if (!prizes || prizes.length === 0) {
-				container.innerHTML = '<p class="text-gray-400 text-center col-span-3">No prize information available</p>';
+				const emptyP = document.createElement('p');
+				emptyP.className = 'text-gray-400 text-center col-span-3';
+				emptyP.textContent = 'No prize information available';
+				container.appendChild(emptyP);
 				return;
 			}
 
@@ -427,46 +458,83 @@
 				prizeDiv.style.background = bgColor;
 				prizeDiv.style.border = `1px solid ${textColor}`;
 
-				// Medal icon SVG
-				const medalIcon = `
-					<svg class="w-12 h-12 mx-auto mb-2" fill="${iconColor}" viewBox="0 0 24 24">
-						<path d="M12 2C9.79 2 8 3.79 8 6s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm-4.5 4.5l-1.5 9 6-3 6 3-1.5-9"/>
-					</svg>
-				`;
+				// Create medal icon SVG (no user data)
+				const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+				svg.setAttribute('class', 'w-12 h-12 mx-auto mb-2');
+				svg.setAttribute('fill', iconColor);
+				svg.setAttribute('viewBox', '0 0 24 24');
+				const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+				path.setAttribute('d', 'M12 2C9.79 2 8 3.79 8 6s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm-4.5 4.5l-1.5 9 6-3 6 3-1.5-9');
+				svg.appendChild(path);
+				prizeDiv.appendChild(svg);
 
-				const extrasHTML = prize.extras && prize.extras.length > 0
-					? `<div class="text-sm text-gray-400 mt-2">${prize.extras.map(e => `+ ${e}`).join('<br>')}</div>`
-					: '';
+				// Create position text (safe textContent)
+				const positionDiv = document.createElement('div');
+				positionDiv.className = 'text-lg font-bold mb-1';
+				positionDiv.style.color = textColor;
+				positionDiv.textContent = prize.position || '';
+				prizeDiv.appendChild(positionDiv);
 
-				prizeDiv.innerHTML = `
-					${medalIcon}
-					<div class="text-lg font-bold mb-1" style="color: ${textColor}">${prize.position}</div>
-					<div class="text-2xl font-extrabold" style="color: ${textColor}">$${prize.amount}</div>
-					${extrasHTML}
-				`;
+				// Create amount text (safe textContent)
+				const amountDiv = document.createElement('div');
+				amountDiv.className = 'text-2xl font-extrabold';
+				amountDiv.style.color = textColor;
+				amountDiv.textContent = '$' + (prize.amount || 0);
+				prizeDiv.appendChild(amountDiv);
+
+				// Create extras if present (safe textContent)
+				if (prize.extras && prize.extras.length > 0) {
+					const extrasDiv = document.createElement('div');
+					extrasDiv.className = 'text-sm text-gray-400 mt-2';
+					prize.extras.forEach((extra, idx) => {
+						if (idx > 0) {
+							extrasDiv.appendChild(document.createElement('br'));
+						}
+						const span = document.createElement('span');
+						span.textContent = '+ ' + extra;
+						extrasDiv.appendChild(span);
+					});
+					prizeDiv.appendChild(extrasDiv);
+				}
+
 				container.appendChild(prizeDiv);
 			});
 		}
 
-		// Render additional info dynamically
+		// Render additional info dynamically (XSS-safe)
 		function renderAdditionalInfo(info) {
 			const container = document.getElementById('additional-info-container');
 			container.innerHTML = '';
 
 			if (!info || info.length === 0) {
-				container.innerHTML = '<li class="text-gray-400 text-center">No additional information available</li>';
+				const emptyLi = document.createElement('li');
+				emptyLi.className = 'text-gray-400 text-center';
+				emptyLi.textContent = 'No additional information available';
+				container.appendChild(emptyLi);
 				return;
 			}
 
 			info.forEach(item => {
 				const li = document.createElement('li');
 				li.className = 'flex items-start';
-				li.innerHTML = `
-					<svg class="w-5 h-5 mr-2 text-green-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-					</svg>
-					<span>${item}</span>
-				`;
+
+				// Create SVG check icon (no user data)
+				const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+				svg.setAttribute('class', 'w-5 h-5 mr-2 text-green-400 flex-shrink-0 mt-0.5');
+				svg.setAttribute('fill', 'currentColor');
+				svg.setAttribute('viewBox', '0 0 20 20');
+				const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+				path.setAttribute('fill-rule', 'evenodd');
+				path.setAttribute('d', 'M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z');
+				path.setAttribute('clip-rule', 'evenodd');
+				svg.appendChild(path);
+
+				// Create text span (safe textContent)
+				const textSpan = document.createElement('span');
+				textSpan.textContent = item;
+
+				li.appendChild(svg);
+				li.appendChild(textSpan);
 				container.appendChild(li);
 			});
 		}

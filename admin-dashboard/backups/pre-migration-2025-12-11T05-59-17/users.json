@@ -1,0 +1,11 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "ricardo",
+      "password": "$2b$10$qNh6/WSy2XzV8izGatQIT.LHiHW6QtKFpMDilE.q/lWnbRMnNZt6W",
+      "role": "admin",
+      "createdAt": "2025-11-21T22:09:00.113Z"
+    }
+  ]
+}

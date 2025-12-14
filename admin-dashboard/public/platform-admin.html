@@ -175,6 +175,9 @@
 					<button onclick="switchTab('monitoring')" data-tab="monitoring" class="platform-tab">
 						Monitoring
 					</button>
+					<button onclick="switchTab('displays')" data-tab="displays" class="platform-tab">
+						Displays
+					</button>
 					<button onclick="switchTab('settings')" data-tab="settings" class="platform-tab">
 						Settings
 					</button>
@@ -183,6 +186,15 @@
 					</button>
 					<button onclick="switchTab('sponsors')" data-tab="sponsors" class="platform-tab">
 						Sponsors
+					</button>
+					<button onclick="switchTab('statistics')" data-tab="statistics" class="platform-tab">
+						Statistics
+					</button>
+					<button onclick="switchTab('liveFeed')" data-tab="liveFeed" class="platform-tab">
+						Live Feed
+					</button>
+					<button onclick="switchTab('query')" data-tab="query" class="platform-tab">
+						Query
 					</button>
 				</nav>
 			</div>
@@ -218,7 +230,6 @@
 								<tr>
 									<th>ID</th>
 									<th>Username</th>
-									<th>Role</th>
 									<th>Status</th>
 									<th>Subscription</th>
 									<th>Last Login</th>
@@ -227,7 +238,7 @@
 							</thead>
 							<tbody id="usersTableBody">
 								<tr>
-									<td colspan="7" class="text-center py-8 text-gray-400">Loading users...</td>
+									<td colspan="6" class="text-center py-8 text-gray-400">Loading users...</td>
 								</tr>
 							</tbody>
 						</table>
@@ -427,6 +438,12 @@
 
 				<!-- Database Tab -->
 				<div id="tab-database" class="tab-content hidden">
+					<!-- Connection Status -->
+					<div class="flex items-center gap-3 mb-4 p-3 bg-gray-700/50 rounded-lg">
+						<span id="dbConnectionIndicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
+						<span id="dbConnectionStatus" class="text-white">Checking connection...</span>
+					</div>
+
 					<!-- Database Status Cards -->
 					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 						<div class="db-card" id="db-tournaments">
@@ -655,35 +672,6 @@
 						</div>
 					</div>
 
-					<!-- Database Status -->
-					<div class="mb-6">
-						<h3 class="text-lg font-semibold text-white mb-4">Database Connection</h3>
-						<div class="bg-gray-700/50 rounded-lg p-4">
-							<div class="flex items-center gap-3 mb-4">
-								<span id="dbConnectionIndicator" class="w-3 h-3 rounded-full bg-gray-500"></span>
-								<span id="dbConnectionStatus" class="text-white">Checking connection...</span>
-							</div>
-							<div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="dbSizeGrid">
-								<div>
-									<div class="text-sm text-gray-400">tournaments.db</div>
-									<div id="dbSizeTournaments" class="text-white">-</div>
-								</div>
-								<div>
-									<div class="text-sm text-gray-400">players.db</div>
-									<div id="dbSizePlayers" class="text-white">-</div>
-								</div>
-								<div>
-									<div class="text-sm text-gray-400">system.db</div>
-									<div id="dbSizeSystem" class="text-white">-</div>
-								</div>
-								<div>
-									<div class="text-sm text-gray-400">cache.db</div>
-									<div id="dbSizeCache" class="text-white">-</div>
-								</div>
-							</div>
-						</div>
-					</div>
-
 					<!-- Refresh Button -->
 					<div class="flex justify-end">
 						<button onclick="loadSystemHealth()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
@@ -694,6 +682,153 @@
 
 				<!-- Monitoring Tab -->
 				<div id="tab-monitoring" class="tab-content hidden">
+					<!-- Active Alerts Banner -->
+					<div id="alertsBanner" class="hidden mb-6">
+						<div class="bg-red-900/30 border border-red-700 rounded-lg p-4">
+							<div class="flex items-center justify-between mb-3">
+								<h3 class="text-lg font-semibold text-red-400 flex items-center gap-2">
+									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+									</svg>
+									Active Alerts (<span id="alertCount">0</span>)
+								</h3>
+								<button onclick="acknowledgeAllAlerts()" class="text-sm text-gray-400 hover:text-white">
+									Acknowledge All
+								</button>
+							</div>
+							<div id="alertsList" class="space-y-2">
+								<!-- Alerts loaded dynamically -->
+							</div>
+						</div>
+					</div>
+
+					<!-- Metrics Collection Controls -->
+					<div class="mb-6">
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-white">Performance Metrics</h3>
+							<div class="flex items-center gap-4">
+								<label class="flex items-center gap-2 cursor-pointer">
+									<input type="checkbox" id="autoRefreshMetrics" onchange="toggleMetricsAutoRefresh()" class="w-4 h-4 rounded bg-gray-700 border-gray-600">
+									<span class="text-sm text-gray-400">Auto-refresh (10s)</span>
+								</label>
+								<div id="metricsCollectionStatus" class="flex items-center gap-2">
+									<span class="w-2 h-2 rounded-full bg-gray-500" id="collectionIndicator"></span>
+									<span class="text-sm text-gray-400" id="collectionStatusText">Checking...</span>
+								</div>
+								<button onclick="toggleMetricsCollection()" id="toggleCollectionBtn" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-md text-sm">
+									Start Collection
+								</button>
+								<button onclick="refreshMetricsNow()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md text-sm">
+									Refresh Now
+								</button>
+								<button onclick="openThresholdsModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded-md text-sm">
+									Configure Alerts
+								</button>
+							</div>
+						</div>
+
+						<!-- Real-time Metrics Cards -->
+						<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+							<!-- CPU Usage -->
+							<div class="stat-card">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-gray-400 text-sm">CPU Usage</span>
+									<span id="cpuTrend" class="text-xs text-gray-500">--</span>
+								</div>
+								<div class="stat-value" id="metricCpu">--%</div>
+								<div class="w-full bg-gray-700 rounded-full h-2 mt-2">
+									<div id="cpuBar" class="bg-blue-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+								</div>
+							</div>
+							<!-- Memory Usage -->
+							<div class="stat-card">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-gray-400 text-sm">Memory Usage</span>
+									<span id="memoryTrend" class="text-xs text-gray-500">--</span>
+								</div>
+								<div class="stat-value" id="metricMemory">--%</div>
+								<div class="w-full bg-gray-700 rounded-full h-2 mt-2">
+									<div id="memoryBar" class="bg-green-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+								</div>
+							</div>
+							<!-- Disk Usage -->
+							<div class="stat-card">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-gray-400 text-sm">Disk Usage</span>
+									<span id="diskTrend" class="text-xs text-gray-500">--</span>
+								</div>
+								<div class="stat-value" id="metricDisk">--%</div>
+								<div class="w-full bg-gray-700 rounded-full h-2 mt-2">
+									<div id="diskBar" class="bg-purple-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+								</div>
+							</div>
+							<!-- Displays Online -->
+							<div class="stat-card">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-gray-400 text-sm">Displays Online</span>
+									<span id="displaysTrend" class="text-xs text-gray-500">--</span>
+								</div>
+								<div class="stat-value" id="metricDisplays">-</div>
+								<div class="text-sm text-gray-400 mt-1" id="displaysDetail">-- online / -- offline</div>
+							</div>
+						</div>
+
+						<!-- API Latency Cards -->
+						<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+							<div class="bg-gray-700/50 rounded-lg p-4">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-white font-medium">Match Display</span>
+									<span id="matchApiStatus" class="w-3 h-3 rounded-full bg-gray-500"></span>
+								</div>
+								<div class="text-2xl font-bold text-white" id="matchApiLatency">-- ms</div>
+								<div class="text-sm text-gray-400" id="matchApiDetail">Port 2052</div>
+							</div>
+							<div class="bg-gray-700/50 rounded-lg p-4">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-white font-medium">Bracket Display</span>
+									<span id="bracketApiStatus" class="w-3 h-3 rounded-full bg-gray-500"></span>
+								</div>
+								<div class="text-2xl font-bold text-white" id="bracketApiLatency">-- ms</div>
+								<div class="text-sm text-gray-400" id="bracketApiDetail">Port 2053</div>
+							</div>
+							<div class="bg-gray-700/50 rounded-lg p-4">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-white font-medium">Flyer Display</span>
+									<span id="flyerApiStatus" class="w-3 h-3 rounded-full bg-gray-500"></span>
+								</div>
+								<div class="text-2xl font-bold text-white" id="flyerApiLatency">-- ms</div>
+								<div class="text-sm text-gray-400" id="flyerApiDetail">Port 2054</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Historical Metrics (24h) -->
+					<div class="mb-6">
+						<h3 class="text-lg font-semibold text-white mb-4">Metrics History (24h)</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div id="metricsHistoryContainer" class="space-y-4">
+								<div class="text-gray-400 text-center py-4">Loading metrics history...</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Alert History -->
+					<div class="mb-6">
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-white">Alert History</h3>
+							<select id="alertHistoryFilter" onchange="loadAlertHistory()" class="px-3 py-1 bg-gray-700 border border-gray-600 rounded-md text-white text-sm">
+								<option value="24">Last 24 hours</option>
+								<option value="168">Last 7 days</option>
+								<option value="720">Last 30 days</option>
+							</select>
+						</div>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div id="alertHistoryList" class="space-y-2">
+								<div class="text-gray-400 text-center py-4">Loading alert history...</div>
+							</div>
+						</div>
+					</div>
+
 					<!-- Quick Actions -->
 					<div class="mb-6">
 						<h3 class="text-lg font-semibold text-white mb-4">Quick Actions</h3>
@@ -703,6 +838,9 @@
 							</button>
 							<button onclick="openServiceLogsModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
 								View Service Logs
+							</button>
+							<button onclick="cleanupOldMetrics()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+								Cleanup Old Metrics
 							</button>
 						</div>
 					</div>
@@ -773,6 +911,84 @@
 						<div class="bg-gray-700/50 rounded-lg p-4">
 							<div id="savedReportsList" class="space-y-2">
 								<div class="text-gray-400">Loading saved reports...</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Displays Tab (Phase 2: Display Fleet Management) -->
+				<div id="tab-displays" class="tab-content hidden">
+					<!-- Fleet Statistics -->
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+						<div class="stat-card">
+							<div class="stat-value" id="fleetTotalDisplays">-</div>
+							<div class="stat-label">Total Displays</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value text-green-400" id="fleetOnlineDisplays">-</div>
+							<div class="stat-label">Online</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value text-red-400" id="fleetOfflineDisplays">-</div>
+							<div class="stat-label">Offline</div>
+						</div>
+						<div class="stat-card">
+							<div class="stat-value text-blue-400" id="fleetDisplayTypes">-</div>
+							<div class="stat-label">Types</div>
+						</div>
+					</div>
+
+					<!-- Fleet Controls -->
+					<div class="flex flex-wrap gap-3 mb-6">
+						<button onclick="refreshFleetDisplays()" class="btn-secondary">
+							<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+							</svg>
+							Refresh All
+						</button>
+						<button onclick="rebootAllDisplays()" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg transition flex items-center">
+							<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+							</svg>
+							Reboot All
+						</button>
+						<button onclick="openBroadcastModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition flex items-center">
+							<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+							</svg>
+							Broadcast Message
+						</button>
+					</div>
+
+					<!-- Filters -->
+					<div class="flex flex-wrap gap-3 mb-4">
+						<select id="fleetFilterUser" onchange="filterFleetDisplays()" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+							<option value="">All Users</option>
+						</select>
+						<select id="fleetFilterStatus" onchange="filterFleetDisplays()" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+							<option value="">All Statuses</option>
+							<option value="online">Online</option>
+							<option value="offline">Offline</option>
+						</select>
+						<select id="fleetFilterType" onchange="filterFleetDisplays()" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+							<option value="">All Types</option>
+							<option value="match">Match</option>
+							<option value="bracket">Bracket</option>
+							<option value="flyer">Flyer</option>
+						</select>
+					</div>
+
+					<!-- Displays Grid -->
+					<div id="fleetDisplaysGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						<div class="text-gray-400 col-span-full text-center py-8">Loading displays...</div>
+					</div>
+
+					<!-- Command History -->
+					<div class="mt-8">
+						<h3 class="text-lg font-semibold text-white mb-4">Command History</h3>
+						<div class="bg-gray-700/50 rounded-lg p-4">
+							<div id="commandHistoryList" class="space-y-2 max-h-64 overflow-y-auto">
+								<div class="text-gray-400">No recent commands</div>
 							</div>
 						</div>
 					</div>
@@ -980,6 +1196,114 @@
 						<div class="text-center py-8 text-gray-400 col-span-full">Loading sponsors...</div>
 					</div>
 				</div>
+
+				<!-- Statistics Tab -->
+				<div id="tab-statistics" class="tab-content hidden">
+					<div class="flex items-center justify-between mb-6">
+						<h3 class="text-lg font-semibold text-white">Platform Statistics</h3>
+						<button onclick="loadPlatformStats()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm">
+							Refresh
+						</button>
+					</div>
+					<div id="statisticsContent">
+						<div class="flex justify-center items-center py-20">
+							<div class="text-gray-400">Click refresh to load platform statistics...</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Live Feed Tab -->
+				<div id="tab-liveFeed" class="tab-content hidden">
+					<div class="flex items-center justify-between mb-6">
+						<h3 class="text-lg font-semibold text-white">Live Activity Feed</h3>
+						<div class="flex items-center gap-3">
+							<select id="liveFeedFilter" onchange="filterLiveFeed(this.value)" class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm">
+								<option value="all">All Events</option>
+								<option value="tournament">Tournaments</option>
+								<option value="match">Matches</option>
+								<option value="participant">Participants</option>
+								<option value="user">Users</option>
+								<option value="display">Displays</option>
+							</select>
+							<button onclick="loadLiveFeed()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm">
+								Refresh
+							</button>
+						</div>
+					</div>
+
+					<div id="liveFeedList" class="bg-gray-700/50 rounded-lg p-4 max-h-[600px] overflow-y-auto">
+						<div class="text-center py-8 text-gray-400">Click refresh to load activity feed...</div>
+					</div>
+				</div>
+
+				<!-- Query Tab -->
+				<div id="tab-query" class="tab-content hidden">
+					<div class="flex items-center justify-between mb-6">
+						<h3 class="text-lg font-semibold text-white">Database Query Playground</h3>
+						<button onclick="loadTableSchemas()" class="text-blue-400 hover:text-blue-300 text-sm">
+							View Schema Reference
+						</button>
+					</div>
+
+					<!-- Query Input -->
+					<div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+						<div class="flex flex-wrap items-start gap-4 mb-4">
+							<div>
+								<label class="block text-sm text-gray-400 mb-1">Database</label>
+								<select id="queryDatabase" class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="tournaments">tournaments.db</option>
+									<option value="players">players.db</option>
+									<option value="system">system.db</option>
+									<option value="cache">cache.db</option>
+								</select>
+							</div>
+							<div class="flex-1 min-w-64">
+								<label class="block text-sm text-gray-400 mb-1">Preset Queries</label>
+								<select id="presetQueries" onchange="loadPresetQuery(this.value)" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+									<option value="">Select a preset...</option>
+									<option value="top_players">Top 10 Players by Elo</option>
+									<option value="tournament_stats">Tournament Completion Stats</option>
+									<option value="match_duration">Match Duration Analysis</option>
+									<option value="display_health">Display Health Check</option>
+									<option value="recent_activity">Recent User Activity</option>
+								</select>
+							</div>
+						</div>
+						<div>
+							<label class="block text-sm text-gray-400 mb-1">SQL Query (SELECT only)</label>
+							<textarea id="queryInput" rows="4" placeholder="SELECT * FROM tcc_tournaments LIMIT 10"
+								class="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-md text-white font-mono text-sm"></textarea>
+						</div>
+						<div class="flex items-center justify-between mt-4">
+							<div class="text-sm text-gray-400">
+								<span class="text-yellow-400">Warning:</span> Only SELECT queries allowed. Max 1000 rows.
+							</div>
+							<button id="executeQueryBtn" onclick="executeQuery()" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-md">
+								Execute
+							</button>
+						</div>
+					</div>
+
+					<!-- Query Results -->
+					<div id="queryResults" class="bg-gray-700/50 rounded-lg">
+						<div class="text-gray-400 text-center py-8">
+							Enter a query and click Execute to see results
+						</div>
+					</div>
+
+					<!-- Schema Reference Modal -->
+					<div id="schemaModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+						<div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+							<div class="flex items-center justify-between mb-6">
+								<h3 class="text-xl font-bold text-white">Database Schema Reference</h3>
+								<button onclick="closeSchemaModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+							</div>
+							<div id="schemaContent">
+								<!-- Schema loaded dynamically -->
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 	</section>
@@ -1138,11 +1462,104 @@
 		</div>
 	</div>
 
+	<!-- Alert Thresholds Modal -->
+	<div id="thresholdsModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-3xl w-full mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Alert Thresholds Configuration</h3>
+				<button onclick="closeThresholdsModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<p class="text-gray-400 text-sm mb-6">
+				Configure warning and critical thresholds for each metric. Alerts are triggered when values exceed these thresholds.
+			</p>
+			<div id="thresholdsContent">
+				<div class="text-gray-400 text-center py-4">Loading thresholds...</div>
+			</div>
+			<div class="flex justify-end gap-3 mt-6">
+				<button onclick="closeThresholdsModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+					Cancel
+				</button>
+				<button onclick="saveThresholds()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+					Save Changes
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Service Logs Modal -->
+	<div id="serviceLogsModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Service Logs</h3>
+				<button onclick="closeServiceLogsModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<div class="flex items-center gap-4 mb-4">
+				<select id="serviceLogsService" onchange="refreshServiceLogs()" class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+					<option value="control-center-admin">Admin Dashboard</option>
+					<option value="match-display">Match Display</option>
+					<option value="bracket-display">Bracket Display</option>
+					<option value="flyer-display">Flyer Display</option>
+				</select>
+				<select id="serviceLogsLines" onchange="refreshServiceLogs()" class="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+					<option value="50">50 lines</option>
+					<option value="100" selected>100 lines</option>
+					<option value="200">200 lines</option>
+					<option value="500">500 lines</option>
+				</select>
+				<button onclick="refreshServiceLogs()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+					Refresh
+				</button>
+			</div>
+			<div id="serviceLogsContent" class="bg-gray-900 rounded-lg p-4 max-h-[60vh] overflow-auto">
+				<pre class="text-sm text-gray-300 font-mono whitespace-pre-wrap">Select a service to view logs...</pre>
+			</div>
+		</div>
+	</div>
+
+	<!-- Broadcast Message Modal -->
+	<div id="broadcastModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 border border-gray-700">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-white">Broadcast to All Displays</h3>
+				<button onclick="closeBroadcastModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<div class="space-y-4">
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Message</label>
+					<textarea id="broadcastMessage" rows="3" maxlength="200" placeholder="Enter message to broadcast..."
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white resize-none"></textarea>
+					<div class="text-xs text-gray-400 mt-1"><span id="broadcastCharCount">0</span>/200 characters</div>
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">Duration (seconds)</label>
+					<input type="number" id="broadcastDuration" value="10" min="3" max="60"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+				</div>
+				<div class="flex items-center gap-3">
+					<label class="flex items-center gap-2">
+						<input type="checkbox" id="broadcastToMatch" checked class="w-4 h-4 rounded bg-gray-700">
+						<span class="text-gray-300">Match Displays</span>
+					</label>
+					<label class="flex items-center gap-2">
+						<input type="checkbox" id="broadcastToBracket" checked class="w-4 h-4 rounded bg-gray-700">
+						<span class="text-gray-300">Bracket Displays</span>
+					</label>
+				</div>
+			</div>
+			<div class="flex justify-end gap-3 mt-6">
+				<button onclick="closeBroadcastModal()" class="btn-secondary">Cancel</button>
+				<button onclick="sendBroadcastMessage()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg">
+					Send Broadcast
+				</button>
+			</div>
+		</div>
+	</div>
+
 	<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 	<script src="js/utils.js?v=4"></script>
 	<script src="js/nav.js?v=3"></script>
 	<script src="js/pwa.js?v=3"></script>
-	<script src="js/platform-admin.js?v=5"></script>
+	<script src="js/platform-admin.js?v=11"></script>
 	<script>
 		document.addEventListener('DOMContentLoaded', () => {
 			initNavigation('Platform Admin');

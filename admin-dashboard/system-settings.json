@@ -1,15 +1,4 @@
 {
-  "challonge": {
-    "rateLimit": 1000,
-    "adaptiveRateLimit": {
-      "enabled": true,
-      "idleRate": 400,
-      "upcomingRate": 600,
-      "activeRate": 800,
-      "checkIntervalHours": 2,
-      "upcomingWindowHours": 48
-    }
-  },
   "systemDefaults": {
     "registrationWindow": 24,
     "defaultGame": "",
@@ -71,5 +60,8 @@
     "autoDqAction": "notify",
     "defaultDuration": 180,
     "warningThreshold": 30
+  },
+  "bracketDisplay": {
+    "theme": "neon"
   }
 }

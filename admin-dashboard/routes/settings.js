@@ -8,7 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const { requireAuthAPI, requireAdmin } = require('../middleware/auth');
+const { requireAuthAPI } = require('../middleware/auth');
 const settings = require('../services/settings');
 const activityLogger = require('../services/activity-logger');
 const { ACTIVITY_CATEGORIES } = require('../constants');
@@ -26,17 +26,22 @@ let rateLimiter = null;
 // Reference to push notification broadcaster (set by init)
 let broadcastPushNotification = null;
 
+// Reference to Socket.IO server (set by init for real-time broadcasts)
+let io = null;
+
 /**
  * Initialize the settings routes with dependencies
  * @param {Object} options - Configuration options
  * @param {Object} options.rateLimiter - Rate limiter service for adaptive mode restart
  * @param {Function} options.broadcastPushNotification - Push notification broadcaster
  * @param {Object} options.discordNotify - Discord notification service
+ * @param {Object} options.io - Socket.IO server for real-time broadcasts
  */
-function init({ rateLimiter: rl, broadcastPushNotification: broadcast, discordNotify: discord }) {
+function init({ rateLimiter: rl, broadcastPushNotification: broadcast, discordNotify: discord, io: socketIo }) {
 	rateLimiter = rl;
 	broadcastPushNotification = broadcast;
 	discordNotify = discord;
+	io = socketIo;
 }
 
 // ============================================
@@ -47,7 +52,7 @@ function init({ rateLimiter: rl, broadcastPushNotification: broadcast, discordNo
  * GET /api/settings/system
  * Get all system settings
  */
-router.get('/system', requireAuthAPI, requireAdmin, (req, res) => {
+router.get('/system', requireAuthAPI, (req, res) => {
 	const systemSettings = settings.loadSystemSettings();
 
 	if (!systemSettings) {
@@ -73,7 +78,7 @@ router.get('/system', requireAuthAPI, requireAdmin, (req, res) => {
  * PUT /api/settings/system
  * Update system settings
  */
-router.put('/system', requireAuthAPI, requireAdmin, (req, res) => {
+router.put('/system', requireAuthAPI, (req, res) => {
 	const { section, data } = req.body;
 
 	if (!section || !data) {
@@ -94,7 +99,7 @@ router.put('/system', requireAuthAPI, requireAdmin, (req, res) => {
 	// Update the specific section
 	systemSettings[section] = data;
 
-	if (!settings.saveSystemSettings(systemSettings)) {
+	if (!settings.saveSettings(systemSettings)) {
 		return res.status(500).json({
 			success: false,
 			error: 'Failed to save settings'
@@ -108,6 +113,15 @@ router.put('/system', requireAuthAPI, requireAdmin, (req, res) => {
 	if (section === 'challonge' && rateLimiter) {
 		logger.log('challongeSettingsUpdated', { message: 'Restarting adaptive rate scheduler' });
 		rateLimiter.startAdaptiveRateScheduler();
+	}
+
+	// Broadcast bracket theme change to all connected bracket displays
+	if (section === 'bracketDisplay' && data.theme && io) {
+		logger.log('bracketThemeChanged', { theme: data.theme });
+		io.emit('bracket:control', {
+			action: 'setTheme',
+			theme: data.theme
+		});
 	}
 
 	// Log activity
@@ -126,7 +140,7 @@ router.put('/system', requireAuthAPI, requireAdmin, (req, res) => {
  * GET /api/settings/activity-log
  * Get activity log
  */
-router.get('/activity-log', requireAuthAPI, requireAdmin, (req, res) => {
+router.get('/activity-log', requireAuthAPI, (req, res) => {
 	const limit = parseInt(req.query.limit) || 100;
 	const offset = parseInt(req.query.offset) || 0;
 
@@ -146,7 +160,7 @@ router.get('/activity-log', requireAuthAPI, requireAdmin, (req, res) => {
  * DELETE /api/settings/activity-log
  * Clear activity log
  */
-router.delete('/activity-log', requireAuthAPI, requireAdmin, (req, res) => {
+router.delete('/activity-log', requireAuthAPI, (req, res) => {
 	settings.saveActivityLog({ logs: [] });
 
 	activityLogger.logActivity(req.session.userId, req.session.username, 'clear_activity_log', {});

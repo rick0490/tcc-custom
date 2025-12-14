@@ -14,6 +14,9 @@
  * - Support for late entries
  */
 
+const { createLogger } = require('../debug-logger');
+const logger = createLogger('bracket-engine:swiss');
+
 /**
  * Calculate recommended number of Swiss rounds
  */
@@ -254,6 +257,13 @@ function generate(participants, options = {}) {
         allowRematches = true
     } = options;
 
+    logger.log('generate:start', {
+        participantCount,
+        rounds,
+        allowRematches,
+        recommendedRounds: recommendedRounds(participantCount)
+    });
+
     // Generate round 1
     const { pairings: r1Pairings, byePlayer: r1Bye } = generateRound1(sorted);
 
@@ -304,6 +314,13 @@ function generate(participants, options = {}) {
         currentRound: 1,
         allowRematches
     };
+
+    logger.log('generate:complete', {
+        matchCount: matches.length,
+        totalRounds: rounds,
+        r1Matches: matches.filter(m => m.round === 1 && !m.is_bye).length,
+        r1Bye: r1Bye ? r1Bye.name : null
+    });
 
     return {
         type: 'swiss',

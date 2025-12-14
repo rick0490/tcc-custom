@@ -5,8 +5,8 @@
  * Uses AES-256-GCM encryption with a separate key file.
  *
  * Storage:
- * - Encrypted secrets: /root/tournament-control-center/.secrets.enc
- * - Encryption key: /root/tournament-control-center/.secrets.key
+ * - Encrypted secrets: /root/tcc-custom/.secrets.enc
+ * - Encryption key: /root/tcc-custom/.secrets.key
  *
  * Usage:
  *   const secrets = require('./config/secrets');
@@ -229,6 +229,15 @@ function getActivityWebhookToken() {
 	return token;
 }
 
+/**
+ * Get Anthropic/Claude API Key
+ * Falls back to environment variable if not in encrypted secrets
+ */
+function getAnthropicApiKey() {
+	const secrets = getSecrets();
+	return secrets.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+}
+
 // =============================================================================
 // MIGRATION HELPER
 // =============================================================================
@@ -258,6 +267,9 @@ function migrateFromEnv() {
 	if (process.env.ACTIVITY_WEBHOOK_TOKEN) {
 		secrets.activityWebhookToken = process.env.ACTIVITY_WEBHOOK_TOKEN;
 	}
+	if (process.env.ANTHROPIC_API_KEY) {
+		secrets.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+	}
 
 	if (Object.keys(secrets).length > 0) {
 		encryptSecrets(secrets);
@@ -285,6 +297,7 @@ module.exports = {
 	getChallongeClientSecret,
 	getSessionSecret,
 	getActivityWebhookToken,
+	getAnthropicApiKey,
 
 	// Migration
 	migrateFromEnv,

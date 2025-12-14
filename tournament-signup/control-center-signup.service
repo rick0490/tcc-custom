@@ -1,19 +1,19 @@
 [Unit]
-Description=Tournament Control Center - Signup App
-Documentation=https://github.com/rick0490/tournament-control-center
-After=network.target magic-mirror-match.service
+Description=TCC Custom - Tournament Signup PWA
+Documentation=https://github.com/rick0490/tcc-custom
+After=network.target match-display.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/tournament-control-center/tournament-signup
+WorkingDirectory=/root/tcc-custom/tournament-signup
 ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Security hardening (optional)
+# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 

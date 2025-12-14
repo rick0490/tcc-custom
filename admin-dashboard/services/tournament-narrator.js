@@ -7,6 +7,7 @@
  */
 
 const crypto = require('crypto');
+const secrets = require('../config/secrets');
 
 // Dependencies (set by init)
 let io = null;
@@ -55,7 +56,7 @@ function init(deps) {
 function getAnthropicClient() {
 	if (anthropicClient) return anthropicClient;
 
-	const apiKey = process.env.ANTHROPIC_API_KEY;
+	const apiKey = secrets.getAnthropicApiKey();
 	if (!apiKey) {
 		return null;
 	}
@@ -71,13 +72,22 @@ function getAnthropicClient() {
 }
 
 /**
+ * Reset the cached Anthropic client
+ * Called when API key is updated via platform admin
+ */
+function resetClient() {
+	anthropicClient = null;
+	console.log('[Tournament Narrator] Client cache cleared');
+}
+
+/**
  * Check if narrative generation is available
  * @returns {Object} { available, reason }
  */
 function isAvailable() {
-	const apiKey = process.env.ANTHROPIC_API_KEY;
+	const apiKey = secrets.getAnthropicApiKey();
 	if (!apiKey) {
-		return { available: false, reason: 'ANTHROPIC_API_KEY not configured' };
+		return { available: false, reason: 'Claude API key not configured' };
 	}
 	return { available: true, reason: null };
 }
@@ -657,6 +667,7 @@ function clearCache(tournamentId) {
 module.exports = {
 	init,
 	isAvailable,
+	resetClient,
 	generateNarrative,
 	getCachedNarratives,
 	clearCache,

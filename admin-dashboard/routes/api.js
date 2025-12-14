@@ -16,6 +16,7 @@
 
 const express = require('express');
 const router = express.Router();
+const os = require('os');
 const QRCode = require('qrcode');
 const { createLogger } = require('../services/debug-logger');
 
@@ -169,6 +170,12 @@ router.get('/status', tokenOrSessionWrapper, async (req, res) => {
 					state: bracketState,
 					port: 2053
 				}
+			},
+			server: {
+				hostname: os.hostname(),
+				nodeVersion: process.version,
+				uptime: process.uptime(),
+				memoryUsage: process.memoryUsage()
 			}
 		});
 	} catch (error) {

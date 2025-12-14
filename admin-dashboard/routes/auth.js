@@ -10,10 +10,13 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const axios = require('axios');
-const { requireAuth, requireAuthAPI, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAuthAPI, isSuperadmin } = require('../middleware/auth');
 const settings = require('../services/settings');
 const activityLogger = require('../services/activity-logger');
 const { ACTIVITY_TYPES } = require('../constants');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:auth');
 
 // Reference to analytics database (set by init)
 let analyticsDb = null;
@@ -68,7 +71,7 @@ function recordFailedAttempt(username) {
 
 	if (authData.failedAttempts[username] >= securitySettings.maxFailedAttempts) {
 		authData.lockedAccounts[username] = Date.now() + securitySettings.lockoutDuration;
-		console.log(`[Auth] Account locked: ${username}`);
+		logger.warn('accountLocked', { username, lockoutDuration: securitySettings.lockoutDuration });
 	}
 
 	settings.saveAuthData(authData);
@@ -164,7 +167,7 @@ router.post('/login', async (req, res) => {
 	clearFailedAttempts(username);
 	req.session.userId = user.id;
 	req.session.username = user.username;
-	req.session.role = user.role;
+	// Note: role no longer stored in session - each tenant has one user
 
 	// Log activity
 	activityLogger.logActivity(user.id, user.username, ACTIVITY_TYPES.ADMIN_LOGIN, {
@@ -175,8 +178,7 @@ router.post('/login', async (req, res) => {
 		success: true,
 		user: {
 			id: user.id,
-			username: user.username,
-			role: user.role
+			username: user.username
 		}
 	});
 });
@@ -226,10 +228,10 @@ router.get('/status', requireAuthAPI, (req, res) => {
 
 	res.json({
 		success: true,
+		isSuperadmin: isSuperadmin(req),
 		user: {
 			id: user.id,
-			username: user.username,
-			role: user.role
+			username: user.username
 		},
 		session: {
 			timeoutMs: sessionTimeoutMs,
@@ -247,7 +249,7 @@ router.get('/status', requireAuthAPI, (req, res) => {
  * POST /api/auth/tokens
  * Create new API token (admin only)
  */
-router.post('/tokens', requireAdmin, async (req, res) => {
+router.post('/tokens', requireAuthAPI, async (req, res) => {
 	try {
 		const { deviceName, deviceType = 'streamdeck', permissions = 'full', expiresInDays = null } = req.body;
 
@@ -287,7 +289,7 @@ router.post('/tokens', requireAdmin, async (req, res) => {
 			record: result.record
 		});
 	} catch (error) {
-		console.error('[API Tokens] Create error:', error);
+		logger.error('tokens:create', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to create API token'
@@ -299,7 +301,7 @@ router.post('/tokens', requireAdmin, async (req, res) => {
  * GET /api/auth/tokens
  * List all API tokens (admin only)
  */
-router.get('/tokens', requireAdmin, (req, res) => {
+router.get('/tokens', requireAuthAPI, (req, res) => {
 	try {
 		const tokens = analyticsDb.listApiTokens();
 		res.json({
@@ -307,7 +309,7 @@ router.get('/tokens', requireAdmin, (req, res) => {
 			tokens
 		});
 	} catch (error) {
-		console.error('[API Tokens] List error:', error);
+		logger.error('tokens:list', error);
 		res.status(500).json({
 			success: false,
 			error: 'Failed to list API tokens'
@@ -319,7 +321,7 @@ router.get('/tokens', requireAdmin, (req, res) => {
  * DELETE /api/auth/tokens/:id
  * Revoke API token (admin only)
  */
-router.delete('/tokens/:id', requireAdmin, (req, res) => {
+router.delete('/tokens/:id', requireAuthAPI, (req, res) => {
 	try {
 		const tokenId = parseInt(req.params.id, 10);
 		if (isNaN(tokenId)) {
@@ -354,7 +356,7 @@ router.delete('/tokens/:id', requireAdmin, (req, res) => {
 			});
 		}
 	} catch (error) {
-		console.error('[API Tokens] Revoke error:', error);
+		logger.error('tokens:revoke', error, { tokenId: req.params.id });
 		res.status(500).json({
 			success: false,
 			error: 'Failed to revoke API token'
@@ -412,7 +414,7 @@ router.get('/oauth/status', requireAuthAPI, (req, res) => {
 			configured: !!(OAUTH_CONFIG?.clientId && OAUTH_CONFIG?.clientSecret)
 		});
 	} catch (error) {
-		console.error('[OAuth] Status check failed:', error.message);
+		logger.error('oauth:status', error);
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -440,9 +442,9 @@ router.post('/oauth/disconnect', requireAuthAPI, async (req, res) => {
 					headers: { 'Content-Type': 'application/json' },
 					timeout: 10000
 				});
-				console.log('[OAuth] Token revoked with Challonge');
+				logger.log('oauth:tokenRevoked', { message: 'Token revoked with Challonge' });
 			} catch (revokeError) {
-				console.warn('[OAuth] Token revocation failed (continuing anyway):', revokeError.message);
+				logger.warn('oauth:revokeFailed', { error: revokeError.message });
 			}
 		}
 
@@ -454,7 +456,7 @@ router.post('/oauth/disconnect', requireAuthAPI, async (req, res) => {
 			message: 'Challonge account disconnected'
 		});
 	} catch (error) {
-		console.error('[OAuth] Disconnect failed:', error.message);
+		logger.error('oauth:disconnect', error);
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -504,7 +506,7 @@ router.post('/oauth/refresh', requireAuthAPI, async (req, res) => {
 			username: tokens.challongeUsername
 		});
 
-		console.log('[OAuth] Token refreshed successfully');
+		logger.log('oauth:tokenRefreshed', { expiresIn: newTokens.expires_in || 7200 });
 
 		res.json({
 			success: true,
@@ -513,7 +515,7 @@ router.post('/oauth/refresh', requireAuthAPI, async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('[OAuth] Token refresh failed:', error.response?.data || error.message);
+		logger.error('oauth:refresh', error, { responseData: error.response?.data });
 
 		// If refresh fails, token might be invalid - mark as disconnected
 		if (error.response?.status === 400 || error.response?.status === 401) {

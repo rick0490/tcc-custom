@@ -104,9 +104,10 @@ sudo certbot --nginx -d admin.despairhardware.com
 ### 1. Check all services are running:
 
 ```bash
-sudo systemctl status tournament-admin
-sudo systemctl status magic-mirror-match
-sudo systemctl status magic-mirror-bracket
+sudo systemctl status control-center-admin
+sudo systemctl status match-display
+sudo systemctl status bracket-display
+sudo systemctl status flyer-display
 ```
 
 All should show "active (running)" in green.

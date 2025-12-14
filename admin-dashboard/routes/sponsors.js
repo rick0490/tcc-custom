@@ -11,6 +11,10 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
+const { createLogger } = require('../services/debug-logger');
+const systemDb = require('../db/system-db');
+
+const logger = createLogger('routes:sponsors');
 
 // Module dependencies (injected via init)
 let axios = null;
@@ -19,8 +23,28 @@ let requireAuthAPI = null;
 let sponsorService = null;
 let logActivity = null;
 
-// File paths
-const SPONSORS_DIR = path.join(__dirname, '..', 'sponsors');
+// File paths - now user-specific via sponsorService
+// const SPONSORS_DIR = path.join(__dirname, '..', 'sponsors'); // Moved to sponsorService
+
+/**
+ * Check if user is superadmin
+ * @param {Object} req - Express request
+ * @returns {boolean} True if user is superadmin
+ */
+function isSuperadmin(req) {
+	if (!req.session || !req.session.userId) return false;
+	return req.session.userId === 1;
+}
+
+/**
+ * Get the sponsors directory for the current user
+ * @param {Object} req - Express request
+ * @returns {string} Path to user's sponsors directory
+ */
+function getSponsorsDir(req) {
+	const userId = req.session?.userId;
+	return sponsorService.getUserSponsorsDir(userId);
+}
 
 // Allowed file types for sponsor logos
 const ALLOWED_SPONSOR_MIMETYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'];
@@ -66,9 +90,36 @@ function init(deps) {
 // ============================================
 
 /**
+ * GET /preview/:userId/:filename
+ * Serve sponsor logo for preview from user-specific directory
+ * Public route - no authentication required (used by displays)
+ */
+router.get('/preview/:userId/:filename', async (req, res) => {
+	try {
+		const userId = parseInt(req.params.userId, 10);
+		const filename = decodeURIComponent(req.params.filename);
+
+		// Security check
+		if (isNaN(userId) || userId < 1) {
+			return res.status(400).json({ error: 'Invalid user ID' });
+		}
+		if (filename.includes('..') || filename.includes('/')) {
+			return res.status(400).json({ error: 'Invalid filename' });
+		}
+
+		const userSponsorsDir = sponsorService.getUserSponsorsDir(userId);
+		const filePath = path.join(userSponsorsDir, filename);
+		res.sendFile(filePath);
+	} catch (error) {
+		res.status(404).json({ error: 'Sponsor logo not found' });
+	}
+});
+
+/**
  * GET /preview/:filename
- * Serve sponsor logo for preview
+ * Serve sponsor logo for preview (legacy route - checks root sponsors dir)
  * Public route - no authentication required
+ * @deprecated Use /preview/:userId/:filename instead
  */
 router.get('/preview/:filename', async (req, res) => {
 	try {
@@ -79,8 +130,27 @@ router.get('/preview/:filename', async (req, res) => {
 			return res.status(400).json({ error: 'Invalid filename' });
 		}
 
-		const filePath = path.join(SPONSORS_DIR, filename);
-		res.sendFile(filePath);
+		// First check the base sponsors directory (for legacy files)
+		const basePath = path.join(sponsorService.SPONSORS_DIR, filename);
+		try {
+			await fs.access(basePath);
+			return res.sendFile(basePath);
+		} catch {
+			// File not in base directory, check all user directories
+			const allStates = sponsorService.loadAllSponsorStates();
+			for (const { userId } of allStates) {
+				const userSponsorsDir = sponsorService.getUserSponsorsDir(userId);
+				const filePath = path.join(userSponsorsDir, filename);
+				try {
+					await fs.access(filePath);
+					return res.sendFile(filePath);
+				} catch {
+					// Continue checking other user directories
+				}
+			}
+		}
+
+		res.status(404).json({ error: 'Sponsor logo not found' });
 	} catch (error) {
 		res.status(404).json({ error: 'Sponsor logo not found' });
 	}
@@ -93,35 +163,79 @@ router.get('/preview/:filename', async (req, res) => {
 /**
  * GET /
  * List all sponsors with config
+ * Regular users see only their own sponsors
+ * Superadmin sees all sponsors from all users
  */
 router.get('/', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
-			const state = sponsorService.loadSponsorState();
+			const userId = req.session.userId;
+			const superadmin = isSuperadmin(req);
 
-			// Add file stats to each sponsor
-			const sponsorsWithStats = await Promise.all(
-				state.sponsors.map(async (sponsor) => {
-					try {
-						const filePath = path.join(SPONSORS_DIR, sponsor.filename);
-						const stats = await fs.stat(filePath);
-						return {
-							...sponsor,
-							fileSize: stats.size,
-							modified: stats.mtime
-						};
-					} catch {
-						return { ...sponsor, fileSize: 0, modified: null };
-					}
-				})
-			);
+			if (superadmin) {
+				// Superadmin sees all sponsors from all users
+				const allStates = sponsorService.loadAllSponsorStates();
+				const allSponsors = [];
 
-			res.json({
-				success: true,
-				sponsors: sponsorsWithStats,
-				config: state.config,
-				lastUpdated: state.lastUpdated
-			});
+				for (const { userId: ownerId, state } of allStates) {
+					const userSponsorsDir = sponsorService.getUserSponsorsDir(ownerId);
+					const sponsorsWithStats = await Promise.all(
+						state.sponsors.map(async (sponsor) => {
+							try {
+								const filePath = path.join(userSponsorsDir, sponsor.filename);
+								const stats = await fs.stat(filePath);
+								return {
+									...sponsor,
+									ownerId,
+									fileSize: stats.size,
+									modified: stats.mtime
+								};
+							} catch {
+								return { ...sponsor, ownerId, fileSize: 0, modified: null };
+							}
+						})
+					);
+					allSponsors.push(...sponsorsWithStats);
+				}
+
+				res.json({
+					success: true,
+					sponsors: allSponsors,
+					config: null, // No single config for superadmin view
+					lastUpdated: new Date().toISOString(),
+					isSuperadmin: true
+				});
+			} else {
+				// Regular user sees only their own sponsors
+				const state = sponsorService.loadSponsorState(userId);
+				const userSponsorsDir = sponsorService.getUserSponsorsDir(userId);
+
+				// Add file stats to each sponsor
+				const sponsorsWithStats = await Promise.all(
+					state.sponsors.map(async (sponsor) => {
+						try {
+							const filePath = path.join(userSponsorsDir, sponsor.filename);
+							const stats = await fs.stat(filePath);
+							return {
+								...sponsor,
+								ownerId: userId,  // Include ownerId for consistent URL construction
+								fileSize: stats.size,
+								modified: stats.mtime
+							};
+						} catch {
+							return { ...sponsor, ownerId: userId, fileSize: 0, modified: null };
+						}
+					})
+				);
+
+				res.json({
+					success: true,
+					sponsors: sponsorsWithStats,
+					config: state.config,
+					lastUpdated: state.lastUpdated,
+					currentUserId: userId  // Include for frontend reference
+				});
+			}
 		} catch (error) {
 			res.status(500).json({ success: false, error: error.message });
 		}
@@ -131,11 +245,28 @@ router.get('/', async (req, res) => {
 /**
  * GET /:id
  * Get single sponsor
+ * Users can only access their own sponsors (superadmin can access any)
  */
 router.get('/:id', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
-			const state = sponsorService.loadSponsorState();
+			const userId = req.session.userId;
+			const superadmin = isSuperadmin(req);
+
+			if (superadmin) {
+				// Superadmin can access any sponsor - search all states
+				const allStates = sponsorService.loadAllSponsorStates();
+				for (const { userId: ownerId, state } of allStates) {
+					const sponsor = state.sponsors.find(s => s.id === req.params.id);
+					if (sponsor) {
+						return res.json({ success: true, sponsor: { ...sponsor, ownerId } });
+					}
+				}
+				return res.status(404).json({ success: false, error: 'Sponsor not found' });
+			}
+
+			// Regular user - only their own sponsors
+			const state = sponsorService.loadSponsorState(userId);
 			const sponsor = state.sponsors.find(s => s.id === req.params.id);
 
 			if (!sponsor) {
@@ -152,6 +283,7 @@ router.get('/:id', async (req, res) => {
 /**
  * POST /upload
  * Upload new sponsor logo
+ * Files are saved to user-specific directory
  */
 router.post('/upload', (req, res, next) => {
 	requireAuthAPI(req, res, () => {
@@ -163,6 +295,7 @@ router.post('/upload', (req, res, next) => {
 			return res.status(400).json({ success: false, error: 'No file uploaded' });
 		}
 
+		const userId = req.session.userId;
 		const { name, position, type, size = 100, opacity = 100, borderRadius = 0, customName } = req.body;
 
 		if (!name) {
@@ -198,12 +331,13 @@ router.post('/upload', (req, res, next) => {
 			finalName = `sponsor_${Date.now()}${originalExt}`;
 		}
 
-		// Move file to sponsors directory
-		const targetPath = path.join(SPONSORS_DIR, finalName);
+		// Move file to user-specific sponsors directory
+		const userSponsorsDir = sponsorService.getUserSponsorsDir(userId);
+		const targetPath = path.join(userSponsorsDir, finalName);
 		await fs.rename(req.file.path, targetPath);
 
-		// Create sponsor entry
-		const state = sponsorService.loadSponsorState();
+		// Create sponsor entry in user's state
+		const state = sponsorService.loadSponsorState(userId);
 		const newSponsor = {
 			id: `sponsor_${Date.now()}`,
 			name: name,
@@ -221,14 +355,14 @@ router.post('/upload', (req, res, next) => {
 		};
 
 		state.sponsors.push(newSponsor);
-		sponsorService.saveSponsorState(state);
+		sponsorService.saveSponsorState(state, userId);
 
-		// Restart rotation if enabled
+		// Restart rotation if enabled (multi-tenant)
 		if (state.config.enabled && state.config.rotationEnabled) {
-			sponsorService.startSponsorRotation();
+			sponsorService.startSponsorRotation(userId);
 		}
 
-		console.log(`[Sponsors] Uploaded: ${name} (${finalName}) at ${position}`);
+		logger.log('upload:success', { userId, name, filename: finalName, position });
 
 		res.json({
 			success: true,
@@ -236,7 +370,7 @@ router.post('/upload', (req, res, next) => {
 			sponsor: newSponsor
 		});
 	} catch (error) {
-		console.error('[Sponsors] Upload error:', error);
+		logger.error('upload', error);
 		res.status(500).json({ success: false, error: error.message });
 	}
 });
@@ -244,11 +378,13 @@ router.post('/upload', (req, res, next) => {
 /**
  * PUT /:id
  * Update sponsor metadata
+ * Users can only update their own sponsors
  */
 router.put('/:id', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
-			const state = sponsorService.loadSponsorState();
+			const userId = req.session.userId;
+			const state = sponsorService.loadSponsorState(userId);
 			const index = state.sponsors.findIndex(s => s.id === req.params.id);
 
 			if (index === -1) {
@@ -258,7 +394,7 @@ router.put('/:id', async (req, res) => {
 			const { name, position, type, size, opacity, borderRadius, offsetX, offsetY, active } = req.body;
 			const sponsor = state.sponsors[index];
 
-			console.log(`[Sponsors] PUT /${req.params.id} - Received:`, { offsetX, offsetY, typeOfOffsetX: typeof offsetX, typeOfOffsetY: typeof offsetY });
+			logger.log('update:received', { userId, id: req.params.id, offsetX, offsetY });
 
 			if (name !== undefined) sponsor.name = name;
 			if (position !== undefined) {
@@ -293,16 +429,22 @@ router.put('/:id', async (req, res) => {
 			}
 
 			sponsor.updatedAt = new Date().toISOString();
-			sponsorService.saveSponsorState(state);
+			sponsorService.saveSponsorState(state, userId);
 
-			// Restart rotation if config changed
+			// Restart rotation if config changed (multi-tenant)
 			if (state.config.enabled && state.config.rotationEnabled) {
-				sponsorService.startSponsorRotation();
+				sponsorService.startSponsorRotation(userId);
 			}
 
-			// Broadcast update
+			// Broadcast update (multi-tenant)
 			if (io) {
-				io.emit('sponsor:update', { sponsors: state.sponsors });
+				if (userId) {
+					io.to(`user:${userId}`).emit('sponsor:update', { sponsors: state.sponsors });
+					console.log(`[WebSocket] User-targeted sponsor:update to user:${userId}`);
+				} else {
+					io.emit('sponsor:update', { sponsors: state.sponsors });
+					console.log(`[WebSocket] Global sponsor:update broadcast`);
+				}
 			}
 
 			res.json({ success: true, sponsor });
@@ -315,11 +457,13 @@ router.put('/:id', async (req, res) => {
 /**
  * DELETE /:id
  * Delete sponsor
+ * Users can only delete their own sponsors
  */
 router.delete('/:id', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
-			const state = sponsorService.loadSponsorState();
+			const userId = req.session.userId;
+			const state = sponsorService.loadSponsorState(userId);
 			const index = state.sponsors.findIndex(s => s.id === req.params.id);
 
 			if (index === -1) {
@@ -328,28 +472,35 @@ router.delete('/:id', async (req, res) => {
 
 			const sponsor = state.sponsors[index];
 
-			// Delete the file
+			// Delete the file from user-specific directory
+			const userSponsorsDir = sponsorService.getUserSponsorsDir(userId);
 			try {
-				await fs.unlink(path.join(SPONSORS_DIR, sponsor.filename));
+				await fs.unlink(path.join(userSponsorsDir, sponsor.filename));
 			} catch (fileError) {
-				console.warn(`[Sponsors] Could not delete file: ${sponsor.filename}`);
+				logger.warn('delete:fileError', { userId, filename: sponsor.filename, error: fileError.message });
 			}
 
 			// Remove from state
 			state.sponsors.splice(index, 1);
-			sponsorService.saveSponsorState(state);
+			sponsorService.saveSponsorState(state, userId);
 
-			// Restart rotation
+			// Restart rotation (multi-tenant)
 			if (state.config.enabled && state.config.rotationEnabled) {
-				sponsorService.startSponsorRotation();
+				sponsorService.startSponsorRotation(userId);
 			}
 
-			// Broadcast update
+			// Broadcast update (multi-tenant)
 			if (io) {
-				io.emit('sponsor:update', { sponsors: state.sponsors });
+				if (userId) {
+					io.to(`user:${userId}`).emit('sponsor:update', { sponsors: state.sponsors });
+					console.log(`[WebSocket] User-targeted sponsor:update to user:${userId}`);
+				} else {
+					io.emit('sponsor:update', { sponsors: state.sponsors });
+					console.log(`[WebSocket] Global sponsor:update broadcast`);
+				}
 			}
 
-			console.log(`[Sponsors] Deleted: ${sponsor.name}`);
+			logger.log('delete:success', { userId, id: req.params.id, name: sponsor.name });
 
 			res.json({ success: true, message: 'Sponsor deleted successfully' });
 		} catch (error) {
@@ -361,17 +512,19 @@ router.delete('/:id', async (req, res) => {
 /**
  * POST /reorder
  * Reorder sponsors
+ * Users can only reorder their own sponsors
  */
 router.post('/reorder', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session.userId;
 			const { order } = req.body; // Array of { id, order }
 
 			if (!Array.isArray(order)) {
 				return res.status(400).json({ success: false, error: 'Order must be an array' });
 			}
 
-			const state = sponsorService.loadSponsorState();
+			const state = sponsorService.loadSponsorState(userId);
 
 			order.forEach(({ id, order: newOrder }) => {
 				const sponsor = state.sponsors.find(s => s.id === id);
@@ -381,11 +534,11 @@ router.post('/reorder', async (req, res) => {
 				}
 			});
 
-			sponsorService.saveSponsorState(state);
+			sponsorService.saveSponsorState(state, userId);
 
-			// Restart rotation with new order
+			// Restart rotation with new order (multi-tenant)
 			if (state.config.enabled && state.config.rotationEnabled) {
-				sponsorService.startSponsorRotation();
+				sponsorService.startSponsorRotation(userId);
 			}
 
 			res.json({ success: true, message: 'Order updated' });
@@ -398,11 +551,13 @@ router.post('/reorder', async (req, res) => {
 /**
  * GET /config
  * Get sponsor config
+ * User-specific config
  */
 router.get('/config', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
-			const state = sponsorService.loadSponsorState();
+			const userId = req.session.userId;
+			const state = sponsorService.loadSponsorState(userId);
 			res.json({ success: true, config: state.config });
 		} catch (error) {
 			res.status(500).json({ success: false, error: error.message });
@@ -413,11 +568,13 @@ router.get('/config', async (req, res) => {
 /**
  * POST /config
  * Update sponsor config
+ * User-specific config
  */
 router.post('/config', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
-			const state = sponsorService.loadSponsorState();
+			const userId = req.session.userId;
+			const state = sponsorService.loadSponsorState(userId);
 			const { enabled, rotationEnabled, rotationInterval, rotationTransition, rotationOrder, timerViewEnabled, timerShowDuration, timerHideDuration, displays } = req.body;
 
 			if (enabled !== undefined) state.config.enabled = Boolean(enabled);
@@ -447,26 +604,32 @@ router.post('/config', async (req, res) => {
 				};
 			}
 
-			sponsorService.saveSponsorState(state);
+			sponsorService.saveSponsorState(state, userId);
 
-			// Update timers - Timer View takes priority over rotation
+			// Update timers - Timer View takes priority over rotation (multi-tenant)
 			if (state.config.enabled && state.config.timerViewEnabled) {
-				sponsorService.stopSponsorRotation();
-				sponsorService.startSponsorTimerView();
+				sponsorService.stopSponsorRotation(userId);
+				sponsorService.startSponsorTimerView(userId);
 			} else if (state.config.enabled && state.config.rotationEnabled) {
-				sponsorService.stopSponsorTimerView();
-				sponsorService.startSponsorRotation();
+				sponsorService.stopSponsorTimerView(userId);
+				sponsorService.startSponsorRotation(userId);
 			} else {
-				sponsorService.stopSponsorTimerView();
-				sponsorService.stopSponsorRotation();
+				sponsorService.stopSponsorTimerView(userId);
+				sponsorService.stopSponsorRotation(userId);
 			}
 
-			// Broadcast config update
+			// Broadcast config update (multi-tenant)
 			if (io) {
-				io.emit('sponsor:config', { config: state.config });
+				if (userId) {
+					io.to(`user:${userId}`).emit('sponsor:config', { config: state.config });
+					console.log(`[WebSocket] User-targeted sponsor:config to user:${userId}`);
+				} else {
+					io.emit('sponsor:config', { config: state.config });
+					console.log(`[WebSocket] Global sponsor:config broadcast`);
+				}
 			}
 
-			console.log(`[Sponsors] Config updated: enabled=${state.config.enabled}, rotation=${state.config.rotationEnabled}, timerView=${state.config.timerViewEnabled}`);
+			logger.log('config:updated', { userId, enabled: state.config.enabled, rotation: state.config.rotationEnabled, timerView: state.config.timerViewEnabled });
 
 			res.json({ success: true, config: state.config });
 		} catch (error) {
@@ -478,12 +641,15 @@ router.post('/config', async (req, res) => {
 /**
  * POST /show
  * Show sponsor(s) on displays
+ * Users can only show their own sponsors
  */
 router.post('/show', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session.userId;
 			const { sponsorId, position, all, duration = 0 } = req.body;
-			const state = sponsorService.loadSponsorState();
+			const state = sponsorService.loadSponsorState(userId);
+			const userSponsorsDir = sponsorService.getUserSponsorsDir(userId);
 
 			let sponsorsToShow = [];
 
@@ -518,7 +684,7 @@ router.post('/show', async (req, res) => {
 				return res.status(400).json({ success: false, error: 'No sponsors to show' });
 			}
 
-			// Format sponsors for display
+			// Format sponsors for display - include userId for proper file path resolution
 			const sponsorData = {};
 			sponsorsToShow.forEach(s => {
 				sponsorData[s.position] = {
@@ -532,16 +698,24 @@ router.post('/show', async (req, res) => {
 					borderRadius: s.borderRadius || 0,
 					offsetX: s.offsetX || 0,
 					offsetY: s.offsetY || 0,
-					active: true
+					active: true,
+					userId: userId  // Include userId for file path resolution
 				};
 			});
 
-			// Broadcast via WebSocket
+			// Broadcast via WebSocket (multi-tenant)
 			if (io) {
-				io.emit('sponsor:show', {
+				const payload = {
 					sponsors: sponsorData,
 					duration: duration > 0 ? Math.min(Math.max(duration, 10), 3600) : 0
-				});
+				};
+				if (userId) {
+					io.to(`user:${userId}`).emit('sponsor:show', payload);
+					console.log(`[WebSocket] User-targeted sponsor:show to user:${userId}`);
+				} else {
+					io.emit('sponsor:show', payload);
+					console.log(`[WebSocket] Global sponsor:show broadcast`);
+				}
 			}
 
 			// Also send via HTTP to MagicMirror modules
@@ -570,7 +744,7 @@ router.post('/show', async (req, res) => {
 				}
 			}
 
-			console.log(`[Sponsors] Showing ${Object.keys(sponsorData).length} sponsor(s)`);
+			logger.log('show:success', { userId, count: Object.keys(sponsorData).length, positions: Object.keys(sponsorData) });
 
 			res.json({
 				success: true,
@@ -586,16 +760,24 @@ router.post('/show', async (req, res) => {
 /**
  * POST /hide
  * Hide sponsor(s) from displays
+ * User-specific config used for display settings
  */
 router.post('/hide', async (req, res) => {
 	requireAuthAPI(req, res, async () => {
 		try {
+			const userId = req.session.userId;
 			const { position, all = true } = req.body;
-			const state = sponsorService.loadSponsorState();
+			const state = sponsorService.loadSponsorState(userId);
 
-			// Broadcast hide via WebSocket
+			// Broadcast hide via WebSocket (multi-tenant)
 			if (io) {
-				io.emit('sponsor:hide', { position, all: all || !position });
+				if (userId) {
+					io.to(`user:${userId}`).emit('sponsor:hide', { position, all: all || !position });
+					console.log(`[WebSocket] User-targeted sponsor:hide to user:${userId}`);
+				} else {
+					io.emit('sponsor:hide', { position, all: all || !position });
+					console.log(`[WebSocket] Global sponsor:hide broadcast`);
+				}
 			}
 
 			// Also send via HTTP to MagicMirror modules
@@ -624,7 +806,7 @@ router.post('/hide', async (req, res) => {
 				}
 			}
 
-			console.log(`[Sponsors] Hidden: ${position || 'all'}`);
+			logger.log('hide:success', { userId, position: position || 'all' });
 
 			res.json({ success: true, message: 'Sponsors hidden' });
 		} catch (error) {
@@ -632,6 +814,265 @@ router.post('/hide', async (req, res) => {
 		}
 	});
 });
+
+// ============================================
+// IMPRESSION TRACKING ROUTES
+// ============================================
+
+/**
+ * POST /impressions/record
+ * Record sponsor impression from display (no auth required for displays)
+ * Called by MagicMirror modules when sponsors are shown/hidden
+ */
+router.post('/impressions/record', async (req, res) => {
+	try {
+		const {
+			sponsorId,
+			displayId,
+			displayType,
+			tournamentId,
+			position,
+			displayStart,
+			displayEnd,
+			durationSeconds,
+			viewerEstimate
+		} = req.body;
+
+		if (!sponsorId) {
+			return res.status(400).json({ success: false, error: 'sponsorId is required' });
+		}
+
+		const impressionId = systemDb.recordSponsorImpression({
+			sponsorId,
+			displayId,
+			displayType,
+			tournamentId,
+			position,
+			displayStart,
+			displayEnd,
+			durationSeconds: durationSeconds || 0,
+			viewerEstimate: viewerEstimate || 0
+		});
+
+		logger.log('impression:recorded', { sponsorId, displayType, durationSeconds });
+
+		res.json({
+			success: true,
+			impressionId,
+			message: 'Impression recorded'
+		});
+	} catch (error) {
+		logger.error('impression:record', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+/**
+ * POST /impressions/start
+ * Start tracking an impression (returns ID for later end call)
+ */
+router.post('/impressions/start', async (req, res) => {
+	try {
+		const { sponsorId, displayId, displayType, tournamentId, position, viewerEstimate } = req.body;
+
+		if (!sponsorId) {
+			return res.status(400).json({ success: false, error: 'sponsorId is required' });
+		}
+
+		const impressionId = systemDb.startSponsorImpression({
+			sponsorId,
+			displayId,
+			displayType,
+			tournamentId,
+			position,
+			viewerEstimate
+		});
+
+		logger.log('impression:started', { sponsorId, impressionId });
+
+		res.json({
+			success: true,
+			impressionId
+		});
+	} catch (error) {
+		logger.error('impression:start', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+/**
+ * POST /impressions/:id/end
+ * End tracking an impression
+ */
+router.post('/impressions/:id/end', async (req, res) => {
+	try {
+		const impressionId = parseInt(req.params.id);
+
+		systemDb.endSponsorImpression(impressionId);
+
+		logger.log('impression:ended', { impressionId });
+
+		res.json({
+			success: true,
+			message: 'Impression ended'
+		});
+	} catch (error) {
+		logger.error('impression:end', error);
+		res.status(500).json({ success: false, error: error.message });
+	}
+});
+
+/**
+ * GET /impressions/overview
+ * Get impression stats for all sponsors (dashboard overview)
+ */
+router.get('/impressions/overview', async (req, res) => {
+	requireAuthAPI(req, res, async () => {
+		try {
+			const { startDate, endDate } = req.query;
+
+			const stats = systemDb.getAllSponsorImpressionStats({
+				startDate,
+				endDate
+			});
+
+			// Calculate totals
+			const totals = stats.reduce((acc, s) => ({
+				totalImpressions: acc.totalImpressions + (s.total_impressions || 0),
+				totalDuration: acc.totalDuration + (s.total_duration_seconds || 0),
+				totalViewerMinutes: acc.totalViewerMinutes + (s.total_viewer_minutes || 0)
+			}), { totalImpressions: 0, totalDuration: 0, totalViewerMinutes: 0 });
+
+			res.json({
+				success: true,
+				sponsors: stats,
+				totals: {
+					totalImpressions: totals.totalImpressions,
+					totalDurationSeconds: totals.totalDuration,
+					totalDurationFormatted: formatDuration(totals.totalDuration),
+					totalViewerMinutes: totals.totalViewerMinutes
+				},
+				dateRange: { startDate, endDate }
+			});
+		} catch (error) {
+			logger.error('impressions:overview', error);
+			res.status(500).json({ success: false, error: error.message });
+		}
+	});
+});
+
+/**
+ * GET /:id/impressions
+ * Get impression stats for a single sponsor
+ */
+router.get('/:id/impressions', async (req, res) => {
+	requireAuthAPI(req, res, async () => {
+		try {
+			const sponsorId = req.params.id;
+			const { startDate, endDate, limit } = req.query;
+
+			// Get daily stats
+			const dailyStats = systemDb.getSponsorImpressionStats(sponsorId, {
+				startDate,
+				endDate,
+				limit: parseInt(limit) || 30
+			});
+
+			// Get all-time totals
+			const totals = systemDb.getSponsorImpressionTotals(sponsorId);
+
+			res.json({
+				success: true,
+				sponsorId,
+				dailyStats,
+				totals: {
+					...totals,
+					totalDurationFormatted: formatDuration(totals.total_duration_seconds || 0)
+				},
+				dateRange: { startDate, endDate }
+			});
+		} catch (error) {
+			logger.error('sponsor:impressions', error);
+			res.status(500).json({ success: false, error: error.message });
+		}
+	});
+});
+
+/**
+ * GET /:id/impressions/raw
+ * Get raw impression records for a sponsor (for detailed reports)
+ */
+router.get('/:id/impressions/raw', async (req, res) => {
+	requireAuthAPI(req, res, async () => {
+		try {
+			const sponsorId = req.params.id;
+			const { startDate, endDate, limit, offset } = req.query;
+
+			const impressions = systemDb.getSponsorImpressions(sponsorId, {
+				startDate,
+				endDate,
+				limit: parseInt(limit) || 100,
+				offset: parseInt(offset) || 0
+			});
+
+			res.json({
+				success: true,
+				sponsorId,
+				impressions,
+				pagination: {
+					limit: parseInt(limit) || 100,
+					offset: parseInt(offset) || 0,
+					count: impressions.length
+				}
+			});
+		} catch (error) {
+			logger.error('sponsor:impressions:raw', error);
+			res.status(500).json({ success: false, error: error.message });
+		}
+	});
+});
+
+/**
+ * POST /impressions/cleanup
+ * Clean up old impressions (admin only)
+ */
+router.post('/impressions/cleanup', async (req, res) => {
+	requireAuthAPI(req, res, async () => {
+		try {
+			const { daysToKeep } = req.body;
+			const deleted = systemDb.cleanupOldImpressions(daysToKeep || 90);
+
+			logger.log('impressions:cleanup', { daysToKeep: daysToKeep || 90, deleted });
+
+			res.json({
+				success: true,
+				deleted,
+				message: `Deleted ${deleted} old impression records`
+			});
+		} catch (error) {
+			logger.error('impressions:cleanup', error);
+			res.status(500).json({ success: false, error: error.message });
+		}
+	});
+});
+
+/**
+ * Helper function to format duration in human readable format
+ */
+function formatDuration(seconds) {
+	if (!seconds || seconds === 0) return '0s';
+
+	const hours = Math.floor(seconds / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	const secs = seconds % 60;
+
+	const parts = [];
+	if (hours > 0) parts.push(`${hours}h`);
+	if (minutes > 0) parts.push(`${minutes}m`);
+	if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+
+	return parts.join(' ');
+}
 
 module.exports = router;
 module.exports.init = init;

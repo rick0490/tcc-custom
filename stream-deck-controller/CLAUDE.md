@@ -13,6 +13,10 @@ This module provides a physical control interface for the tournament dashboard u
 
 **HID Protocol Reference:** https://docs.elgato.com/streamdeck/hid/module-15_32
 
+## Coding Standards
+
+**IMPORTANT:** Before writing any code, review the [Coding Style Guide](../CODING_STYLE.md) which defines naming conventions, API patterns, and common pitfalls.
+
 ## Pi Zero 2 W Connection
 
 ```bash
@@ -479,7 +483,7 @@ sudo ./venv/bin/python3 controller.py
 
 # Test button presses and verify:
 # 1. Match data loads from admin API
-# 2. Actions (mark underway, scores) update Challonge
+# 2. Actions (mark underway, scores) update local database
 # 3. Display updates reflect changes
 ```
 

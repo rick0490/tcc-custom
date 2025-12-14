@@ -28,11 +28,11 @@ let logActivity = null;
 let io = null;
 
 /**
- * Check if user is superadmin (admin role + userId 1)
+ * Check if user is superadmin (userId 1)
  */
 function isSuperadmin(req) {
 	if (!req.session || !req.session.userId) return false;
-	return req.session.role === 'admin' && req.session.userId === 1;
+	return req.session.userId === 1;
 }
 
 /**
@@ -460,7 +460,7 @@ router.post('/upload', upload.single('flyer'), async (req, res) => {
 
 		// Log activity
 		if (logActivity) {
-			logActivity('flyer_upload', req.session?.username || 'system', {
+			logActivity(req.session?.userId, req.session?.username || 'system', 'flyer_upload', {
 				filename: finalName,
 				userId: userId,
 				type: isVideo ? 'video' : 'image',
@@ -546,7 +546,7 @@ router.delete('/:filename', async (req, res) => {
 
 		// Log activity
 		if (logActivity) {
-			logActivity('flyer_delete', req.session?.username || 'system', {
+			logActivity(req.session?.userId, req.session?.username || 'system', 'flyer_delete', {
 				filename: filename,
 				ownerId: targetUserId
 			});
@@ -604,7 +604,7 @@ router.post('/update', async (req, res) => {
 
 		// Log activity
 		if (logActivity) {
-			logActivity('flyer_set_active', req.session?.username || 'system', {
+			logActivity(req.session?.userId, req.session?.username || 'system', 'flyer_set_active', {
 				flyer: flyer,
 				userId: userId
 			});

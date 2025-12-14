@@ -1,0 +1,64 @@
+{
+  "systemDefaults": {
+    "registrationWindow": 24,
+    "defaultGame": "",
+    "tournamentType": "single elimination"
+  },
+  "security": {
+    "sessionTimeout": 3600000,
+    "maxFailedAttempts": 5,
+    "lockoutDuration": 3600000,
+    "passwordMinLength": 10,
+    "requirePasswordComplexity": true
+  },
+  "notifications": {
+    "discord": {
+      "enabled": false,
+      "webhookUrl": ""
+    },
+    "slack": {
+      "enabled": false,
+      "webhookUrl": ""
+    },
+    "email": {
+      "enabled": false,
+      "smtpHost": "",
+      "smtpPort": 587,
+      "smtpUser": "",
+      "smtpPassword": "",
+      "fromAddress": ""
+    }
+  },
+  "globalTemplates": [],
+  "display": {
+    "matchRefreshInterval": 30000,
+    "bracketRefreshInterval": 60000,
+    "flyerRefreshInterval": 60000,
+    "defaultFlyer": ""
+  },
+  "dataRetention": {
+    "autoArchiveDays": 90,
+    "keepActivityLogDays": 30,
+    "autoBackupEnabled": false,
+    "backupFrequency": "daily"
+  },
+  "integrations": {
+    "webhooks": [],
+    "apiRateLimit": 100
+  },
+  "system": {
+    "timezone": "America/Chicago",
+    "organizationName": "Tournament Dashboard"
+  },
+  "matchQueue": {
+    "autoAdvanceEnabled": true,
+    "showNextUpIndicator": true,
+    "autoScrollToNext": true
+  },
+  "dqTimer": {
+    "autoDqEnabled": false,
+    "autoDqAction": "notify",
+    "defaultDuration": 180,
+    "warningThreshold": 30
+  }
+}

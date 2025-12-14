@@ -982,6 +982,16 @@ function renderQuickActions() {
 				</svg>
 				<span>All Matches</span>
 			</a>
+
+			<!-- Reboot All Displays -->
+			<button onclick="rebootAllDisplays()" class="cc-action-btn cc-action-btn-secondary" title="Reboot all registered Pi displays">
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+						d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+					</path>
+				</svg>
+				<span>Reboot TVs</span>
+			</button>
 		</div>
 	`;
 }
@@ -2109,6 +2119,73 @@ async function undoLastMatch() {
 	} catch (error) {
 		FrontendDebug.error('CommandCenter', 'Undo match failed', error);
 		showAlert('Failed to undo match', 'error');
+	}
+}
+
+// =============================================================================
+// REBOOT ALL DISPLAYS
+// =============================================================================
+
+/**
+ * Reboot all registered Pi displays
+ * Queues reboot commands to all online displays
+ */
+async function rebootAllDisplays() {
+	FrontendDebug.action('CommandCenter', 'Rebooting all displays');
+
+	// Confirm action
+	if (!confirm('REBOOT ALL DISPLAYS?\n\nThis will queue a reboot command for all registered Pi displays.\nDisplays will restart within 10-15 seconds.\n\nProceed?')) {
+		return;
+	}
+
+	try {
+		// First get list of displays
+		const displayResponse = await csrfFetch('/api/displays');
+		const displayData = await displayResponse.json();
+
+		if (!displayData.success || !displayData.displays || displayData.displays.length === 0) {
+			showAlert('No displays registered', 'warning');
+			return;
+		}
+
+		const displays = displayData.displays;
+		let successCount = 0;
+		let failCount = 0;
+
+		// Queue reboot for each display
+		for (const display of displays) {
+			try {
+				const response = await csrfFetch(`/api/displays/${display.id}/reboot`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' }
+				});
+
+				const data = await response.json();
+				if (data.success) {
+					successCount++;
+					FrontendDebug.log('CommandCenter', `Queued reboot for ${display.hostname}`, { displayId: display.id });
+				} else {
+					failCount++;
+					FrontendDebug.warn('CommandCenter', `Failed to queue reboot for ${display.hostname}`, data);
+				}
+			} catch (err) {
+				failCount++;
+				FrontendDebug.error('CommandCenter', `Error rebooting ${display.hostname}`, err);
+			}
+		}
+
+		// Show result
+		if (failCount === 0) {
+			showAlert(`Reboot queued for ${successCount} display(s)`, 'success');
+		} else if (successCount > 0) {
+			showAlert(`Reboot queued for ${successCount} display(s), ${failCount} failed`, 'warning');
+		} else {
+			showAlert('Failed to queue reboot for any displays', 'error');
+		}
+
+	} catch (error) {
+		FrontendDebug.error('CommandCenter', 'Reboot all displays failed', error);
+		showAlert('Failed to reboot displays', 'error');
 	}
 }
 

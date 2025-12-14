@@ -4,6 +4,73 @@
 // Central Time Zone constant - all displayed times use this
 const TIMEZONE = 'America/Chicago';
 
+// ============================================
+// FRONTEND DEBUG LOGGING
+// ============================================
+
+/**
+ * Frontend Debug Logger
+ * Enable by setting localStorage.setItem('DEBUG_MODE', 'true')
+ * Or by adding ?debug=true to the URL
+ */
+const FrontendDebug = (function() {
+	// Check if debug mode is enabled
+	const isEnabled = () => {
+		if (localStorage.getItem('DEBUG_MODE') === 'true') return true;
+		if (window.location.search.includes('debug=true')) return true;
+		return false;
+	};
+
+	// Color schemes for different log types
+	const colors = {
+		log: '#4CAF50',      // Green
+		warn: '#FF9800',     // Orange
+		error: '#F44336',    // Red
+		api: '#2196F3',      // Blue
+		ws: '#9C27B0',       // Purple
+		state: '#00BCD4',    // Cyan
+		action: '#FF5722'    // Deep Orange
+	};
+
+	// Create styled console output
+	const createLog = (type, prefix, message, data) => {
+		if (!isEnabled()) return;
+
+		const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+		const color = colors[type] || colors.log;
+
+		if (data !== undefined) {
+			console.log(
+				`%c[${timestamp}] [${prefix}] ${message}`,
+				`color: ${color}; font-weight: bold`,
+				data
+			);
+		} else {
+			console.log(
+				`%c[${timestamp}] [${prefix}] ${message}`,
+				`color: ${color}; font-weight: bold`
+			);
+		}
+	};
+
+	return {
+		isEnabled,
+		log: (prefix, message, data) => createLog('log', prefix, message, data),
+		warn: (prefix, message, data) => createLog('warn', prefix, message, data),
+		error: (prefix, message, data) => createLog('error', prefix, message, data),
+		api: (prefix, message, data) => createLog('api', prefix, message, data),
+		ws: (prefix, message, data) => createLog('ws', prefix, message, data),
+		state: (prefix, message, data) => createLog('state', prefix, message, data),
+		action: (prefix, message, data) => createLog('action', prefix, message, data),
+		// Enable/disable methods
+		enable: () => { localStorage.setItem('DEBUG_MODE', 'true'); console.log('Debug mode enabled'); },
+		disable: () => { localStorage.removeItem('DEBUG_MODE'); console.log('Debug mode disabled'); }
+	};
+})();
+
+// Export for global access
+window.FrontendDebug = FrontendDebug;
+
 /**
  * Escape HTML to prevent XSS
  * @param {string} text - Text to escape
@@ -738,7 +805,223 @@ function closeConfirmModal(result) {
 	}
 }
 
+// ============================================
+// WebSocket Manager - Real-time Updates
+// ============================================
+
+/**
+ * WebSocket event types for real-time updates
+ */
+const WS_EVENTS = {
+	// Tournament events
+	TOURNAMENT_CREATED: 'tournament:created',
+	TOURNAMENT_UPDATED: 'tournament:updated',
+	TOURNAMENT_DELETED: 'tournament:deleted',
+	TOURNAMENT_STARTED: 'tournament:started',
+	TOURNAMENT_RESET: 'tournament:reset',
+	TOURNAMENT_COMPLETED: 'tournament:completed',
+
+	// Match events
+	MATCH_UPDATED: 'match:updated',
+	MATCH_SCORED: 'match:scored',
+	MATCH_STARTED: 'match:started',
+
+	// Participant events
+	PARTICIPANT_ADDED: 'participant:added',
+	PARTICIPANT_UPDATED: 'participant:updated',
+	PARTICIPANT_DELETED: 'participant:deleted',
+	PARTICIPANT_CHECKIN: 'participant:checkin',
+	PARTICIPANTS_BULK: 'participants:bulk',
+	PARTICIPANTS_SEEDED: 'participants:seeded',
+
+	// Station events
+	STATION_CREATED: 'station:created',
+	STATION_DELETED: 'station:deleted',
+	STATION_ASSIGNED: 'station:assigned',
+
+	// Display events
+	DISPLAY_REGISTERED: 'display:registered',
+	DISPLAY_UPDATED: 'display:updated',
+	DISPLAY_OFFLINE: 'display:offline',
+
+	// Flyer events
+	FLYER_UPLOADED: 'flyer:uploaded',
+	FLYER_DELETED: 'flyer:deleted',
+	FLYER_ACTIVATED: 'flyer:activated',
+
+	// Sponsor events
+	SPONSOR_UPDATED: 'sponsor:updated',
+
+	// System events
+	SYSTEM_STATUS: 'system:status'
+};
+
+/**
+ * WebSocket Manager Singleton
+ * Provides centralized WebSocket connection for all pages
+ */
+const WebSocketManager = (function() {
+	let socket = null;
+	let isConnected = false;
+	let reconnectAttempts = 0;
+	const maxReconnectAttempts = 10;
+	const listeners = new Map(); // eventType -> Set of callbacks
+	const connectionCallbacks = { connect: [], disconnect: [] };
+
+	/**
+	 * Initialize WebSocket connection
+	 * @returns {boolean} Whether initialization was successful
+	 */
+	function init() {
+		if (socket && isConnected) {
+			console.log('[WS] Already connected');
+			return true;
+		}
+
+		if (typeof io === 'undefined') {
+			console.error('[WS] Socket.IO not loaded');
+			return false;
+		}
+
+		socket = io(window.location.origin, {
+			transports: ['websocket', 'polling'],
+			reconnection: true,
+			reconnectionDelay: 1000,
+			reconnectionDelayMax: 5000,
+			reconnectionAttempts: maxReconnectAttempts
+		});
+
+		socket.on('connect', () => {
+			console.log('[WS] Connected');
+			isConnected = true;
+			reconnectAttempts = 0;
+			socket.emit('admin:register');
+			connectionCallbacks.connect.forEach(cb => cb());
+		});
+
+		socket.on('disconnect', (reason) => {
+			console.log('[WS] Disconnected:', reason);
+			isConnected = false;
+			connectionCallbacks.disconnect.forEach(cb => cb(reason));
+		});
+
+		socket.on('connect_error', (error) => {
+			console.error('[WS] Connection error:', error.message);
+			reconnectAttempts++;
+		});
+
+		// Set up event forwarding for all registered listeners
+		Object.values(WS_EVENTS).forEach(eventType => {
+			socket.on(eventType, (data) => {
+				const eventListeners = listeners.get(eventType);
+				if (eventListeners) {
+					eventListeners.forEach(callback => {
+						try {
+							callback(data);
+						} catch (e) {
+							console.error(`[WS] Error in listener for ${eventType}:`, e);
+						}
+					});
+				}
+			});
+		});
+
+		return true;
+	}
+
+	/**
+	 * Subscribe to a WebSocket event
+	 * @param {string} eventType - Event type from WS_EVENTS
+	 * @param {Function} callback - Callback function
+	 * @returns {Function} Unsubscribe function
+	 */
+	function subscribe(eventType, callback) {
+		if (!listeners.has(eventType)) {
+			listeners.set(eventType, new Set());
+		}
+		listeners.get(eventType).add(callback);
+
+		// Return unsubscribe function
+		return () => {
+			const eventListeners = listeners.get(eventType);
+			if (eventListeners) {
+				eventListeners.delete(callback);
+			}
+		};
+	}
+
+	/**
+	 * Subscribe to multiple events at once
+	 * @param {Object} subscriptions - { eventType: callback }
+	 * @returns {Function} Unsubscribe all function
+	 */
+	function subscribeMany(subscriptions) {
+		const unsubscribers = [];
+		for (const [eventType, callback] of Object.entries(subscriptions)) {
+			unsubscribers.push(subscribe(eventType, callback));
+		}
+		return () => unsubscribers.forEach(unsub => unsub());
+	}
+
+	/**
+	 * Register connection state callbacks
+	 * @param {string} event - 'connect' or 'disconnect'
+	 * @param {Function} callback - Callback function
+	 */
+	function onConnection(event, callback) {
+		if (connectionCallbacks[event]) {
+			connectionCallbacks[event].push(callback);
+		}
+	}
+
+	/**
+	 * Get connection status
+	 * @returns {boolean} Whether connected
+	 */
+	function getStatus() {
+		return {
+			connected: isConnected,
+			reconnectAttempts
+		};
+	}
+
+	/**
+	 * Manually disconnect
+	 */
+	function disconnect() {
+		if (socket) {
+			socket.disconnect();
+			socket = null;
+			isConnected = false;
+		}
+	}
+
+	/**
+	 * Emit an event (for admin actions that need server broadcast)
+	 * @param {string} eventType - Event type
+	 * @param {Object} data - Event data
+	 */
+	function emit(eventType, data) {
+		if (socket && isConnected) {
+			socket.emit(eventType, data);
+		}
+	}
+
+	return {
+		init,
+		subscribe,
+		subscribeMany,
+		onConnection,
+		getStatus,
+		disconnect,
+		emit,
+		EVENTS: WS_EVENTS
+	};
+})();
+
 // Export for global use
+window.WS_EVENTS = WS_EVENTS;
+window.WebSocketManager = WebSocketManager;
 window.TIMEZONE = TIMEZONE;
 window.escapeHtml = escapeHtml;
 window.showAlert = showAlert;

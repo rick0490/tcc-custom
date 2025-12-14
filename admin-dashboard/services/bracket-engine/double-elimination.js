@@ -9,6 +9,8 @@
  */
 
 const singleElim = require('./single-elimination');
+const { createLogger } = require('../debug-logger');
+const logger = createLogger('bracket-engine:double-elim');
 
 /**
  * Generate losers bracket identifier
@@ -29,6 +31,12 @@ function generateLosersIdentifier(round, matchIndex) {
 function generate(participants, options = {}) {
     const { grandFinalsModifier = null, sequentialPairings = false } = options;
 
+    logger.log('generate:start', {
+        participantCount: participants.length,
+        grandFinalsModifier,
+        sequentialPairings
+    });
+
     // Sort participants by seed
     const sorted = [...participants].sort((a, b) => (a.seed || 999) - (b.seed || 999));
     const participantCount = sorted.length;
@@ -41,6 +49,13 @@ function generate(participants, options = {}) {
     const bracketSize = singleElim.nextPowerOf2(participantCount);
     const winnersRounds = Math.log2(bracketSize);
     const numByes = bracketSize - participantCount;
+
+    logger.log('generate:bracketSize', {
+        participantCount,
+        bracketSize,
+        winnersRounds,
+        numByes
+    });
 
     // Generate seeding order
     const seedOrder = sequentialPairings
@@ -169,6 +184,7 @@ function generate(participants, options = {}) {
             // But we pair them: loser of W1-1 vs loser of W1-matchCount (from opposite side)
             const w1Losers = winnersMatches.filter(m => !m.is_bye);
             const matchCount = Math.floor(w1Losers.length / 2);
+            const hasOddLoser = w1Losers.length % 2 === 1;
 
             for (let i = 0; i < matchCount; i++) {
                 const feeder1 = w1Losers[i];
@@ -193,37 +209,108 @@ function generate(participants, options = {}) {
                 matches.push(match);
                 roundMatches.push(match);
             }
+
+            // Handle odd loser - create a BYE placeholder match that auto-advances
+            if (hasOddLoser) {
+                const oddLoserFeeder = w1Losers[Math.floor(w1Losers.length / 2)];
+                const byeMatch = {
+                    id: matchId++,
+                    identifier: generateLosersIdentifier(losersRound, matchCount),
+                    round: losersRound,
+                    bracket_position: matchCount,
+                    losers_bracket: true,
+                    suggested_play_order: null, // No play needed
+                    player1_id: null,
+                    player2_id: null,
+                    player1_prereq_match_id: oddLoserFeeder.id,
+                    player2_prereq_match_id: null,
+                    player1_is_prereq_loser: true,
+                    player2_is_prereq_loser: false,
+                    state: 'pending', // Will be marked complete when prereq completes
+                    is_bye: true
+                };
+                matches.push(byeMatch);
+                roundMatches.push(byeMatch);
+            }
         } else if (isDropdownRound) {
             // Dropdown round: winners of prev losers vs losers from winners
             const winnersDropdowns = winnersBracket[winnersRoundSource - 1] || [];
-            const matchCount = Math.min(prevLosersMatches.length, winnersDropdowns.length);
+            // Filter out BYE matches from winners (they don't produce losers)
+            const actualDropdowns = winnersDropdowns.filter(m => !m.is_bye);
+            const matchCount = Math.max(prevLosersMatches.length, actualDropdowns.length);
 
             for (let i = 0; i < matchCount; i++) {
+                const prevLoser = prevLosersMatches[i];
                 // Reverse the order of dropdowns for proper bracket balancing
-                const dropdownIndex = matchCount - 1 - i;
+                const dropdownIndex = actualDropdowns.length - 1 - i;
+                const dropdown = actualDropdowns[dropdownIndex];
 
-                const match = {
-                    id: matchId++,
-                    identifier: generateLosersIdentifier(losersRound, i),
-                    round: losersRound,
-                    bracket_position: i,
-                    losers_bracket: true,
-                    suggested_play_order: playOrder++,
-                    player1_id: null,
-                    player2_id: null,
-                    player1_prereq_match_id: prevLosersMatches[i].id,
-                    player2_prereq_match_id: winnersDropdowns[dropdownIndex].id,
-                    player1_is_prereq_loser: false, // Winner of losers match
-                    player2_is_prereq_loser: true,  // Loser from winners
-                    state: 'pending'
-                };
-
-                matches.push(match);
-                roundMatches.push(match);
+                // Handle case where we have a loser match but no dropdown (BYE in winners)
+                if (prevLoser && !dropdown) {
+                    // Loser auto-advances (no opponent from winners)
+                    const byeMatch = {
+                        id: matchId++,
+                        identifier: generateLosersIdentifier(losersRound, i),
+                        round: losersRound,
+                        bracket_position: i,
+                        losers_bracket: true,
+                        suggested_play_order: null,
+                        player1_id: null,
+                        player2_id: null,
+                        player1_prereq_match_id: prevLoser.id,
+                        player2_prereq_match_id: null,
+                        player1_is_prereq_loser: false,
+                        player2_is_prereq_loser: false,
+                        state: 'pending',
+                        is_bye: true
+                    };
+                    matches.push(byeMatch);
+                    roundMatches.push(byeMatch);
+                } else if (!prevLoser && dropdown) {
+                    // Dropdown auto-advances (no opponent from losers)
+                    const byeMatch = {
+                        id: matchId++,
+                        identifier: generateLosersIdentifier(losersRound, i),
+                        round: losersRound,
+                        bracket_position: i,
+                        losers_bracket: true,
+                        suggested_play_order: null,
+                        player1_id: null,
+                        player2_id: null,
+                        player1_prereq_match_id: null,
+                        player2_prereq_match_id: dropdown.id,
+                        player1_is_prereq_loser: false,
+                        player2_is_prereq_loser: true,
+                        state: 'pending',
+                        is_bye: true
+                    };
+                    matches.push(byeMatch);
+                    roundMatches.push(byeMatch);
+                } else if (prevLoser && dropdown) {
+                    // Normal match
+                    const match = {
+                        id: matchId++,
+                        identifier: generateLosersIdentifier(losersRound, i),
+                        round: losersRound,
+                        bracket_position: i,
+                        losers_bracket: true,
+                        suggested_play_order: playOrder++,
+                        player1_id: null,
+                        player2_id: null,
+                        player1_prereq_match_id: prevLoser.id,
+                        player2_prereq_match_id: dropdown.id,
+                        player1_is_prereq_loser: false, // Winner of losers match
+                        player2_is_prereq_loser: true,  // Loser from winners
+                        state: 'pending'
+                    };
+                    matches.push(match);
+                    roundMatches.push(match);
+                }
             }
         } else {
             // Non-dropdown round: just winners of previous losers matches
             const matchCount = Math.floor(prevLosersMatches.length / 2);
+            const hasOddMatch = prevLosersMatches.length % 2 === 1;
 
             for (let i = 0; i < matchCount; i++) {
                 const match = {
@@ -244,6 +331,29 @@ function generate(participants, options = {}) {
 
                 matches.push(match);
                 roundMatches.push(match);
+            }
+
+            // Handle odd match - create a BYE that auto-advances
+            if (hasOddMatch) {
+                const oddFeeder = prevLosersMatches[prevLosersMatches.length - 1];
+                const byeMatch = {
+                    id: matchId++,
+                    identifier: generateLosersIdentifier(losersRound, matchCount),
+                    round: losersRound,
+                    bracket_position: matchCount,
+                    losers_bracket: true,
+                    suggested_play_order: null,
+                    player1_id: null,
+                    player2_id: null,
+                    player1_prereq_match_id: oddFeeder.id,
+                    player2_prereq_match_id: null,
+                    player1_is_prereq_loser: false,
+                    player2_is_prereq_loser: false,
+                    state: 'pending',
+                    is_bye: true
+                };
+                matches.push(byeMatch);
+                roundMatches.push(byeMatch);
             }
         }
 
@@ -337,6 +447,16 @@ function generate(participants, options = {}) {
         grandFinalsModifier,
         hasGrandFinalsReset: grandFinals2 !== null
     };
+
+    logger.log('generate:complete', {
+        matchCount: matches.length,
+        winnersMatches: matches.filter(m => !m.losers_bracket && !m.is_grand_finals && !m.is_grand_finals_reset).length,
+        losersMatches: matches.filter(m => m.losers_bracket).length,
+        grandFinalsMatches: matches.filter(m => m.is_grand_finals || m.is_grand_finals_reset).length,
+        byeMatches: matches.filter(m => m.is_bye).length,
+        openMatches: matches.filter(m => m.state === 'open').length,
+        hasGrandFinalsReset: grandFinals2 !== null
+    });
 
     return {
         type: 'double_elimination',

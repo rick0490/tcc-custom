@@ -103,7 +103,7 @@ User Browser
          │    └─> Return combined status
          │
          └─> POST /api/flyers/upload
-              └─> Save to /root/tournament-dashboard/MagicMirror-bracket/flyers/
+              └─> Save to /root/tcc-custom/admin-dashboard/flyers/
 ```
 
 ### Key Design Decisions

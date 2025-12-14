@@ -198,12 +198,28 @@ function switchTab(tabName) {
         case 'monitoring':
             loadMonitoringStatus();
             loadSavedReports();
+            // Phase 2: Initialize real-time metrics and alerts
+            initPhase2Monitoring();
+            loadAlertHistory();
+            loadMetricsHistory();
+            break;
+        case 'displays':
+            initDisplaysTab();
             break;
         case 'flyers':
             if (flyersData.length === 0) loadFlyers();
             break;
         case 'sponsors':
             if (sponsorsData.length === 0) loadSponsors();
+            break;
+        case 'statistics':
+            loadPlatformStats();
+            break;
+        case 'liveFeed':
+            loadLiveFeed();
+            break;
+        case 'query':
+            // Initialize query tab if needed
             break;
     }
 }
@@ -254,9 +270,6 @@ function renderUsers(users) {
                 ${user.isSuperadmin ? '<span class="badge badge-purple ml-2">Super</span>' : ''}
             </td>
             <td>
-                <span class="badge ${getRoleBadgeClass(user.role)}">${user.role}</span>
-            </td>
-            <td>
                 <span class="badge ${user.is_active ? 'badge-green' : 'badge-red'}">
                     ${user.is_active ? 'Active' : 'Disabled'}
                 </span>
@@ -272,7 +285,7 @@ function renderUsers(users) {
             </td>
             <td class="text-right">
                 <div class="flex justify-end gap-2">
-                    <button onclick="viewUserDetails(${user.id})" class="text-blue-400 hover:text-blue-300 text-sm">
+                    <button onclick="viewUserProfile(${user.id})" class="text-blue-400 hover:text-blue-300 text-sm">
                         View
                     </button>
                     ${!user.isSuperadmin ? `
@@ -346,8 +359,8 @@ async function viewUserDetails(userId) {
                             <div class="text-white font-medium">${escapeHtml(user.username)}</div>
                         </div>
                         <div>
-                            <div class="text-sm text-gray-400">Role</div>
-                            <div><span class="badge ${getRoleBadgeClass(user.role)}">${user.role}</span></div>
+                            <div class="text-sm text-gray-400">Type</div>
+                            <div><span class="badge ${user.isSuperadmin ? 'badge-purple' : 'badge-gray'}">${user.isSuperadmin ? 'Superadmin' : 'User'}</span></div>
                         </div>
                         <div>
                             <div class="text-sm text-gray-400">Email</div>
@@ -1187,22 +1200,46 @@ async function exportAuditLog() {
  * Load database status
  */
 async function loadDatabaseStatus() {
+    const indicator = document.getElementById('dbConnectionIndicator');
+    const statusText = document.getElementById('dbConnectionStatus');
+
     try {
         FrontendDebug.api('PlatformAdmin', 'Loading database status');
         const response = await csrfFetch('/api/admin/database/status');
         const data = await response.json();
 
         if (data.success) {
+            // Update connection status
+            if (indicator && statusText) {
+                indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500');
+                indicator.classList.add('bg-green-500');
+                statusText.textContent = 'Connected';
+            }
+
+            // Update database cards
             data.databases.forEach(db => {
                 const card = document.getElementById(`db-${db.name}`);
                 if (card) {
                     card.querySelector('.text-2xl').textContent = formatFileSize(db.size);
-                    card.querySelector('.text-sm').textContent = `${db.tables} tables`;
+                    card.querySelector('.text-sm').textContent = `${db.tableCount} tables`;
                 }
             });
+        } else {
+            // Connection failed
+            if (indicator && statusText) {
+                indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500');
+                indicator.classList.add('bg-red-500');
+                statusText.textContent = 'Connection failed';
+            }
         }
     } catch (error) {
         FrontendDebug.error('PlatformAdmin', 'Failed to load database status', error);
+        // Connection error
+        if (indicator && statusText) {
+            indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500');
+            indicator.classList.add('bg-red-500');
+            statusText.textContent = 'Connection error';
+        }
     }
 }
 
@@ -2322,14 +2359,8 @@ async function loadSystemHealth() {
     try {
         FrontendDebug.api('PlatformAdmin', 'Loading system health');
 
-        // Load module status, server info, and database status in parallel
-        const [statusRes, dbStatusRes] = await Promise.all([
-            csrfFetch('/api/status'),
-            csrfFetch('/api/admin/database/status')
-        ]);
-
-        const statusData = await statusRes.json();
-        const dbStatusData = await dbStatusRes.json();
+        const response = await csrfFetch('/api/status');
+        const statusData = await response.json();
 
         // Update module status
         if (statusData.success) {
@@ -2343,35 +2374,9 @@ async function loadSystemHealth() {
                 document.getElementById('serverNodeVersion').textContent = statusData.server.nodeVersion || '-';
                 document.getElementById('serverUptime').textContent = formatUptime(statusData.server.uptime) || '-';
                 document.getElementById('serverMemory').textContent = statusData.server.memoryUsage
-                    ? `${Math.round(statusData.server.memoryUsage.heapUsed / 1024 / 1024)} MB / ${Math.round(statusData.server.memoryUsage.heapTotal / 1024 / 1024)} MB`
+                    ? `${Math.round(statusData.server.memoryUsage.rss / 1024 / 1024)} MB`
                     : '-';
             }
-        }
-
-        // Update database status
-        if (dbStatusData.success) {
-            const indicator = document.getElementById('dbConnectionIndicator');
-            const statusText = document.getElementById('dbConnectionStatus');
-
-            indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500');
-            indicator.classList.add('bg-green-500');
-            statusText.textContent = 'Connected';
-
-            // Update database sizes
-            dbStatusData.databases.forEach(db => {
-                const dbName = db.name.replace('.db', '');
-                const el = document.getElementById(`dbSize${capitalizeFirst(dbName)}`);
-                if (el) {
-                    el.textContent = formatFileSize(db.size);
-                }
-            });
-        } else {
-            const indicator = document.getElementById('dbConnectionIndicator');
-            const statusText = document.getElementById('dbConnectionStatus');
-
-            indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500');
-            indicator.classList.add('bg-red-500');
-            statusText.textContent = 'Connection failed';
         }
     } catch (error) {
         FrontendDebug.error('PlatformAdmin', 'Failed to load system health', error);
@@ -2381,7 +2386,7 @@ async function loadSystemHealth() {
 /**
  * Update module status display
  */
-function updateModuleStatus(module, status) {
+function updateModuleStatus(module, moduleData) {
     const indicator = document.getElementById(`${module}ModuleIndicator`);
     const statusText = document.getElementById(`${module}ModuleStatus`);
 
@@ -2389,7 +2394,10 @@ function updateModuleStatus(module, status) {
 
     indicator.classList.remove('bg-gray-500', 'bg-green-500', 'bg-red-500', 'bg-yellow-500');
 
-    if (status?.online) {
+    // moduleData has structure: { status: { running: bool, response/error }, state, port }
+    const status = moduleData?.status;
+
+    if (status?.running) {
         indicator.classList.add('bg-green-500');
         statusText.textContent = 'Online';
         statusText.classList.remove('text-red-400', 'text-yellow-400');
@@ -2783,6 +2791,1661 @@ async function deleteSavedReport(filename) {
  * Open service logs modal
  */
 function openServiceLogsModal() {
-    showAlert('Service logs viewer coming soon', 'info');
-    // TODO: Implement service logs modal
+    const modal = document.getElementById('serviceLogsModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        refreshServiceLogs();
+    }
+}
+
+/**
+ * Close service logs modal
+ */
+function closeServiceLogsModal() {
+    const modal = document.getElementById('serviceLogsModal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
+/**
+ * Refresh service logs
+ */
+async function refreshServiceLogs() {
+    const service = document.getElementById('serviceLogSelect')?.value || 'control-center-admin';
+    const lines = document.getElementById('logLinesSelect')?.value || 100;
+    const outputEl = document.getElementById('serviceLogsContent');
+
+    if (!outputEl) return;
+
+    outputEl.textContent = 'Loading logs...';
+
+    try {
+        const response = await csrfFetch(`/api/monitoring/logs?service=${encodeURIComponent(service)}&lines=${lines}`);
+        const data = await response.json();
+
+        if (data.success) {
+            outputEl.textContent = data.logs || 'No logs available';
+        } else {
+            outputEl.textContent = 'Failed to load logs: ' + (data.error || 'Unknown error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load service logs', error);
+        outputEl.textContent = 'Failed to load logs';
+    }
+}
+
+// ============================================
+// PHASE 2: PERFORMANCE MONITORING
+// ============================================
+
+let metricsAutoRefreshInterval = null;
+let metricsCollectionEnabled = false;
+
+/**
+ * Load active alerts from metrics system
+ */
+async function loadActiveAlerts() {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading active alerts');
+        const response = await csrfFetch('/api/admin/alerts');
+        const data = await response.json();
+
+        const banner = document.getElementById('alertsBanner');
+        const countEl = document.getElementById('alertCount');
+        const listEl = document.getElementById('alertsList');
+
+        if (!banner || !countEl || !listEl) return;
+
+        if (data.success && data.alerts?.length > 0) {
+            banner.classList.remove('hidden');
+            countEl.textContent = data.alerts.length;
+
+            listEl.innerHTML = data.alerts.map(alert => `
+                <div class="flex items-center justify-between bg-gray-800/50 rounded p-2 mt-2">
+                    <div>
+                        <span class="inline-block px-2 py-0.5 rounded text-xs ${alert.severity === 'critical' ? 'bg-red-600' : 'bg-yellow-600'}">${alert.severity?.toUpperCase()}</span>
+                        <span class="ml-2 text-white">${escapeHtml(alert.message)}</span>
+                        <span class="text-gray-400 text-sm ml-2">${formatTimeAgo(alert.created_at)}</span>
+                    </div>
+                    <button onclick="acknowledgeAlert(${alert.id})" class="text-blue-400 hover:text-blue-300 text-sm">Acknowledge</button>
+                </div>
+            `).join('');
+        } else {
+            banner.classList.add('hidden');
+            listEl.innerHTML = '';
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load alerts', error);
+    }
+}
+
+/**
+ * Acknowledge a single alert
+ */
+async function acknowledgeAlert(alertId) {
+    try {
+        const response = await csrfFetch(`/api/admin/alerts/${alertId}/acknowledge`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert('Alert acknowledged', 'success');
+            loadActiveAlerts();
+            loadAlertHistory();
+        } else {
+            showAlert(data.error || 'Failed to acknowledge alert', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to acknowledge alert', error);
+        showAlert('Failed to acknowledge alert', 'error');
+    }
+}
+
+/**
+ * Acknowledge all active alerts
+ */
+async function acknowledgeAllAlerts() {
+    if (!confirm('Acknowledge all active alerts?')) return;
+
+    try {
+        const response = await csrfFetch('/api/admin/alerts/acknowledge-all', {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(`${data.acknowledged || 0} alerts acknowledged`, 'success');
+            loadActiveAlerts();
+            loadAlertHistory();
+        } else {
+            showAlert(data.error || 'Failed to acknowledge alerts', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to acknowledge alerts', error);
+        showAlert('Failed to acknowledge alerts', 'error');
+    }
+}
+
+/**
+ * Load current metrics snapshot
+ */
+async function loadCurrentMetrics() {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading current metrics');
+        const response = await csrfFetch('/api/admin/metrics/current');
+        const data = await response.json();
+
+        if (data.success && data.snapshot) {
+            const snapshot = data.snapshot;
+
+            // Update system metrics
+            updateMetricCard('cpuValue', 'cpuProgress', snapshot.system?.cpu_usage_system || 0, '%');
+            updateMetricCard('memoryValue', 'memoryProgress', snapshot.system?.memory_usage_system || 0, '%');
+            updateMetricCard('diskValue', 'diskProgress', snapshot.system?.disk_usage_root || 0, '%');
+
+            // Update display metrics
+            const displaysOnline = snapshot.displays?.display_online || 0;
+            const displaysOffline = snapshot.displays?.display_offline || 0;
+            const displayTotal = displaysOnline + displaysOffline;
+            const displayPct = displayTotal > 0 ? (displaysOnline / displayTotal * 100) : 0;
+            updateMetricCard('displaysValue', 'displaysProgress', displayPct, '', `${displaysOnline}/${displayTotal}`);
+
+            // Update API latency metrics
+            updateApiCard('matchLatency', 'matchStatus', snapshot.api?.match_display);
+            updateApiCard('bracketLatency', 'bracketStatus', snapshot.api?.bracket_display);
+            updateApiCard('flyerLatency', 'flyerStatus', snapshot.api?.flyer_display);
+
+            // Update timestamp
+            const timestampEl = document.getElementById('metricsTimestamp');
+            if (timestampEl) {
+                timestampEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+            }
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load current metrics', error);
+    }
+}
+
+/**
+ * Update a metric card with value and progress bar
+ */
+function updateMetricCard(valueId, progressId, value, suffix, displayValue) {
+    const valueEl = document.getElementById(valueId);
+    const progressEl = document.getElementById(progressId);
+
+    if (valueEl) {
+        valueEl.textContent = displayValue || `${value.toFixed(1)}${suffix}`;
+    }
+    if (progressEl) {
+        progressEl.style.width = `${Math.min(100, value)}%`;
+        // Color coding
+        if (value >= 90) {
+            progressEl.className = 'h-full bg-red-500 rounded-full transition-all';
+        } else if (value >= 70) {
+            progressEl.className = 'h-full bg-yellow-500 rounded-full transition-all';
+        } else {
+            progressEl.className = 'h-full bg-blue-500 rounded-full transition-all';
+        }
+    }
+}
+
+/**
+ * Update API latency card
+ */
+function updateApiCard(latencyId, statusId, apiData) {
+    const latencyEl = document.getElementById(latencyId);
+    const statusEl = document.getElementById(statusId);
+
+    if (latencyEl) {
+        if (apiData?.latencyMs !== undefined) {
+            latencyEl.textContent = `${apiData.latencyMs}ms`;
+        } else {
+            latencyEl.textContent = 'N/A';
+        }
+    }
+    if (statusEl) {
+        if (apiData?.online) {
+            statusEl.textContent = 'Online';
+            statusEl.className = 'text-xs text-green-400';
+        } else {
+            statusEl.textContent = 'Offline';
+            statusEl.className = 'text-xs text-red-400';
+        }
+    }
+}
+
+/**
+ * Refresh metrics now (manual refresh button)
+ */
+function refreshMetricsNow() {
+    loadCurrentMetrics();
+    loadActiveAlerts();
+}
+
+/**
+ * Toggle auto-refresh for metrics
+ */
+function toggleMetricsAutoRefresh() {
+    const toggle = document.getElementById('metricsAutoRefresh');
+
+    if (toggle?.checked) {
+        // Start auto-refresh every 10 seconds
+        if (!metricsAutoRefreshInterval) {
+            metricsAutoRefreshInterval = setInterval(() => {
+                loadCurrentMetrics();
+                loadActiveAlerts();
+            }, 10000);
+        }
+    } else {
+        // Stop auto-refresh
+        if (metricsAutoRefreshInterval) {
+            clearInterval(metricsAutoRefreshInterval);
+            metricsAutoRefreshInterval = null;
+        }
+    }
+}
+
+/**
+ * Toggle metrics collection service
+ */
+async function toggleMetricsCollection() {
+    const toggle = document.getElementById('metricsCollectionToggle');
+    const statusEl = document.getElementById('collectionStatus');
+
+    try {
+        const action = toggle?.checked ? 'start' : 'stop';
+        const response = await csrfFetch(`/api/admin/metrics/collection/${action}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            metricsCollectionEnabled = toggle?.checked;
+            if (statusEl) {
+                statusEl.textContent = toggle?.checked ? 'Running' : 'Stopped';
+                statusEl.className = toggle?.checked ? 'text-green-400' : 'text-gray-400';
+            }
+            showAlert(`Metrics collection ${action}ed`, 'success');
+        } else {
+            // Revert toggle
+            if (toggle) toggle.checked = !toggle.checked;
+            showAlert(data.error || `Failed to ${action} collection`, 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to toggle metrics collection', error);
+        if (toggle) toggle.checked = !toggle.checked;
+        showAlert('Failed to toggle metrics collection', 'error');
+    }
+}
+
+/**
+ * Load metrics collection status
+ */
+async function loadMetricsCollectionStatus() {
+    try {
+        const response = await csrfFetch('/api/admin/metrics/collection/status');
+        const data = await response.json();
+
+        if (data.success) {
+            const toggle = document.getElementById('metricsCollectionToggle');
+            const statusEl = document.getElementById('collectionStatus');
+
+            if (toggle) toggle.checked = data.isRunning;
+            if (statusEl) {
+                statusEl.textContent = data.isRunning ? 'Running' : 'Stopped';
+                statusEl.className = data.isRunning ? 'text-green-400' : 'text-gray-400';
+            }
+            metricsCollectionEnabled = data.isRunning;
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load metrics collection status', error);
+    }
+}
+
+/**
+ * Load metrics history for charts
+ */
+async function loadMetricsHistory(hours = 24) {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading metrics history');
+        const response = await csrfFetch(`/api/admin/metrics/history?hours=${hours}`);
+        const data = await response.json();
+
+        const contentEl = document.getElementById('historyContent');
+        if (!contentEl) return;
+
+        if (data.success && data.metrics) {
+            // Render simple text-based history (can be enhanced with charts later)
+            let html = '<div class="space-y-4">';
+
+            for (const [metricType, records] of Object.entries(data.metrics)) {
+                if (records.length === 0) continue;
+
+                const latest = records[records.length - 1];
+                const avg = records.reduce((sum, r) => sum + r.value, 0) / records.length;
+                const max = Math.max(...records.map(r => r.value));
+                const min = Math.min(...records.map(r => r.value));
+
+                html += `
+                    <div class="bg-gray-700/50 rounded-lg p-3">
+                        <h4 class="text-white font-medium">${formatMetricType(metricType)}</h4>
+                        <div class="grid grid-cols-4 gap-2 mt-2 text-sm">
+                            <div><span class="text-gray-400">Latest:</span> <span class="text-white">${latest.value.toFixed(1)}</span></div>
+                            <div><span class="text-gray-400">Avg:</span> <span class="text-white">${avg.toFixed(1)}</span></div>
+                            <div><span class="text-gray-400">Min:</span> <span class="text-white">${min.toFixed(1)}</span></div>
+                            <div><span class="text-gray-400">Max:</span> <span class="text-white">${max.toFixed(1)}</span></div>
+                        </div>
+                        <div class="text-gray-400 text-xs mt-1">${records.length} samples</div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            contentEl.innerHTML = html;
+        } else {
+            contentEl.innerHTML = '<div class="text-gray-400">No historical data available</div>';
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load metrics history', error);
+    }
+}
+
+/**
+ * Format metric type for display
+ */
+function formatMetricType(type) {
+    const names = {
+        'memory_usage': 'Memory Usage',
+        'cpu_usage': 'CPU Usage',
+        'disk_usage': 'Disk Usage',
+        'api_latency': 'API Latency',
+        'api_status': 'API Status',
+        'display_online': 'Displays Online',
+        'display_offline': 'Displays Offline',
+        'database_size': 'Database Size'
+    };
+    return names[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Open thresholds configuration modal
+ */
+function openThresholdsModal() {
+    const modal = document.getElementById('thresholdsModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        loadThresholds();
+    }
+}
+
+/**
+ * Close thresholds modal
+ */
+function closeThresholdsModal() {
+    const modal = document.getElementById('thresholdsModal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
+/**
+ * Load alert thresholds
+ */
+async function loadThresholds() {
+    const contentEl = document.getElementById('thresholdsContent');
+    if (!contentEl) return;
+
+    contentEl.innerHTML = '<div class="text-gray-400">Loading thresholds...</div>';
+
+    try {
+        const response = await csrfFetch('/api/admin/alert-thresholds');
+        const data = await response.json();
+
+        if (data.success && data.thresholds) {
+            contentEl.innerHTML = data.thresholds.map(t => `
+                <div class="bg-gray-700/50 rounded-lg p-3 mb-3" data-metric="${escapeHtml(t.metric_type)}">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-white font-medium">${formatMetricType(t.metric_type)}</span>
+                        <label class="flex items-center">
+                            <input type="checkbox" class="threshold-enabled mr-2" ${t.enabled ? 'checked' : ''}>
+                            <span class="text-gray-400 text-sm">Enabled</span>
+                        </label>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                            <label class="text-gray-400">Warning Threshold</label>
+                            <input type="number" class="threshold-warning mt-1 w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-white" value="${t.warning_threshold ?? ''}" placeholder="e.g., 70">
+                        </div>
+                        <div>
+                            <label class="text-gray-400">Critical Threshold</label>
+                            <input type="number" class="threshold-critical mt-1 w-full bg-gray-600 border border-gray-500 rounded px-2 py-1 text-white" value="${t.critical_threshold ?? ''}" placeholder="e.g., 90">
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            contentEl.innerHTML = '<div class="text-gray-400">No thresholds configured</div>';
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load thresholds', error);
+        contentEl.innerHTML = '<div class="text-red-400">Failed to load thresholds</div>';
+    }
+}
+
+/**
+ * Save alert thresholds
+ */
+async function saveThresholds() {
+    const contentEl = document.getElementById('thresholdsContent');
+    if (!contentEl) return;
+
+    const thresholdDivs = contentEl.querySelectorAll('[data-metric]');
+    const updates = [];
+
+    thresholdDivs.forEach(div => {
+        const metricType = div.dataset.metric;
+        const enabled = div.querySelector('.threshold-enabled')?.checked;
+        const warning = div.querySelector('.threshold-warning')?.value;
+        const critical = div.querySelector('.threshold-critical')?.value;
+
+        updates.push({
+            metricType,
+            enabled,
+            warningThreshold: warning ? parseFloat(warning) : null,
+            criticalThreshold: critical ? parseFloat(critical) : null
+        });
+    });
+
+    try {
+        const response = await csrfFetch('/api/admin/alert-thresholds', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ thresholds: updates })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert('Thresholds saved', 'success');
+            closeThresholdsModal();
+        } else {
+            showAlert(data.error || 'Failed to save thresholds', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to save thresholds', error);
+        showAlert('Failed to save thresholds', 'error');
+    }
+}
+
+/**
+ * Load alert history
+ */
+async function loadAlertHistory() {
+    const contentEl = document.getElementById('alertHistoryContent');
+    if (!contentEl) return;
+
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading alert history');
+        const response = await csrfFetch('/api/admin/alerts/history?limit=50');
+        const data = await response.json();
+
+        if (data.success && data.alerts?.length > 0) {
+            contentEl.innerHTML = `
+                <table class="w-full">
+                    <thead>
+                        <tr class="text-left text-gray-400 text-sm">
+                            <th class="pb-2">Time</th>
+                            <th class="pb-2">Severity</th>
+                            <th class="pb-2">Message</th>
+                            <th class="pb-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-sm">
+                        ${data.alerts.map(a => `
+                            <tr class="border-t border-gray-700">
+                                <td class="py-2 text-gray-400">${formatTimeAgo(a.created_at)}</td>
+                                <td class="py-2">
+                                    <span class="px-2 py-0.5 rounded text-xs ${a.severity === 'critical' ? 'bg-red-600' : 'bg-yellow-600'}">${a.severity}</span>
+                                </td>
+                                <td class="py-2 text-white">${escapeHtml(a.message)}</td>
+                                <td class="py-2 ${a.acknowledged ? 'text-green-400' : 'text-gray-400'}">${a.acknowledged ? 'Acknowledged' : 'Active'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else {
+            contentEl.innerHTML = '<div class="text-gray-400">No alert history</div>';
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load alert history', error);
+    }
+}
+
+/**
+ * Cleanup old metrics data
+ */
+async function cleanupOldMetrics() {
+    if (!confirm('This will delete metrics older than 7 days. Continue?')) return;
+
+    try {
+        const response = await csrfFetch('/api/admin/metrics/cleanup', {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(`Cleaned up ${data.deletedCount || 0} old metric records`, 'success');
+            loadMetricsHistory();
+        } else {
+            showAlert(data.error || 'Failed to cleanup metrics', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to cleanup metrics', error);
+        showAlert('Failed to cleanup metrics', 'error');
+    }
+}
+
+/**
+ * Initialize Phase 2 monitoring features
+ */
+function initPhase2Monitoring() {
+    // Load metrics collection status
+    loadMetricsCollectionStatus();
+
+    // Load active alerts
+    loadActiveAlerts();
+
+    // Load current metrics
+    loadCurrentMetrics();
+
+    // Setup auto-refresh toggle listener
+    const autoRefreshToggle = document.getElementById('metricsAutoRefresh');
+    if (autoRefreshToggle) {
+        autoRefreshToggle.addEventListener('change', toggleMetricsAutoRefresh);
+        // Enable auto-refresh by default
+        autoRefreshToggle.checked = true;
+        toggleMetricsAutoRefresh();
+    }
+
+    // Setup metrics collection toggle listener
+    const collectionToggle = document.getElementById('metricsCollectionToggle');
+    if (collectionToggle) {
+        collectionToggle.addEventListener('change', toggleMetricsCollection);
+    }
+}
+
+// ============================================
+// PHASE 2: DISPLAY FLEET MANAGEMENT
+// ============================================
+
+let fleetDisplaysData = [];
+let fleetFilteredData = [];
+
+/**
+ * Load fleet displays (all tenants)
+ */
+async function loadFleetDisplays() {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading fleet displays');
+        const response = await csrfFetch('/api/admin/displays');
+        const data = await response.json();
+
+        if (data.success) {
+            fleetDisplaysData = data.displays || [];
+            fleetFilteredData = [...fleetDisplaysData];
+            renderFleetDisplays();
+            updateFleetStats();
+            populateUserFilter();
+        } else {
+            showAlert(data.error || 'Failed to load displays', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load fleet displays', error);
+        showAlert('Failed to load displays', 'error');
+    }
+}
+
+/**
+ * Refresh fleet displays
+ */
+function refreshFleetDisplays() {
+    loadFleetDisplays();
+    loadCommandHistory();
+}
+
+/**
+ * Update fleet statistics
+ */
+function updateFleetStats() {
+    const total = fleetDisplaysData.length;
+    const online = fleetDisplaysData.filter(d => d.status === 'online').length;
+    const offline = total - online;
+    const types = new Set(fleetDisplaysData.map(d => d.currentView || d.assignedView)).size;
+
+    document.getElementById('fleetTotalDisplays').textContent = total;
+    document.getElementById('fleetOnlineDisplays').textContent = online;
+    document.getElementById('fleetOfflineDisplays').textContent = offline;
+    document.getElementById('fleetDisplayTypes').textContent = types;
+}
+
+/**
+ * Populate user filter dropdown
+ */
+function populateUserFilter() {
+    const select = document.getElementById('fleetFilterUser');
+    if (!select) return;
+
+    // Get unique user IDs
+    const userIds = [...new Set(fleetDisplaysData.map(d => d.userId).filter(Boolean))];
+
+    // Keep the first "All Users" option and add user options
+    select.innerHTML = '<option value="">All Users</option>' +
+        userIds.map(id => `<option value="${id}">User ${id}</option>`).join('');
+}
+
+/**
+ * Filter fleet displays based on dropdowns
+ */
+function filterFleetDisplays() {
+    const userId = document.getElementById('fleetFilterUser')?.value;
+    const status = document.getElementById('fleetFilterStatus')?.value;
+    const type = document.getElementById('fleetFilterType')?.value;
+
+    fleetFilteredData = fleetDisplaysData.filter(d => {
+        if (userId && String(d.userId) !== userId) return false;
+        if (status && d.status !== status) return false;
+        if (type) {
+            const displayType = d.currentView || d.assignedView || '';
+            if (displayType !== type) return false;
+        }
+        return true;
+    });
+
+    renderFleetDisplays();
+}
+
+/**
+ * Render fleet displays grid
+ */
+function renderFleetDisplays() {
+    const grid = document.getElementById('fleetDisplaysGrid');
+    if (!grid) return;
+
+    if (fleetFilteredData.length === 0) {
+        grid.innerHTML = '<div class="text-gray-400 col-span-full text-center py-8">No displays found</div>';
+        return;
+    }
+
+    grid.innerHTML = fleetFilteredData.map(d => {
+        const isOnline = d.status === 'online';
+        const statusColor = isOnline ? 'bg-green-500' : 'bg-red-500';
+        const displayType = d.currentView || d.assignedView || 'unknown';
+        const lastSeen = d.lastHeartbeat ? formatTimeAgo(d.lastHeartbeat) : 'Never';
+
+        return `
+            <div class="bg-gray-700/50 rounded-lg p-4 border border-gray-600">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full ${statusColor}"></span>
+                        <span class="font-medium text-white">${escapeHtml(d.hostname || d.id)}</span>
+                    </div>
+                    <span class="text-xs px-2 py-1 rounded ${getTypeColor(displayType)}">${displayType}</span>
+                </div>
+                <div class="space-y-1 text-sm text-gray-400">
+                    <div>User: <span class="text-white">${d.userId || 'N/A'}</span></div>
+                    <div>IP: <span class="text-white">${escapeHtml(d.ip || 'N/A')}</span></div>
+                    <div>Last Seen: <span class="text-white">${lastSeen}</span></div>
+                    ${d.systemInfo ? `
+                        <div>CPU: <span class="${getTempColor(d.systemInfo.cpuTemp)}">${d.systemInfo.cpuTemp || 'N/A'}°C</span></div>
+                        <div>Memory: <span class="text-white">${d.systemInfo.memoryUsage || 'N/A'}%</span></div>
+                    ` : ''}
+                </div>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="sendDisplayCommand('${d.id}', 'reboot')" class="text-xs bg-yellow-600 hover:bg-yellow-700 text-white px-2 py-1 rounded">
+                        Reboot
+                    </button>
+                    <button onclick="sendDisplayCommand('${d.id}', 'refresh')" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded">
+                        Refresh
+                    </button>
+                    <button onclick="toggleDisplayDebug('${d.id}', ${!d.debugMode})" class="text-xs ${d.debugMode ? 'bg-purple-600' : 'bg-gray-600'} hover:opacity-80 text-white px-2 py-1 rounded">
+                        Debug ${d.debugMode ? 'On' : 'Off'}
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Get display type badge color
+ */
+function getTypeColor(type) {
+    switch (type) {
+        case 'match': return 'bg-red-600';
+        case 'bracket': return 'bg-blue-600';
+        case 'flyer': return 'bg-purple-600';
+        default: return 'bg-gray-600';
+    }
+}
+
+/**
+ * Get temperature color
+ */
+function getTempColor(temp) {
+    if (!temp) return 'text-white';
+    if (temp >= 70) return 'text-red-400';
+    if (temp >= 60) return 'text-yellow-400';
+    return 'text-green-400';
+}
+
+/**
+ * Send command to a single display
+ */
+async function sendDisplayCommand(displayId, command) {
+    try {
+        const response = await csrfFetch(`/api/admin/displays/${displayId}/command`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(`${command} command sent to display`, 'success');
+            loadCommandHistory();
+        } else {
+            showAlert(data.error || 'Failed to send command', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to send display command', error);
+        showAlert('Failed to send command', 'error');
+    }
+}
+
+/**
+ * Toggle display debug mode
+ */
+async function toggleDisplayDebug(displayId, enabled) {
+    try {
+        const response = await csrfFetch(`/api/admin/displays/${displayId}/debug`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(`Debug mode ${enabled ? 'enabled' : 'disabled'}`, 'success');
+            loadFleetDisplays();
+        } else {
+            showAlert(data.error || 'Failed to toggle debug', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to toggle debug mode', error);
+        showAlert('Failed to toggle debug mode', 'error');
+    }
+}
+
+/**
+ * Reboot all displays
+ */
+async function rebootAllDisplays() {
+    if (!confirm('Reboot ALL displays? This will affect all tenants.')) return;
+
+    try {
+        const response = await csrfFetch('/api/admin/displays/reboot-all', {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert(`Reboot queued for ${data.count || 0} displays`, 'success');
+            loadCommandHistory();
+        } else {
+            showAlert(data.error || 'Failed to reboot displays', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to reboot all displays', error);
+        showAlert('Failed to reboot displays', 'error');
+    }
+}
+
+/**
+ * Open broadcast modal
+ */
+function openBroadcastModal() {
+    const modal = document.getElementById('broadcastModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        document.getElementById('broadcastMessage').value = '';
+        document.getElementById('broadcastCharCount').textContent = '0';
+
+        // Setup character counter
+        const textarea = document.getElementById('broadcastMessage');
+        textarea.addEventListener('input', () => {
+            document.getElementById('broadcastCharCount').textContent = textarea.value.length;
+        });
+    }
+}
+
+/**
+ * Close broadcast modal
+ */
+function closeBroadcastModal() {
+    const modal = document.getElementById('broadcastModal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
+/**
+ * Send broadcast message to all displays
+ */
+async function sendBroadcastMessage() {
+    const message = document.getElementById('broadcastMessage')?.value?.trim();
+    const duration = parseInt(document.getElementById('broadcastDuration')?.value) || 10;
+    const toMatch = document.getElementById('broadcastToMatch')?.checked;
+    const toBracket = document.getElementById('broadcastToBracket')?.checked;
+
+    if (!message) {
+        showAlert('Please enter a message', 'error');
+        return;
+    }
+
+    try {
+        const response = await csrfFetch('/api/admin/displays/broadcast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, duration, targets: { match: toMatch, bracket: toBracket } })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showAlert('Broadcast sent successfully', 'success');
+            closeBroadcastModal();
+            loadCommandHistory();
+        } else {
+            showAlert(data.error || 'Failed to send broadcast', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to send broadcast', error);
+        showAlert('Failed to send broadcast', 'error');
+    }
+}
+
+/**
+ * Load command history
+ */
+async function loadCommandHistory() {
+    try {
+        const response = await csrfFetch('/api/admin/displays/commands?limit=20');
+        const data = await response.json();
+
+        const listEl = document.getElementById('commandHistoryList');
+        if (!listEl) return;
+
+        if (data.success && data.commands?.length > 0) {
+            listEl.innerHTML = data.commands.map(cmd => `
+                <div class="flex items-center justify-between py-2 border-b border-gray-600 last:border-0">
+                    <div>
+                        <span class="text-white">${escapeHtml(cmd.command)}</span>
+                        <span class="text-gray-400 text-sm ml-2">→ ${escapeHtml(cmd.display_id)}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs px-2 py-0.5 rounded ${cmd.status === 'executed' ? 'bg-green-600' : cmd.status === 'pending' ? 'bg-yellow-600' : 'bg-red-600'}">${cmd.status}</span>
+                        <div class="text-xs text-gray-400">${formatTimeAgo(cmd.issued_at)}</div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            listEl.innerHTML = '<div class="text-gray-400">No recent commands</div>';
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load command history', error);
+    }
+}
+
+/**
+ * Initialize Displays tab
+ */
+function initDisplaysTab() {
+    loadFleetDisplays();
+    loadCommandHistory();
+}
+
+// ============================================
+// STATISTICS TAB
+// ============================================
+
+let platformStatsData = null;
+
+/**
+ * Load platform statistics
+ */
+async function loadPlatformStats() {
+    const contentEl = document.getElementById('statisticsContent');
+    if (!contentEl) return;
+
+    // Show loading state
+    contentEl.innerHTML = `
+        <div class="flex justify-center items-center py-20">
+            <div class="text-gray-400">Loading platform statistics...</div>
+        </div>
+    `;
+
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading platform statistics');
+        const response = await csrfFetch('/api/admin/platform-stats');
+        const data = await response.json();
+
+        if (data.success) {
+            platformStatsData = data.stats;
+            renderPlatformStats(data.stats);
+        } else {
+            contentEl.innerHTML = `<div class="text-red-400 p-4">Failed to load statistics: ${data.error || 'Unknown error'}</div>`;
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load platform statistics', error);
+        contentEl.innerHTML = `<div class="text-red-400 p-4">Failed to load statistics</div>`;
+    }
+}
+
+/**
+ * Render platform statistics
+ */
+function renderPlatformStats(stats) {
+    const contentEl = document.getElementById('statisticsContent');
+    if (!contentEl) return;
+
+    const { users, tournaments, matches, players, games, displays, topPlayers } = stats;
+
+    contentEl.innerHTML = `
+        <!-- Main Stats Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-3xl font-bold text-white">${users.total}</div>
+                <div class="text-gray-400 text-sm">Total Users</div>
+                <div class="text-xs text-green-400 mt-1">+${users.newThisMonth} this month</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-3xl font-bold text-white">${tournaments.total}</div>
+                <div class="text-gray-400 text-sm">Total Tournaments</div>
+                <div class="text-xs text-blue-400 mt-1">${tournaments.completed} completed</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-3xl font-bold text-white">${matches.total}</div>
+                <div class="text-gray-400 text-sm">Total Matches</div>
+                <div class="text-xs text-purple-400 mt-1">${matches.completionRate}% completion</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-3xl font-bold text-white">${players.total}</div>
+                <div class="text-gray-400 text-sm">Total Players</div>
+                <div class="text-xs text-yellow-400 mt-1">${players.activeLastMonth} active last month</div>
+            </div>
+        </div>
+
+        <!-- Secondary Stats Row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <div class="text-2xl font-bold text-green-400">${users.active}</div>
+                <div class="text-gray-400 text-sm">Active Users</div>
+            </div>
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <div class="text-2xl font-bold text-yellow-400">${users.trial}</div>
+                <div class="text-gray-400 text-sm">Trial Users</div>
+            </div>
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <div class="text-2xl font-bold text-blue-400">${displays.online}/${displays.total}</div>
+                <div class="text-gray-400 text-sm">Displays Online</div>
+            </div>
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <div class="text-2xl font-bold text-purple-400">${games.total}</div>
+                <div class="text-gray-400 text-sm">Games Configured</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Tournament Stats -->
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <h3 class="text-lg font-semibold text-white mb-4">Tournament Overview</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400">Completion Rate</span>
+                        <div class="flex items-center gap-2">
+                            <div class="w-32 bg-gray-700 rounded-full h-2">
+                                <div class="bg-green-500 h-2 rounded-full" style="width: ${tournaments.completionRate}%"></div>
+                            </div>
+                            <span class="text-white">${tournaments.completionRate}%</span>
+                        </div>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Average Participants</span>
+                        <span class="text-white">${tournaments.averageParticipants}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Pending</span>
+                        <span class="text-gray-300">${tournaments.pending}</span>
+                    </div>
+                </div>
+
+                <h4 class="text-sm font-medium text-gray-300 mt-6 mb-3">By Format</h4>
+                <div class="space-y-2">
+                    ${renderFormatBar('Single Elim', tournaments.byFormat.single_elimination, tournaments.total)}
+                    ${renderFormatBar('Double Elim', tournaments.byFormat.double_elimination, tournaments.total)}
+                    ${renderFormatBar('Round Robin', tournaments.byFormat.round_robin, tournaments.total)}
+                    ${renderFormatBar('Swiss', tournaments.byFormat.swiss, tournaments.total)}
+                </div>
+            </div>
+
+            <!-- Top Players -->
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <h3 class="text-lg font-semibold text-white mb-4">Top Players by Elo</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-600">
+                                <th class="text-left py-2 text-gray-400">#</th>
+                                <th class="text-left py-2 text-gray-400">Player</th>
+                                <th class="text-left py-2 text-gray-400">Game</th>
+                                <th class="text-right py-2 text-gray-400">Elo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${topPlayers && topPlayers.length > 0 ? topPlayers.map((p, i) => `
+                                <tr class="border-b border-gray-700">
+                                    <td class="py-2 text-gray-400">${i + 1}</td>
+                                    <td class="py-2 font-medium text-white">${escapeHtml(p.name || p.display_name || 'Unknown')}</td>
+                                    <td class="py-2 text-gray-400">${escapeHtml(p.gameName || p.game_name || 'Unknown')}</td>
+                                    <td class="py-2 text-right text-yellow-400 font-mono">${p.elo || p.elo_rating || 0}</td>
+                                </tr>
+                            `).join('') : '<tr><td colspan="4" class="text-center py-4 text-gray-400">No player data available</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <!-- Popular Games -->
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <h3 class="text-lg font-semibold text-white mb-4">Most Popular Games</h3>
+                <div class="space-y-2">
+                    ${games.mostPopular.length > 0 ? games.mostPopular.map(g => `
+                        <div class="flex justify-between items-center py-2 border-b border-gray-600">
+                            <span class="text-white">${escapeHtml(g.name)}</span>
+                            <span class="text-gray-400">${g.tournamentCount} tournaments</span>
+                        </div>
+                    `).join('') : '<div class="text-gray-400">No games configured yet</div>'}
+                </div>
+            </div>
+
+            <!-- User Metrics -->
+            <div class="bg-gray-700/50 rounded-lg p-4">
+                <h3 class="text-lg font-semibold text-white mb-4">User Metrics</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">New This Week</span>
+                        <span class="text-green-400">+${users.newThisWeek}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">New This Month</span>
+                        <span class="text-green-400">+${users.newThisMonth}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Expired Subscriptions</span>
+                        <span class="text-red-400">${users.expired}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Display Distribution</span>
+                        <span class="text-gray-300">Match: ${displays.byType?.match || 0} | Bracket: ${displays.byType?.bracket || 0} | Flyer: ${displays.byType?.flyer || 0}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Helper to render format bar
+ */
+function renderFormatBar(label, count, total) {
+    const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
+    return `
+        <div class="flex items-center gap-3">
+            <span class="text-gray-400 w-28 text-sm">${label}</span>
+            <div class="flex-1 bg-gray-700 rounded-full h-2">
+                <div class="bg-blue-500 h-2 rounded-full" style="width: ${percentage}%"></div>
+            </div>
+            <span class="text-white text-sm w-12 text-right">${count}</span>
+        </div>
+    `;
+}
+
+// ============================================
+// LIVE FEED TAB
+// ============================================
+
+let liveFeedData = [];
+let liveFeedFilter = 'all';
+
+/**
+ * Load live activity feed
+ */
+async function loadLiveFeed() {
+    const feedContainer = document.getElementById('liveFeedList');
+    if (!feedContainer) return;
+
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading live feed');
+        const response = await csrfFetch('/api/admin/live-feed');
+        const data = await response.json();
+
+        if (data.success) {
+            liveFeedData = data.feed;
+            renderLiveFeed();
+        } else {
+            feedContainer.innerHTML = `<div class="text-red-400 p-4">Failed to load feed: ${data.error}</div>`;
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load live feed', error);
+        feedContainer.innerHTML = `<div class="text-red-400 p-4">Failed to load activity feed</div>`;
+    }
+}
+
+/**
+ * Filter live feed by event type
+ */
+function filterLiveFeed(eventType) {
+    liveFeedFilter = eventType;
+
+    // Update filter button styles
+    document.querySelectorAll('#liveFeedFilter option').forEach(opt => {
+        opt.selected = opt.value === eventType;
+    });
+
+    renderLiveFeed();
+}
+
+/**
+ * Render the live feed
+ */
+function renderLiveFeed() {
+    const feedContainer = document.getElementById('liveFeedList');
+    if (!feedContainer) return;
+
+    // Apply filter
+    let filteredFeed = liveFeedData;
+    if (liveFeedFilter !== 'all') {
+        filteredFeed = liveFeedData.filter(item => item.type.startsWith(liveFeedFilter));
+    }
+
+    if (filteredFeed.length === 0) {
+        feedContainer.innerHTML = `<div class="text-gray-400 text-center py-8">No activity to display</div>`;
+        return;
+    }
+
+    feedContainer.innerHTML = filteredFeed.map(item => `
+        <div class="flex items-start gap-3 py-3 border-b border-gray-700 hover:bg-gray-800 px-2 rounded">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center ${getActivityIconClass(item.type)}">
+                ${getActivityIcon(item.type)}
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="text-white text-sm">${formatActivityMessage(item)}</div>
+                <div class="text-gray-500 text-xs mt-1">
+                    ${item.user ? `<span class="text-gray-400">${escapeHtml(item.user)}</span> · ` : ''}
+                    ${formatTimeAgo(item.timestamp)}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * Get icon class for activity type
+ */
+function getActivityIconClass(type) {
+    if (type.startsWith('tournament')) return 'bg-blue-900 text-blue-400';
+    if (type.startsWith('match')) return 'bg-green-900 text-green-400';
+    if (type.startsWith('user')) return 'bg-purple-900 text-purple-400';
+    if (type.startsWith('participant')) return 'bg-yellow-900 text-yellow-400';
+    if (type.startsWith('display')) return 'bg-cyan-900 text-cyan-400';
+    return 'bg-gray-700 text-gray-400';
+}
+
+/**
+ * Get icon SVG for activity type
+ */
+function getActivityIcon(type) {
+    if (type.startsWith('tournament')) {
+        return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+    }
+    if (type.startsWith('match')) {
+        return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>';
+    }
+    if (type.startsWith('user')) {
+        return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>';
+    }
+    if (type.startsWith('participant')) {
+        return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>';
+    }
+    if (type.startsWith('display')) {
+        return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>';
+    }
+    return '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+}
+
+/**
+ * Format activity message
+ */
+function formatActivityMessage(item) {
+    switch (item.type) {
+        case 'tournament_created':
+            return `Tournament <strong>${escapeHtml(item.tournament || 'Unknown')}</strong> was created`;
+        case 'tournament_started':
+            return `Tournament <strong>${escapeHtml(item.tournament || 'Unknown')}</strong> has started`;
+        case 'tournament_completed':
+            return `Tournament <strong>${escapeHtml(item.tournament || 'Unknown')}</strong> was completed`;
+        case 'match_scored':
+            return `Match scored in <strong>${escapeHtml(item.tournament || 'Unknown')}</strong>${item.winner ? ` - Winner: ${escapeHtml(item.winner)}` : ''}`;
+        case 'user_login':
+            return `User logged in${item.ip ? ` from ${item.ip.replace(/\.\d+$/, '.x')}` : ''}`;
+        case 'user_created':
+            return `New user registered`;
+        case 'participant_registered':
+            return `<strong>${escapeHtml(item.player || 'A player')}</strong> registered for ${escapeHtml(item.tournament || 'a tournament')}`;
+        case 'display_connected':
+            return `Display <strong>${escapeHtml(item.displayId || 'Unknown')}</strong> connected (${item.displayType || 'unknown'})`;
+        case 'display_disconnected':
+            return `Display <strong>${escapeHtml(item.displayId || 'Unknown')}</strong> disconnected`;
+        default:
+            return item.details || item.type.replace(/_/g, ' ');
+    }
+}
+
+// ============================================
+// QUERY PLAYGROUND TAB
+// ============================================
+
+let queryResults = null;
+
+/**
+ * Execute SQL query
+ */
+async function executeQuery() {
+    const database = document.getElementById('queryDatabase').value;
+    const query = document.getElementById('queryInput').value.trim();
+    const resultsDiv = document.getElementById('queryResults');
+    const executeBtn = document.getElementById('executeQueryBtn');
+
+    if (!query) {
+        showAlert('Please enter a query', 'warning');
+        return;
+    }
+
+    // Show loading state
+    executeBtn.disabled = true;
+    executeBtn.textContent = 'Executing...';
+    resultsDiv.innerHTML = '<div class="text-gray-400 p-4">Executing query...</div>';
+
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Executing query', { database, query: query.substring(0, 50) });
+
+        const response = await csrfFetch('/api/admin/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ database, query })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            queryResults = data;
+            renderQueryResults(data);
+        } else {
+            resultsDiv.innerHTML = `
+                <div class="text-red-400 p-4">
+                    <strong>Error:</strong> ${escapeHtml(data.error)}
+                </div>
+            `;
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Query execution failed', error);
+        resultsDiv.innerHTML = `<div class="text-red-400 p-4">Query execution failed</div>`;
+    } finally {
+        executeBtn.disabled = false;
+        executeBtn.textContent = 'Execute';
+    }
+}
+
+/**
+ * Render query results
+ */
+function renderQueryResults(data) {
+    const resultsDiv = document.getElementById('queryResults');
+
+    if (!data.results || data.results.length === 0) {
+        resultsDiv.innerHTML = `
+            <div class="p-4">
+                <div class="text-gray-400 mb-2">Query executed successfully</div>
+                <div class="text-gray-500 text-sm">0 rows returned (${data.executionTime}ms)</div>
+            </div>
+        `;
+        return;
+    }
+
+    const columns = data.columns || Object.keys(data.results[0]);
+
+    resultsDiv.innerHTML = `
+        <div class="p-2 bg-gray-700 flex justify-between items-center text-sm">
+            <span class="text-gray-300">${data.rowCount} rows (${data.executionTime}ms)</span>
+            <button onclick="exportQueryResults()" class="text-blue-400 hover:text-blue-300">
+                Export CSV
+            </button>
+        </div>
+        <div class="overflow-x-auto max-h-96 overflow-y-auto">
+            <table class="data-table w-full text-sm">
+                <thead class="sticky top-0 bg-gray-800">
+                    <tr>
+                        ${columns.map(col => `<th class="text-left whitespace-nowrap">${escapeHtml(col)}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.results.map(row => `
+                        <tr class="hover:bg-gray-700">
+                            ${columns.map(col => `
+                                <td class="whitespace-nowrap max-w-xs truncate" title="${escapeHtml(String(row[col] ?? ''))}">
+                                    ${formatCellValue(row[col])}
+                                </td>
+                            `).join('')}
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+/**
+ * Format cell value for display
+ */
+function formatCellValue(value) {
+    if (value === null || value === undefined) {
+        return '<span class="text-gray-500">NULL</span>';
+    }
+    if (typeof value === 'object') {
+        return `<span class="text-purple-400">${escapeHtml(JSON.stringify(value))}</span>`;
+    }
+    return escapeHtml(String(value));
+}
+
+/**
+ * Load preset query into textarea
+ */
+function loadPresetQuery(presetName) {
+    const presets = {
+        'top_players': 'SELECT p.display_name, pr.elo_rating, g.name as game\nFROM players p\nJOIN player_ratings pr ON p.id = pr.player_id\nJOIN games g ON pr.game_id = g.id\nORDER BY pr.elo_rating DESC\nLIMIT 10',
+        'tournament_stats': 'SELECT \n  state,\n  COUNT(*) as count,\n  AVG(participant_count) as avg_participants\nFROM tournaments\nGROUP BY state',
+        'match_duration': 'SELECT \n  t.name as tournament,\n  AVG((julianday(m.completed_at) - julianday(m.underway_at)) * 24 * 60) as avg_minutes\nFROM tcc_matches m\nJOIN tcc_tournaments t ON m.tournament_id = t.id\nWHERE m.state = \'complete\' AND m.underway_at IS NOT NULL\nGROUP BY t.id\nORDER BY avg_minutes DESC\nLIMIT 10',
+        'display_health': 'SELECT \n  hostname,\n  status,\n  current_view,\n  datetime(last_heartbeat/1000, \'unixepoch\') as last_seen\nFROM displays\nORDER BY last_heartbeat DESC',
+        'recent_activity': 'SELECT \n  action,\n  user_id,\n  details,\n  datetime(created_at) as timestamp\nFROM activity_log\nORDER BY created_at DESC\nLIMIT 50'
+    };
+
+    const query = presets[presetName];
+    if (query) {
+        document.getElementById('queryInput').value = query;
+
+        // Set appropriate database
+        if (presetName === 'top_players' || presetName === 'tournament_stats') {
+            document.getElementById('queryDatabase').value = 'players';
+        } else if (presetName === 'match_duration') {
+            document.getElementById('queryDatabase').value = 'tournaments';
+        } else if (presetName === 'display_health' || presetName === 'recent_activity') {
+            document.getElementById('queryDatabase').value = 'system';
+        }
+    }
+}
+
+/**
+ * Export query results to CSV
+ */
+function exportQueryResults() {
+    if (!queryResults || !queryResults.results || queryResults.results.length === 0) {
+        showAlert('No results to export', 'warning');
+        return;
+    }
+
+    const columns = queryResults.columns || Object.keys(queryResults.results[0]);
+
+    // Build CSV
+    let csv = columns.join(',') + '\n';
+    queryResults.results.forEach(row => {
+        csv += columns.map(col => {
+            const value = row[col];
+            if (value === null || value === undefined) return '';
+            if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
+                return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
+        }).join(',') + '\n';
+    });
+
+    // Download
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `query_results_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showAlert('Results exported to CSV', 'success');
+}
+
+/**
+ * Load table schemas
+ */
+async function loadTableSchemas() {
+    const modal = document.getElementById('schemaModal');
+    const content = document.getElementById('schemaContent');
+
+    if (!modal || !content) return;
+
+    content.innerHTML = '<div class="text-gray-400">Loading schemas...</div>';
+    modal.classList.remove('hidden');
+
+    try {
+        const response = await csrfFetch('/api/admin/table-schemas');
+        const data = await response.json();
+
+        if (data.success) {
+            content.innerHTML = Object.entries(data.schemas).map(([db, tables]) => `
+                <div class="mb-6">
+                    <h3 class="text-lg font-semibold text-white mb-3">${escapeHtml(db)}</h3>
+                    <div class="space-y-2">
+                        ${tables.map(table => `
+                            <div class="bg-gray-700 rounded p-3">
+                                <div class="font-mono text-blue-400 mb-2">${escapeHtml(table.name)}</div>
+                                <div class="text-xs text-gray-400 space-y-1">
+                                    ${table.columns.map(col => `
+                                        <div><span class="text-gray-300">${escapeHtml(col.name)}</span> <span class="text-gray-500">${escapeHtml(col.type)}</span></div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            content.innerHTML = `<div class="text-red-400">Failed to load schemas: ${data.error}</div>`;
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load schemas', error);
+        content.innerHTML = `<div class="text-red-400">Failed to load schemas</div>`;
+    }
+}
+
+/**
+ * Close schema modal
+ */
+function closeSchemaModal() {
+    const modal = document.getElementById('schemaModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// ============================================
+// USER PROFILE DEEP DIVE
+// ============================================
+
+/**
+ * View comprehensive user profile
+ */
+async function viewUserProfile(userId) {
+    try {
+        FrontendDebug.api('PlatformAdmin', 'Loading user profile', { userId });
+
+        const response = await csrfFetch(`/api/admin/users/${userId}/profile`);
+        const data = await response.json();
+
+        if (data.success) {
+            renderUserProfileModal(data.user);
+        } else {
+            showAlert(data.error || 'Failed to load user profile', 'error');
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to load user profile', error);
+        showAlert('Failed to load user profile', 'error');
+    }
+}
+
+/**
+ * Render user profile modal
+ */
+function renderUserProfileModal(user) {
+    const { stats, recentTournaments, storage, activitySummary } = user;
+
+    document.getElementById('userDetailContent').innerHTML = `
+        <div class="space-y-6">
+            <!-- Header -->
+            <div class="flex items-center gap-4 pb-4 border-b border-gray-700">
+                <div class="w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center text-2xl text-white font-bold">
+                    ${(user.username || 'U').charAt(0).toUpperCase()}
+                </div>
+                <div>
+                    <h2 class="text-xl font-bold text-white">${escapeHtml(user.username)}</h2>
+                    <div class="flex gap-2 mt-1">
+                        <span class="badge ${user.is_active ? 'badge-green' : 'badge-red'}">${user.is_active ? 'Active' : 'Disabled'}</span>
+                        <span class="badge ${getSubscriptionBadgeClass(user.subscription_status)}">${user.subscription_status || 'none'}</span>
+                        ${user.isSuperadmin ? '<span class="badge badge-purple">Super</span>' : ''}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-4 gap-3">
+                <div class="bg-gray-700 rounded p-3 text-center">
+                    <div class="text-2xl font-bold text-blue-400">${stats.tournamentsCreated}</div>
+                    <div class="text-xs text-gray-400">Tournaments</div>
+                </div>
+                <div class="bg-gray-700 rounded p-3 text-center">
+                    <div class="text-2xl font-bold text-green-400">${stats.tournamentsCompleted}</div>
+                    <div class="text-xs text-gray-400">Completed</div>
+                </div>
+                <div class="bg-gray-700 rounded p-3 text-center">
+                    <div class="text-2xl font-bold text-purple-400">${stats.totalParticipants}</div>
+                    <div class="text-xs text-gray-400">Participants</div>
+                </div>
+                <div class="bg-gray-700 rounded p-3 text-center">
+                    <div class="text-2xl font-bold text-yellow-400">${stats.totalMatches}</div>
+                    <div class="text-xs text-gray-400">Matches</div>
+                </div>
+            </div>
+
+            <!-- Additional Stats -->
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <h4 class="text-sm font-medium text-gray-300 mb-2">Resources</h4>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Games Configured</span>
+                            <span class="text-white">${stats.gamesConfigured}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Flyers Uploaded</span>
+                            <span class="text-white">${stats.flyersUploaded}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Sponsors</span>
+                            <span class="text-white">${stats.sponsorsConfigured}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Displays</span>
+                            <span class="text-white">${stats.displaysRegistered}</span>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="text-sm font-medium text-gray-300 mb-2">Activity</h4>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Last Week</span>
+                            <span class="text-white">${activitySummary.lastWeek} actions</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Last Month</span>
+                            <span class="text-white">${activitySummary.lastMonth} actions</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Most Active</span>
+                            <span class="text-white">${activitySummary.mostActiveDay || 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storage -->
+            <div>
+                <h4 class="text-sm font-medium text-gray-300 mb-2">Storage Usage</h4>
+                <div class="bg-gray-700 rounded-full h-3 overflow-hidden">
+                    <div class="bg-blue-500 h-full" style="width: ${Math.min(100, (storage.flyersSize / 52428800) * 100)}%"></div>
+                </div>
+                <div class="text-xs text-gray-400 mt-1">
+                    ${formatFileSize(storage.flyersSize)} used (${storage.flyerCount} files)
+                </div>
+            </div>
+
+            <!-- Recent Tournaments -->
+            <div>
+                <h4 class="text-sm font-medium text-gray-300 mb-2">Recent Tournaments</h4>
+                ${recentTournaments.length > 0 ? `
+                    <div class="space-y-2">
+                        ${recentTournaments.slice(0, 5).map(t => `
+                            <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                                <div>
+                                    <span class="text-white">${escapeHtml(t.name)}</span>
+                                    <span class="badge ${t.state === 'complete' ? 'badge-green' : t.state === 'underway' ? 'badge-yellow' : 'badge-gray'} ml-2">${t.state}</span>
+                                </div>
+                                <span class="text-gray-400 text-sm">${t.participantCount} players</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : '<div class="text-gray-400">No tournaments yet</div>'}
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="flex gap-2 pt-4 border-t border-gray-700">
+                ${!user.isSuperadmin ? `
+                    <button onclick="showImpersonateModal(${user.id}, '${escapeHtml(user.username)}')" class="btn btn-yellow text-sm">
+                        Impersonate
+                    </button>
+                    <button onclick="showSubscriptionModal(${user.id})" class="btn btn-purple text-sm">
+                        Manage Subscription
+                    </button>
+                ` : ''}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('userDetailModal').classList.remove('hidden');
 }

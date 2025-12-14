@@ -1053,6 +1053,80 @@ socket.on('matches:update', (data) => {
 });
 ```
 
+--------------------------------------------------------------------------------
+2025-12-11: Verbose Debugging Infrastructure
+--------------------------------------------------------------------------------
+STATUS: COMPLETED
+
+Comprehensive verbose debugging throughout the entire TCC-Custom platform.
+
+BACKEND DEBUG LOGGER (services/debug-logger.js):
+- Centralized logging utility with consistent format
+- DEBUG_MODE environment variable toggle
+- log(service, action, data) - General logging (green)
+- logError(service, action, error, context) - Error logging (always logged)
+
+LOG FORMAT:
+```
+[ISO_TIMESTAMP] [SERVICE:ACTION] { context data }
+[2025-12-11T10:30:45.123Z] [tournament-db:create] { name: "Weekly", format: "double_elimination" }
+```
+
+BACKEND SERVICE PREFIXES:
+| Service | Prefix |
+|---------|--------|
+| Tournament DB | tournament-db |
+| Match DB | match-db |
+| Participant DB | participant-db |
+| Station DB | station-db |
+| Bracket Engine | bracket-engine |
+| Match Polling | match-polling |
+| HTTP Requests | http |
+| WebSocket | websocket |
+| Match Display | match-display |
+| Bracket Display | bracket-display |
+| Flyer Display | flyer-display |
+| Signup PWA | signup |
+
+FRONTEND DEBUG UTILITY (FrontendDebug in utils.js):
+- IIFE pattern with color-coded console output
+- localStorage 'debug_mode' toggle or ?debug=true URL parameter
+- Methods: log (green), warn (orange), error (red), api (blue), ws (purple), action (cyan)
+
+FRONTEND SERVICE PREFIXES:
+Dashboard, Tournament, Matches, Participants, Displays, Flyers, Sponsors,
+Analytics, Settings, CommandCenter, Utils
+
+REQUEST LOGGING MIDDLEWARE (server.js):
+- Logs all HTTP requests when DEBUG_MODE=true
+- Includes request ID, method, path, query, body
+- Response logging with status and duration
+
+FILES MODIFIED:
+- admin-dashboard/services/debug-logger.js (NEW)
+- admin-dashboard/server.js (middleware, WebSocket logging)
+- admin-dashboard/services/tournament-db.js
+- admin-dashboard/services/match-db.js
+- admin-dashboard/services/participant-db.js
+- admin-dashboard/services/station-db.js
+- admin-dashboard/services/bracket-engine/*.js (all 5 files)
+- admin-dashboard/services/match-polling.js
+- admin-dashboard/routes/*.js (all route files)
+- admin-dashboard/public/js/utils.js (FrontendDebug)
+- admin-dashboard/public/js/*.js (all 10 frontend files)
+- MagicMirror-match/modules/MMM-TournamentNowPlaying/*.js
+- MagicMirror-bracket/modules/MMM-BracketView/*.js
+- MagicMirror-flyer/modules/MMM-FlyerView/*.js
+- tournament-signup/server.js
+
+DOCUMENTATION UPDATED:
+- CLAUDE.md (main project)
+- admin-dashboard/CLAUDE.md
+- MagicMirror-match/CLAUDE.md
+- MagicMirror-bracket/CLAUDE.md
+- MagicMirror-flyer/CLAUDE.md
+- tournament-signup/CLAUDE.md
+
 ================================================================================
 CHALLONGE API USAGE
 ================================================================================
@@ -1110,6 +1184,351 @@ Bracket Display: http://localhost:8081 (MagicMirror-bracket)
 Flyer Display: http://localhost:8082 (MagicMirror-flyer)
 
 GitHub Repository: https://github.com/rick0490/tournament-control-center (private)
+
+================================================================================
+2025-12-07 to 2025-12-13: TCC-CUSTOM FEATURE COMPLETION
+================================================================================
+
+Major feature completion sprint for the TCC-Custom standalone system.
+
+--------------------------------------------------------------------------------
+2025-12-07: Command Center & Stream Deck WebSocket
+--------------------------------------------------------------------------------
+
+COMMAND CENTER VIEW (#1):
+- 4-quadrant layout (Current Matches, Match Queue, System Status, Quick Actions)
+- Real-time WebSocket updates with polling fallback
+- Keyboard shortcuts (1-5, W, L, S, Enter, Escape, R, T, ?)
+- Score modal with quick winners, custom scores, DQ options
+- Ticker modal with presets and custom input
+- System status (display modules, API rate limit, progress bar)
+- Mobile responsive (single column on tablet/phone)
+
+KEYBOARD SHORTCUTS (#2):
+- Number keys 1-5 = Select match 1-5 in list
+- W key = Mark player 1 as winner (2-0)
+- L key = Mark player 2 as winner (0-2)
+- S key = Start selected match (mark underway)
+- Enter = Open score modal for selected match
+- Escape = Cancel/close modal / Deselect match
+- R = Refresh data
+- T = Open ticker modal
+- ? = Show keyboard shortcuts help
+
+STREAM DECK WEBSOCKET REAL-TIME UPDATES (#16):
+- Socket.IO WebSocket connection via python-socketio library
+- Instant match updates (<100ms vs 2-5 seconds polling)
+- Connection status indicator on key 11 (WS=green, POLL=yellow, HTTP=purple)
+- Automatic reconnect with exponential backoff
+- HTTP polling fallback when WebSocket disconnects
+- Configuration: websocket_enabled, reconnect_delay, poll_fallback_interval
+
+Files: stream-deck-controller/websocket_client.py (NEW),
+       stream-deck-controller/api_client.py,
+       stream-deck-controller/controller.py,
+       stream-deck-controller/config.json,
+       stream-deck-controller/requirements.txt
+
+--------------------------------------------------------------------------------
+2025-12-08: CDN Cache-Busting for Displays (#26)
+--------------------------------------------------------------------------------
+
+PROBLEM: MagicMirror static files (JS/CSS) were being cached by Cloudflare
+and browser, causing ticker messages and timers to fail silently after
+deployments.
+
+SOLUTION:
+- Server adds no-cache headers to all responses and static files
+- All JS/CSS URLs include `?v=timestamp` cache-buster
+- Timestamp regenerates on service restart
+- Frontend loader uses `window.mmCacheBuster` for dynamic module loading
+
+Files: MagicMirror-match/js/server.js,
+       MagicMirror-match/js/server_functions.js,
+       MagicMirror-match/js/loader.js
+
+--------------------------------------------------------------------------------
+2025-12-09: Major Feature Sprint (15+ Features)
+--------------------------------------------------------------------------------
+
+MATCH QUEUE AUTO-ADVANCE (#4):
+- When match completes, automatically highlight next match
+- Visual "NEXT UP" floating indicator with pulse animation
+- Smart queue ordering by Challonge suggested_play_order
+- One-click "Start Next Match" button on indicator
+- Auto-scroll to highlighted match in queue
+- Toggle auto-advance via checkbox
+- WebSocket metadata includes nextMatchId, completedCount, progressPercent
+
+Files: server.js (findNextSuggestedMatch, fetchAndPushMatches metadata),
+       command-center.html (NEXT UP indicator),
+       command-center.js, system-settings.json
+
+BATCH SCORE ENTRY (#7):
+- "Quick Score" button in matches page header (Ctrl+Shift+S shortcut)
+- Modal showing all open/underway matches in table format
+- Quick winner buttons (P1/P2) per row for 2-0 scores
+- Tab through score inputs, Enter to set winner by comparison
+- Ctrl+Enter to submit all valid entries
+- Per-row validation with visual feedback (green check, red x)
+- Partial success handling (shows success/failure per row)
+
+Files: server.js (POST /api/matches/:tournamentId/batch-scores),
+       matches.html (batch score modal),
+       matches.js (~300 lines of batch scoring)
+
+DQ/FORFEIT AUTOMATION (#8):
+- Server-side DQ timer state management (survives page refreshes)
+- Enhanced DQ timer modal with match dropdown and player selection
+- When timer expires: Auto-DQ mode or Notify mode
+- Warning WebSocket event at 30s remaining
+- Active timers panel showing countdown with cancel option
+- Configurable: autoDqEnabled, autoDqAction, defaultDuration, warningThreshold
+
+API: POST /api/timer/dq, GET /api/timer/dq/active, DELETE /api/timer/dq/:key
+
+Files: server.js (activeDQTimers Map, auto-DQ logic),
+       command-center.html/js, system-settings.json
+
+PUSH NOTIFICATIONS (#12):
+- Browser push notifications via Web Push API with VAPID authentication
+- Push subscription management (enable/disable per browser)
+- Per-user notification preferences (6 notification types)
+- Notification types: Match completed, Tournament started, DQ timer expired,
+  New participant signup, Display disconnected, Check-in deadline
+- Service worker with notification click routing
+- Action buttons per notification type
+
+API: GET /api/notifications/vapid-public-key, POST /api/notifications/subscribe,
+     DELETE /api/notifications/unsubscribe, GET/PUT /api/notifications/preferences,
+     POST /api/notifications/test
+
+Files: server.js (sendPushNotification, 6 endpoints),
+       analytics-db.js (push_subscriptions, notification_preferences),
+       sw.js, settings.js
+
+SPONSOR OVERLAY MODULE CONSOLIDATION (#26b):
+- Created shared module at /root/tournament-control-center/MM-SponsorOverlay/
+- Symlinked module into both MagicMirror instances
+- Made positioning config-driven via module config options
+- Config: apiPort, cornerOffset, bannerOffset, bottomCornerOffset
+
+SPONSOR OVERLAY UI IMPROVEMENTS (#26c):
+- Real-time X/Y offset sliders with number inputs (-500 to +500px range)
+- Per-sponsor Hide button
+- Position filter tabs moved inside gallery section
+- Consistent slider track styling
+- Banner transformOrigin fix
+
+INTENT RESTART DETECTION FIX (#27):
+- display-manager.sh writes epoch timestamp to intent file
+- kiosk.sh validates timestamp is within 10s grace window
+- Stale intent files are ignored and treated as crashes
+
+CHROMIUM HANG DETECTION (#28):
+- Background watchdog checks Chromium responsiveness every 30 seconds
+- Uses xdotool to verify window exists and responds
+- Force-kills Chromium after 90 seconds unresponsive
+- Dependencies: xdotool package
+
+Files: admin-dashboard/public/setup-pi.sh (kiosk.sh)
+
+STORAGE DETECTION FIX (#28b):
+- Moved storage detection from function to direct execution
+- Pi 5 with NVMe now gets high-performance settings
+
+PACKAGE AVAILABILITY FIX (#28c):
+- Replaced libraspberrypi-bin with raspi-utils-core (modern replacement)
+
+HEREDOC ESCAPING FIX (#28d):
+- Escaped runtime variables with \$ in heredoc sections
+- Fixed "exponent less than 0" errors
+
+WIFI NETWORK CONFIGURATION (#28e):
+- Added 3 pre-configured WiFi networks with priorities
+- Automatic connection to highest-priority available network
+
+CONFIGURABLE DISPLAY SCALE FACTOR (#35):
+- Real-time scale changes via Chrome DevTools Protocol (CDP)
+- Auto TV detection via xrandr (reads physical dimensions from HDMI EDID)
+- Suggested scale based on diagonal
+- CDP status badge in admin UI
+- Collapsible "Advanced" section in display card UI
+
+PARTICIPANT LOOKUP (#43):
+- "Already registered? Check your status" toggle on signup page
+- Case-insensitive partial match search
+- Shows registration confirmation or signup prompt
+
+Files: tournament-signup/public/index.html,
+       tournament-signup/server.js (GET /api/participants/lookup)
+
+DARK MODE TOGGLE - SIGNUP APP (#45):
+- Theme toggle button on all signup pages
+- System preference detection via prefers-color-scheme
+- localStorage persistence across pages
+- CSS custom properties for all colors
+
+Files: tournament-signup/public/index.html, rules.html, confirmation.html
+
+TOURNAMENT TEMPLATES LIBRARY (#48):
+- SQLite table for template storage
+- "Load from Template" dropdown in tournament wizard
+- "Save as Template" button in wizard completion
+- Template management in Settings page
+
+API: GET/POST/PUT/DELETE /api/templates
+
+Files: analytics-db.js, server.js (6 endpoints),
+       tournament.html/js, settings.html/js
+
+AI-POWERED TOURNAMENT SEEDING (P2-6):
+- Claude Sonnet model analyzes player stats for optimal seeding
+- Comprehensive player data: Elo, win/loss, recent placements, matchups
+- Locked seed positions (AI optimizes around locks)
+- SQLite caching with participant hash validation
+- Bracket balance display (top/bottom half Elo)
+
+API: GET /api/analytics/ai-seeding/status,
+     GET /api/analytics/ai-seeding/:tournamentId,
+     POST /api/analytics/ai-seeding/:tournamentId/lock,
+     POST /api/analytics/ai-seeding/:tournamentId/apply
+
+Files: services/ai-seeding.js (~740 lines),
+       analytics-db.js (ai_seeding_cache table),
+       analytics.html/js
+
+TOURNAMENT NARRATIVE GENERATOR (AI-1):
+- AI-powered tournament recap narratives for archived tournaments
+- Three output formats: Social (280 chars), Discord (2-3 paragraphs), Full Report
+- Storyline detection: upsets, close matches, reverse sweeps
+- "Generate Recap" button on each archived tournament card
+- SQLite caching with hash-based invalidation
+
+API: GET /api/analytics/ai/narrative/status,
+     GET /api/analytics/ai/narrative/:tournamentId?format=discord,
+     POST /api/analytics/ai/narrative/:tournamentId/regenerate
+
+Files: services/tournament-narrator.js,
+       analytics-db.js (tournament_narratives table),
+       analytics.html/js
+
+--------------------------------------------------------------------------------
+2025-12-10: Tournament Day Automation Features
+--------------------------------------------------------------------------------
+
+TOURNAMENT DAY CHECKLIST (#5):
+- 7-item automated checklist when pending tournament selected:
+  [✓] Display Modules, Pi Displays, Tournament Deployed, Participants,
+      Flyer Set, Stations Configured, Challonge API
+- Color-coded status indicators (success/warning/error)
+- Refresh button to re-run all checks
+- Summary shows ready count vs total
+
+Files: tournament.html, style.css, tournament.js
+
+AUDIO ANNOUNCEMENTS VIA PI SPEAKERS (#3):
+- Text-to-speech via Web Speech API on Pi display browser
+- Preset quick announcements: "Report In", "5 Min Warning", "Finals"
+- Custom announcement text with configurable speed (Slow/Normal/Fast)
+- WebSocket broadcast + HTTP fallback
+
+API: POST /api/audio/announce {text, rate, volume}
+
+Files: routes/api.js, dashboard.js,
+       MagicMirror-match/modules/MMM-TournamentNowPlaying/*.js
+
+SCHEDULED TICKER MESSAGES (#10):
+- Schedule ticker messages with time triggers
+- One-time or recurring messages (daily/weekly)
+- Enable/disable individual scheduled messages
+- JSON file persistence
+- 30-second check interval for due messages
+
+API: GET/POST/PUT/DELETE /api/ticker/schedule
+
+Files: services/ticker-scheduler.js (NEW),
+       routes/api.js, server.js, index.html, dashboard.js
+
+AUTOMATED SPONSOR ROTATION (#11):
+- Time-based carousel rotation (10-300 second interval)
+- Sequential or random rotation order
+- Configurable fade transition duration
+- Auto-starts on server boot if enabled
+- Per-position rotation
+
+Files: services/sponsor.js,
+       sponsors.html/js, MM-SponsorOverlay/*.js
+
+--------------------------------------------------------------------------------
+2025-12-13: Auto-Deploy to Displays (#51)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- When tournament started, auto-configure flyer displays
+- Game-matched flyer set automatically on start
+- Case-insensitive partial matching with game abbreviation support
+- Supports: SSBU, Melee, MKW, MK8DX, SF6, Tekken 8, GGST, MK1, GBVSR
+
+IMPLEMENTATION:
+- Added findMatchingFlyer() helper function in routes/tournaments.js
+- Modified POST /:tournamentId/start endpoint
+- Emits 'flyer:activated' WebSocket event to user's displays
+
+Files: admin-dashboard/routes/tournaments.js
+
+--------------------------------------------------------------------------------
+2025-12-14: Panic Mode / Emergency Controls (#6)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- "STOP" button (red) in Command Center activates emergency mode
+- "Resume" button (amber) resumes normal operation
+- Technical Difficulties overlay on all display services
+- Match rollback (undo last match result)
+- Reboot All Displays function
+- Keyboard shortcut 'P' to toggle emergency mode
+- Keyboard shortcut 'Z' to undo last match
+
+IMPLEMENTATION:
+- Emergency state tracked in server.js (emergencyModeState)
+- WebSocket events: emergency:activated, emergency:deactivated, emergency:status
+- Match history stored in memory Map for rollback
+- recordMatchChange() captures match state before scoring
+
+API ENDPOINTS:
+- GET /api/emergency/status - Get current emergency state
+- POST /api/emergency/activate - Trigger panic mode
+- POST /api/emergency/deactivate - Resume normal operation
+- GET /api/matches/:tournamentId/history - Get match change history
+- POST /api/matches/:tournamentId/undo - Undo last match result
+
+DISPLAY OVERLAYS:
+- Each display service has emergency-overlay HTML/CSS/JS
+- Technical Difficulties message with timestamp
+- Unique accent colors: match (red), bracket (blue), flyer (purple)
+- Activated via .active CSS class toggle
+
+COMMAND CENTER UI:
+- STOP button (red) shows when emergency inactive
+- Resume button (amber pulse) shows when emergency active
+- Emergency banner displayed in header when active
+- Undo button with 'Z' keyboard hint
+- Reboot TVs button in Quick Actions
+
+Files:
+- admin-dashboard/server.js (emergency routes, matchHistory)
+- admin-dashboard/routes/matches.js (recordMatchChange integration)
+- admin-dashboard/public/js/command-center.js (UI functions)
+- match-display/views/match-display.ejs (overlay HTML)
+- match-display/public/css/match-display.css (overlay CSS)
+- match-display/public/js/match-display.js (emergency handlers)
+- bracket-display/views/bracket-display.ejs (overlay HTML)
+- bracket-display/public/css/bracket-display.css (overlay CSS)
+- bracket-display/public/js/bracket-display.js (emergency handlers)
+- flyer-display/views/flyer-display.ejs (overlay HTML)
+- flyer-display/public/css/flyer-display.css (overlay CSS)
+- flyer-display/public/js/flyer-display.js (emergency handlers)
 
 ================================================================================
 END OF DOCUMENT

@@ -39,7 +39,6 @@ describe('Status API', () => {
 				id: 1,
 				username: TEST_ADMIN.username,
 				password: adminHash,
-				role: 'admin',
 				createdAt: new Date().toISOString()
 			}]
 		};

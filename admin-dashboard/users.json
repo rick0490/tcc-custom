@@ -3,9 +3,23 @@
     {
       "id": 1,
       "username": "ricardo",
-      "password": "$2b$10$AgqpF39QG3hEG6lHIwS8IeEbqaXZ.Beiqza6zirHJaz7pZeUmvsy2",
+      "password": "$2b$10$IAsDU2hHXZ0BV9Av0pTNA.J/CTOKA.joTziqg9HCO5m.PCxr2Sw0a",
       "role": "admin",
       "createdAt": "2025-11-21T22:09:00.113Z"
+    },
+    {
+      "id": 2,
+      "username": "test_user_alpha",
+      "password": "$2b$10$1fbgyMk5sEvVJes4alElo.cf.FbhOyOLhih/bijDT3WThZ6mWl6cy",
+      "role": "user",
+      "createdAt": "2025-12-11T22:52:25.195Z"
+    },
+    {
+      "id": 3,
+      "username": "test_user_beta",
+      "password": "$2b$10$1fbgyMk5sEvVJes4alElo.cf.FbhOyOLhih/bijDT3WThZ6mWl6cy",
+      "role": "user",
+      "createdAt": "2025-12-11T22:52:25.240Z"
     }
   ]
 }

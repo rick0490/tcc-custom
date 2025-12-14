@@ -192,7 +192,6 @@ function createSidebarHTML() {
 					</div>
 					<div class="nav-label flex-1 min-w-0">
 						<div id="navUsername" class="text-sm font-medium text-white truncate">Loading...</div>
-						<div id="navUserRole" class="text-xs text-gray-500 capitalize">user</div>
 					</div>
 				</div>
 				<!-- Theme Toggle Button -->
@@ -298,7 +297,6 @@ async function loadNavUserInfo() {
 			navCurrentUser = data.user;
 			navIsSuperadmin = data.isSuperadmin || false;
 			document.getElementById('navUsername').textContent = data.user.username;
-			document.getElementById('navUserRole').textContent = navIsSuperadmin ? 'superadmin' : data.user.role;
 
 			// Add superadmin-only nav items if user is superadmin
 			if (navIsSuperadmin) {

@@ -7,6 +7,9 @@
 const express = require('express');
 const router = express.Router();
 const PDFDocument = require('pdfkit');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:exports');
 
 // Module dependencies (injected via init)
 let analyticsDb = null;
@@ -91,7 +94,7 @@ router.get('/:tournamentId/standings/csv', async (req, res) => {
 			res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}_standings.csv"`);
 			res.send(csv);
 		} catch (error) {
-			console.error('Error exporting standings:', error);
+			logger.error('standings:csv', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -122,7 +125,7 @@ router.get('/:tournamentId/matches/csv', async (req, res) => {
 					identifier: m.match_identifier || '-',
 					player1: m.player1_name || 'BYE',
 					player2: m.player2_name || 'BYE',
-					score: m.scores_csv || `${m.player1_score || 0}-${m.player2_score || 0}`,
+					score: m.scores_csv || (m.player1_score != null ? `${m.player1_score}-${m.player2_score}` : 'W'),
 					winner: m.winner_name || '-'
 				}));
 			} else {
@@ -173,7 +176,7 @@ router.get('/:tournamentId/matches/csv', async (req, res) => {
 			res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}_matches.csv"`);
 			res.send(csv);
 		} catch (error) {
-			console.error('Error exporting matches:', error);
+			logger.error('matches:csv', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});
@@ -214,7 +217,7 @@ router.get('/:tournamentId/report/pdf', async (req, res) => {
 					round: m.round,
 					player1: m.player1_name,
 					player2: m.player2_name,
-					score: m.scores_csv || `${m.player1_score || 0}-${m.player2_score || 0}`,
+					score: m.scores_csv || (m.player1_score != null ? `${m.player1_score}-${m.player2_score}` : 'W'),
 					winner: m.winner_name
 				}));
 			} else {
@@ -531,7 +534,7 @@ router.get('/:tournamentId/report/pdf', async (req, res) => {
 
 			doc.end();
 		} catch (error) {
-			console.error('Error exporting PDF:', error);
+			logger.error('report:pdf', error, { tournamentId: req.params.tournamentId });
 			res.status(500).json({ success: false, error: error.message });
 		}
 	});

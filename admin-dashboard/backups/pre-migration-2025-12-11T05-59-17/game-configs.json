@@ -1,0 +1,237 @@
+{
+  "default": {
+    "name": "Tournament",
+    "shortName": "",
+    "rules": [
+      {
+        "title": "Check-In Required",
+        "description": "All participants must check in before the tournament starts. No-shows will be disqualified."
+      },
+      {
+        "title": "Match Format",
+        "description": "All matches are best-of-3 games unless otherwise specified. Grand Finals may be best-of-5."
+      },
+      {
+        "title": "Lateness",
+        "description": "Players have 5 minutes to report to their assigned station when their match is called. Late arrivals forfeit the first game."
+      },
+      {
+        "title": "Conduct",
+        "description": "Unsportsmanlike conduct, harassment, or cheating will result in immediate disqualification. Keep it friendly!"
+      },
+      {
+        "title": "Final Decision",
+        "description": "Tournament organizers have the final say on all rulings and disputes."
+      }
+    ],
+    "prizes": [
+      {
+        "place": 1,
+        "position": "1st Place",
+        "emoji": "",
+        "amount": 30,
+        "gradient": "linear-gradient(135deg, #f6d365 0%, #fda085 100%)",
+        "extras": []
+      },
+      {
+        "place": 2,
+        "position": "2nd Place",
+        "emoji": "",
+        "amount": 20,
+        "gradient": "linear-gradient(135deg, #c0c0c0 0%, #909090 100%)",
+        "extras": []
+      },
+      {
+        "place": 3,
+        "position": "3rd Place",
+        "emoji": "",
+        "amount": 10,
+        "gradient": "linear-gradient(135deg, #cd7f32 0%, #8b5a2b 100%)",
+        "extras": []
+      }
+    ],
+    "additionalInfo": [
+      "Tournament bracket will be posted before the event starts",
+      "Spectators are welcome and encouraged!",
+      "Questions? Ask a tournament organizer at the venue"
+    ]
+  },
+  "ssbu": {
+    "name": "Super Smash Bros. Ultimate",
+    "shortName": "SSBU",
+    "rules": [
+      {
+        "title": "Tournament Format",
+        "description": "Single Elimination bracket. 1 vs 1. 32-player cap."
+      },
+      {
+        "title": "Match Format",
+        "description": "All matches are best-of-3 games."
+      },
+      {
+        "title": "Stock & Time",
+        "description": "3 stocks, 7-minute timer. If time runs out, Sudden Death will determine the winner."
+      },
+      {
+        "title": "Stage Selection",
+        "description": "Battlefield and Omega stages only. No other stages are legal."
+      },
+      {
+        "title": "Items",
+        "description": "All items are OFF. No items will spawn during matches."
+      },
+      {
+        "title": "Character Selection",
+        "description": "All characters are legal. Players may switch characters between games."
+      },
+      {
+        "title": "Lateness",
+        "description": "Players have 2 minutes to report to their station when called. Late arrivals forfeit the match."
+      },
+      {
+        "title": "Conduct",
+        "description": "Unsportsmanlike conduct, harassment, or cheating will result in immediate disqualification. Keep it friendly!"
+      }
+    ],
+    "prizes": [
+      {
+        "place": 1,
+        "position": "1st Place",
+        "emoji": "",
+        "amount": 30,
+        "gradient": "linear-gradient(135deg, #f6d365 0%, #fda085 100%)",
+        "extras": []
+      },
+      {
+        "place": 2,
+        "position": "2nd Place",
+        "emoji": "",
+        "amount": 20,
+        "gradient": "linear-gradient(135deg, #c0c0c0 0%, #909090 100%)",
+        "extras": []
+      },
+      {
+        "place": 3,
+        "position": "3rd Place",
+        "emoji": "",
+        "amount": 10,
+        "gradient": "linear-gradient(135deg, #cd7f32 0%, #8b5a2b 100%)",
+        "extras": []
+      }
+    ],
+    "additionalInfo": [
+      "Entry is FREE - no entry fee required!",
+      "BYOC (Bring Your Own Controller) - loaner controllers available if needed",
+      "All DLC characters are legal (including newest releases)",
+      "Custom controls and button mapping are allowed"
+    ]
+  },
+  "mkw": {
+    "name": "Mario Kart World",
+    "shortName": "MKW",
+    "rules": [
+      {
+        "title": "Tournament Format",
+        "description": "Single Elimination bracket. 1 vs 1."
+      },
+      {
+        "title": "Match Format",
+        "description": "Each match is a 3-race Grand Prix. Player with most points at the end of 3 races advances."
+      },
+      {
+        "title": "Race Settings",
+        "description": "150cc, Normal Items, Normal COMs."
+      },
+      {
+        "title": "Track Selection",
+        "description": "Random track selection. No track bans."
+      },
+      {
+        "title": "Scoring",
+        "description": "Standard Mario Kart scoring applies. Points accumulated across all 3 races determine the winner."
+      }
+    ],
+    "prizes": [
+      {
+        "place": 1,
+        "position": "1st Place",
+        "emoji": "",
+        "amount": 30,
+        "gradient": "linear-gradient(135deg, #f6d365 0%, #fda085 100%)",
+        "extras": []
+      },
+      {
+        "place": 2,
+        "position": "2nd Place",
+        "emoji": "",
+        "amount": 20,
+        "gradient": "linear-gradient(135deg, #c0c0c0 0%, #909090 100%)",
+        "extras": []
+      },
+      {
+        "place": 3,
+        "position": "3rd Place",
+        "emoji": "",
+        "amount": 10,
+        "gradient": "linear-gradient(135deg, #cd7f32 0%, #8b5a2b 100%)",
+        "extras": []
+      }
+    ],
+    "additionalInfo": [
+      "Entry is FREE - no entry fee required!",
+      "BYOC (Bring Your Own Controller) - loaner controllers available if needed",
+      "All vehicles and characters are allowed",
+      "Unsportsmanlike conduct, harassment, or cheating will result in immediate disqualification. Keep it friendly!"
+    ]
+  },
+  "halo3": {
+    "name": "Halo 3",
+    "shortName": "H3",
+    "rules": [
+      {
+        "title": "Tournament Format",
+        "description": "Single Elimination bracket. 1 vs 1"
+      },
+      {
+        "title": "Match Format",
+        "description": "Best of 1 match. Score to win = 15"
+      },
+      {
+        "title": "Game Mode",
+        "description": "Slayer"
+      },
+      {
+        "title": "Map Selection",
+        "description": "Guardian, Heretic, The Pit, Narrows"
+      },
+      {
+        "title": "Equipment & Weapons",
+        "description": "Standard weapon spawns."
+      }
+    ],
+    "prizes": [
+      {
+        "place": 1,
+        "position": "1st Place",
+        "emoji": "",
+        "amount": 40,
+        "gradient": "linear-gradient(135deg, #f6d365 0%, #fda085 100%)",
+        "extras": []
+      },
+      {
+        "place": 2,
+        "position": "2nd Place",
+        "emoji": "",
+        "amount": 20,
+        "gradient": "linear-gradient(135deg, #c0c0c0 0%, #909090 100%)",
+        "extras": []
+      }
+    ],
+    "additionalInfo": [
+      "Entry is FREE - no entry fee required!",
+      "BYOC (Bring Your Own Controller) - Xbox controllers recommended",
+      "System Link using Xbox 360",
+      "Unsportsmanlike conduct, harassment, or cheating will result in immediate disqualification. Keep it friendly!"
+    ]
+  }
+}

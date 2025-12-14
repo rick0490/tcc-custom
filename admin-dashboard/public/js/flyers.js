@@ -3,12 +3,28 @@
 // State
 let flyers = [];
 let deleteTarget = null;
+let deleteTargetOwner = null;
 let statusRefreshInterval = null;
 let currentActiveFlyer = null;
+let wsConnected = false;
+let currentUserId = null;
+let isSuperadminView = false;
+
+/**
+ * Get the preview URL for a flyer based on its owner
+ */
+function getFlyerPreviewUrl(flyer) {
+	const userId = flyer.ownerId || currentUserId;
+	if (userId !== null && userId !== undefined) {
+		return `/api/flyers/preview/${userId}/${encodeURIComponent(flyer.filename || flyer)}`;
+	}
+	// Legacy fallback for flyers without owner
+	return `/api/flyers/preview/${encodeURIComponent(flyer.filename || flyer)}`;
+}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
-	console.log('Flyer Management page loaded');
+	FrontendDebug.log('Flyers', 'Initializing Flyer Management page');
 
 	// Initialize last updated timestamp
 	initLastUpdated('flyersLastUpdated', loadFlyers, { prefix: 'Updated', thresholds: { fresh: 30, stale: 120 } });
@@ -16,6 +32,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 	await loadFlyers();
 	await refreshStatus();
 	setupUploadForm();
+
+	// Initialize WebSocket for real-time updates
+	initWebSocket();
 
 	// Start polling with visibility awareness
 	startPolling();
@@ -25,9 +44,61 @@ document.addEventListener('DOMContentLoaded', async () => {
 	);
 });
 
-function startPolling() {
+// WebSocket initialization
+function initWebSocket() {
+	if (!WebSocketManager.init()) {
+		FrontendDebug.warn('Flyers', 'WebSocket not available, using polling');
+		return;
+	}
+
+	// Subscribe to flyer events
+	WebSocketManager.subscribeMany({
+		'flyers:update': handleFlyerUpdate,
+		[WS_EVENTS.FLYER_UPLOADED]: handleFlyerEvent,
+		[WS_EVENTS.FLYER_DELETED]: handleFlyerEvent,
+		[WS_EVENTS.FLYER_ACTIVATED]: handleFlyerActivated
+	});
+
+	WebSocketManager.onConnection('connect', () => {
+		FrontendDebug.ws('Flyers', 'WebSocket connected');
+		wsConnected = true;
+		// Reduce polling when connected
+		stopPolling();
+		startPolling(45000); // 45 second polling when WS connected
+	});
+
+	WebSocketManager.onConnection('disconnect', () => {
+		FrontendDebug.ws('Flyers', 'WebSocket disconnected');
+		wsConnected = false;
+		// Increase polling when disconnected
+		stopPolling();
+		startPolling(15000); // Back to 15 second polling
+	});
+}
+
+// Handle flyer update event
+function handleFlyerUpdate(data) {
+	FrontendDebug.ws('Flyers', 'Update received', { action: data.action });
+	loadFlyers();
+}
+
+// Handle specific flyer events
+function handleFlyerEvent(data) {
+	FrontendDebug.ws('Flyers', 'Event received', data);
+	loadFlyers();
+}
+
+// Handle flyer activation event
+function handleFlyerActivated(data) {
+	FrontendDebug.ws('Flyers', 'Flyer activated', { flyer: data.flyer });
+	currentActiveFlyer = data.flyer;
+	renderGallery();
+	refreshStatus();
+}
+
+function startPolling(interval = 15000) {
 	if (!statusRefreshInterval) {
-		statusRefreshInterval = setInterval(refreshStatus, 15000);
+		statusRefreshInterval = setInterval(refreshStatus, interval);
 	}
 }
 
@@ -55,13 +126,15 @@ async function loadFlyers() {
 		const data = await response.json();
 		if (data.success) {
 			flyers = data.flyers || [];
+			currentUserId = data.currentUserId;
+			isSuperadminView = data.isSuperadmin || false;
 			renderGallery();
 			document.getElementById('flyerCount').textContent = `${flyers.length} flyer${flyers.length !== 1 ? 's' : ''}`;
 			// Update last refreshed timestamp
 			setLastUpdated('flyersLastUpdated');
 		}
 	} catch (error) {
-		console.error('Failed to load flyers:', error);
+		FrontendDebug.error('Flyers', 'Failed to load flyers', error);
 		showAlert('Failed to load flyers', 'error');
 	} finally {
 		// Reset loading state
@@ -101,7 +174,7 @@ async function refreshStatus() {
 			renderGallery();
 		}
 	} catch (error) {
-		console.error('Status refresh failed:', error);
+		FrontendDebug.error('Flyers', 'Status refresh failed', error);
 	}
 }
 
@@ -130,6 +203,9 @@ function renderGallery() {
 		const fileSize = flyer.size ? formatFileSize(flyer.size) : '';
 		const modifiedDate = flyer.modified ? formatDate(flyer.modified) : '';
 		const isVideo = flyer.type === 'video' || isVideoFile(filename);
+		const ownerId = flyer.ownerId;
+		const isLegacy = flyer.isLegacy || false;
+		const previewUrl = getFlyerPreviewUrl(flyer);
 
 		return `
 		<div class="flyer-card group ${isActive ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-gray-800' : ''}">
@@ -143,7 +219,12 @@ function renderGallery() {
 					Video
 				</div>
 			` : ''}
-			<div class="flyer-image-container cursor-pointer" onclick="previewFlyer('${escapeHtml(filename)}', ${isVideo})">
+			${isSuperadminView && ownerId !== currentUserId ? `
+				<div class="absolute ${isVideo ? 'top-10' : 'top-2'} right-2 z-10 bg-blue-600 text-white text-xs px-2 py-1 rounded font-medium">
+					User ${ownerId || 'Legacy'}
+				</div>
+			` : ''}
+			<div class="flyer-image-container cursor-pointer" onclick="previewFlyer('${escapeHtml(filename)}', ${isVideo}, ${ownerId || 'null'})">
 				${isVideo ? `
 					<div class="flex items-center justify-center h-full bg-gray-700">
 						<svg class="w-16 h-16 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,7 +233,7 @@ function renderGallery() {
 						</svg>
 					</div>
 				` : `
-					<img src="/api/flyers/preview/${encodeURIComponent(filename)}"
+					<img src="${previewUrl}"
 						 alt="${escapeHtml(filename)}"
 						 class="flyer-image-preview"
 						 onload="this.style.opacity = 1; this.nextElementSibling.style.display = 'none';"
@@ -179,7 +260,7 @@ function renderGallery() {
 							Active
 						</div>
 					`}
-					<button onclick="event.stopPropagation(); showDeleteModal('${escapeHtml(filename)}')"
+					<button onclick="event.stopPropagation(); showDeleteModal('${escapeHtml(filename)}', ${ownerId || 'null'})"
 							class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition font-medium"
 							title="Delete flyer">
 						Delete
@@ -243,7 +324,7 @@ function setupUploadForm() {
 }
 
 // Preview flyer
-function previewFlyer(filename, isVideo = false) {
+function previewFlyer(filename, isVideo = false, ownerId = null) {
 	const modal = document.getElementById('previewModal');
 	const image = document.getElementById('previewImage');
 	const video = document.getElementById('previewVideo');
@@ -252,17 +333,20 @@ function previewFlyer(filename, isVideo = false) {
 	// Determine if video based on parameter or filename
 	const showVideo = isVideo || isVideoFile(filename);
 
+	// Build preview URL with owner ID
+	const previewUrl = getFlyerPreviewUrl({ filename, ownerId });
+
 	if (showVideo) {
 		image.classList.add('hidden');
 		video.classList.remove('hidden');
-		video.src = `/api/flyers/preview/${encodeURIComponent(filename)}`;
+		video.src = previewUrl;
 		video.play();
 	} else {
 		video.classList.add('hidden');
 		video.pause();
 		video.src = '';
 		image.classList.remove('hidden');
-		image.src = `/api/flyers/preview/${encodeURIComponent(filename)}`;
+		image.src = previewUrl;
 	}
 
 	name.textContent = filename;
@@ -278,8 +362,9 @@ function closePreviewModal() {
 }
 
 // Show delete confirmation modal
-function showDeleteModal(filename) {
+function showDeleteModal(filename, ownerId = null) {
 	deleteTarget = filename;
+	deleteTargetOwner = ownerId;
 	document.getElementById('deleteFileName').textContent = filename;
 	document.getElementById('deleteModal').classList.remove('hidden');
 }
@@ -287,19 +372,36 @@ function showDeleteModal(filename) {
 // Close delete modal
 function closeDeleteModal() {
 	deleteTarget = null;
+	deleteTargetOwner = null;
 	document.getElementById('deleteModal').classList.add('hidden');
 }
 
 // Confirm delete
 async function confirmDelete() {
-	if (!deleteTarget) return;
+	FrontendDebug.action('Flyers', 'Delete button clicked', { deleteTarget, deleteTargetOwner });
+
+	if (!deleteTarget) {
+		FrontendDebug.warn('Flyers', 'No deleteTarget set');
+		return;
+	}
 
 	try {
-		const response = await csrfFetch(`/api/flyers/${encodeURIComponent(deleteTarget)}`, {
+		// Build delete URL with optional ownerId for superadmin
+		let deleteUrl = `/api/flyers/${encodeURIComponent(deleteTarget)}`;
+		if (deleteTargetOwner !== null && deleteTargetOwner !== undefined) {
+			deleteUrl += `?ownerId=${deleteTargetOwner}`;
+		} else if (deleteTargetOwner === null && isSuperadminView) {
+			// Legacy flyer without owner
+			deleteUrl += '?ownerId=legacy';
+		}
+
+		FrontendDebug.api('Flyers', 'Sending delete request', { filename: deleteTarget, ownerId: deleteTargetOwner });
+		const response = await csrfFetch(deleteUrl, {
 			method: 'DELETE'
 		});
 
 		const data = await response.json();
+		FrontendDebug.api('Flyers', 'Delete response', { status: response.status, data });
 
 		if (data.success) {
 			showAlert(`Flyer "${deleteTarget}" deleted`, 'success');
@@ -309,6 +411,7 @@ async function confirmDelete() {
 			showAlert(`Delete failed: ${data.error}`, 'error');
 		}
 	} catch (error) {
+		FrontendDebug.error('Flyers', 'Delete failed', error);
 		showAlert(`Delete error: ${error.message}`, 'error');
 	}
 }

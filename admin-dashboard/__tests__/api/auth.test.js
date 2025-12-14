@@ -18,14 +18,12 @@ const authDataFilePath = path.join(__dirname, '../../auth-data.json');
 // Test user credentials
 const TEST_ADMIN = {
 	username: 'testadmin',
-	password: 'testpassword123',
-	role: 'admin'
+	password: 'testpassword123'
 };
 
 const TEST_USER = {
 	username: 'testuser',
-	password: 'userpassword123',
-	role: 'user'
+	password: 'userpassword123'
 };
 
 describe('Authentication API', () => {
@@ -54,14 +52,12 @@ describe('Authentication API', () => {
 					id: 1,
 					username: TEST_ADMIN.username,
 					password: adminHash,
-					role: TEST_ADMIN.role,
 					createdAt: new Date().toISOString()
 				},
 				{
 					id: 2,
 					username: TEST_USER.username,
 					password: userHash,
-					role: TEST_USER.role,
 					createdAt: new Date().toISOString()
 				}
 			]
@@ -112,7 +108,6 @@ describe('Authentication API', () => {
 			expect(res.body.success).toBe(true);
 			expect(res.body.user).toBeDefined();
 			expect(res.body.user.username).toBe(TEST_ADMIN.username);
-			expect(res.body.user.role).toBe('admin');
 			// Password should not be returned
 			expect(res.body.user.password).toBeUndefined();
 		});
@@ -127,7 +122,6 @@ describe('Authentication API', () => {
 
 			expect(res.status).toBe(200);
 			expect(res.body.success).toBe(true);
-			expect(res.body.user.role).toBe('user');
 		});
 
 		test('returns 401 for invalid password', async () => {

@@ -3,7 +3,7 @@ TOURNAMENT CONTROL CENTER - FUTURE IMPROVEMENTS & FEATURE ROADMAP
 ================================================================================
 
 Generated: 2025-11-23
-Updated: 2025-12-11 (Added verbose debugging infrastructure - see COMPLETED_IMPROVEMENTS.txt)
+Updated: 2025-12-14 (Moved 26+ completed features to COMPLETED_IMPROVEMENTS.txt, added new improvement ideas)
 System: Six-service tournament control platform with admin dashboard,
         signup PWA, three MagicMirror displays, and Stream Deck controller
 
@@ -44,151 +44,51 @@ Priority: CRITICAL for single-operator efficiency.
 --------------------------------------------------------------------------------
 1. COMMAND CENTER VIEW - COMPLETED 2025-12-07
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: command-center.html, command-center.js, style.css (cc-* classes), nav.js
-
-Features implemented:
-- 4-quadrant layout (Current Matches, Match Queue, System Status, Quick Actions)
-- Real-time WebSocket updates with polling fallback
-- Keyboard shortcuts (1-5, W, L, S, Enter, Escape, R, T, ?)
-- Score modal with quick winners, custom scores, DQ options
-- Ticker modal with presets and custom input
-- System status (display modules, API rate limit, progress bar)
-- Mobile responsive (single column on tablet/phone)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+4-quadrant layout, keyboard shortcuts, real-time WebSocket updates, mobile responsive
 
 --------------------------------------------------------------------------------
 2. KEYBOARD SHORTCUTS (MATCH SCORING) - COMPLETED 2025-12-07
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED (included in Command Center)
-
-Features implemented:
-- Number keys 1-5 = Select match 1-5 in list
-- W key = Mark player 1 as winner (2-0)
-- L key = Mark player 2 as winner (0-2)
-- S key = Start selected match (mark underway)
-- Enter = Open score modal for selected match
-- Escape = Cancel/close modal / Deselect match
-- R = Refresh data
-- T = Open ticker modal
-- ? = Show keyboard shortcuts help
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Number keys 1-5, W/L for winners, S to start, Enter for modal, R refresh, T ticker, ? help
 
 --------------------------------------------------------------------------------
 3. AUDIO ANNOUNCEMENTS VIA PI SPEAKERS - COMPLETED 2025-12-10
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/routes/api.js (POST /api/audio/announce endpoint),
-       admin-dashboard/public/index.html (Audio Announcements section),
-       admin-dashboard/public/js/dashboard.js (playAudioPreset, playCustomAudioAnnouncement),
-       MagicMirror-match/modules/MMM-TournamentNowPlaying/node_helper.js (POST /api/audio/announce),
-       MagicMirror-match/modules/MMM-TournamentNowPlaying/MMM-TournamentNowPlaying.js (playAudioAnnouncement)
-
-Features implemented:
-- Text-to-speech via Web Speech API on Pi display browser
-- Preset quick announcements: "Report In", "5 Min Warning", "Finals"
-- Custom announcement text input with configurable speed (Slow/Normal/Fast)
-- WebSocket broadcast + HTTP fallback to MagicMirror-match
-- API endpoint: POST /api/audio/announce {text, rate, volume}
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+TTS via Web Speech API, preset announcements, custom text with speed control
 
 --------------------------------------------------------------------------------
 4. MATCH QUEUE AUTO-ADVANCE - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: server.js (findNextSuggestedMatch, fetchAndPushMatches metadata),
-       command-center.html (NEXT UP indicator), command-center.js,
-       system-settings.json (matchQueue section), style.css (pulse animation)
-
-Features implemented:
-- When match completes, automatically highlight next match
-- Visual "NEXT UP" floating indicator with pulse animation
-- Smart queue ordering by Challonge suggested_play_order
-- One-click "Start Next Match" button on indicator
-- Auto-scroll to highlighted match in queue
-- Toggle auto-advance via checkbox
-- WebSocket metadata includes nextMatchId, completedCount, progressPercent
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Auto-highlight next match, "NEXT UP" indicator, smart queue ordering
 
 --------------------------------------------------------------------------------
 5. TOURNAMENT DAY CHECKLIST - COMPLETED 2025-12-10
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/public/tournament.html (Pre-Flight Checklist section),
-       admin-dashboard/public/css/style.css (checklist styles),
-       admin-dashboard/public/js/tournament.js (refreshChecklist, check functions)
-
-Features implemented:
-- 7-item automated checklist visible when pending tournament selected:
-  [✓] Display Modules - Checks match/bracket/flyer APIs are responding
-  [✓] Pi Displays - Checks all registered Pi displays are online
-  [✓] Tournament Deployed - Verifies tournament state file exists
-  [✓] Participants - Shows count and warns if 0
-  [✓] Flyer Set - Verifies flyer is configured
-  [✓] Stations Configured - Warns if no stations set up
-  [✓] Challonge API - Verifies API connection
-- Color-coded status indicators (success/warning/error)
-- Refresh button to re-run all checks
-- Summary shows ready count vs total
-- Auto-refresh on tournament selection
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+7-item automated checklist, color-coded status indicators, auto-refresh
 
 --------------------------------------------------------------------------------
-6. PANIC MODE / EMERGENCY CONTROLS (NEW)
+6. PANIC MODE / EMERGENCY CONTROLS - COMPLETED 2025-12-14
 --------------------------------------------------------------------------------
-PROBLEM: If something goes wrong (power flicker, network issue, wrong score
-entered), need fast recovery.
-
-FEATURES:
-- "PANIC" button (red, prominent) triggers:
-  - Pause all displays (show "Technical Difficulties" message)
-  - Freeze match state
-  - Clear ticker/timers
-- "ALL CLEAR" button restores normal operation
-- Match rollback: Undo last N match results
-- Quick display reboot: One-click restart all Pi displays
-- Emergency contact display: Show "Please stand by" on all TVs
-
-IMPLEMENTATION:
-- WebSocket event: system:panic / system:resume
-- Match state snapshot before each modification
-- Rollback endpoint: POST /api/matches/:id/rollback
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+PANIC button, ALL CLEAR button, Technical Difficulties overlay on all displays,
+match rollback (undo), keyboard shortcut 'P', reboot all displays button
 
 --------------------------------------------------------------------------------
 7. BATCH SCORE ENTRY - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: server.js (POST /api/matches/:tournamentId/batch-scores endpoint),
-       matches.html (batch score modal), matches.js (~300 lines of batch scoring)
-
-Features implemented:
-- "Quick Score" button in matches page header (Ctrl+Shift+S shortcut)
-- Modal showing all open/underway matches in table format
-- Quick winner buttons (P1/P2) per row for 2-0 scores
-- Tab through score inputs, Enter to set winner by comparison
-- Ctrl+Enter to submit all valid entries
-- Per-row validation with visual feedback (green check, red x)
-- Partial success handling (shows success/failure per row)
-- Real-time validation count ("2 of 3 ready to submit")
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Quick Score button (Ctrl+Shift+S), batch modal, quick winner buttons, validation
 
 --------------------------------------------------------------------------------
 8. DQ/FORFEIT AUTOMATION - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: server.js (activeDQTimers Map, server-side timer management, auto-DQ logic),
-       command-center.html (enhanced DQ modal with match/player selection),
-       command-center.js (timer functions), system-settings.json (dqTimer section)
-
-Features implemented:
-- Server-side DQ timer state management (survives page refreshes)
-- Enhanced DQ timer modal with match dropdown and player selection
-- When timer expires:
-  - Auto-DQ mode: Automatically DQ the selected player
-  - Notify mode: Send notification to operator
-- Warning WebSocket event at 30s remaining
-- Active timers panel showing countdown with cancel option
-- Configurable in Settings: autoDqEnabled, autoDqAction, defaultDuration, warningThreshold
-- Activity logging for auto-DQ events
-
-API Endpoints:
-- POST /api/timer/dq - Enhanced with matchId, playerId, playerName
-- GET /api/timer/dq/active - List all active DQ timers
-- DELETE /api/timer/dq/:key - Cancel specific timer
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Server-side DQ timer state, auto-DQ/notify modes, warning events, configurable settings
 
 --------------------------------------------------------------------------------
 9. PARTICIPANT CHECK-IN IMPROVEMENTS
@@ -204,58 +104,14 @@ FEATURES:
 --------------------------------------------------------------------------------
 10. SCHEDULED TICKER MESSAGES - COMPLETED 2025-12-10
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/services/ticker-scheduler.js (new scheduler service),
-       admin-dashboard/routes/api.js (GET/POST/PUT/DELETE /ticker/schedule),
-       admin-dashboard/server.js (tickerScheduler initialization),
-       admin-dashboard/public/index.html (Schedule button, modal, scheduled list),
-       admin-dashboard/public/js/dashboard.js (modal handlers, CRUD functions)
-
-Features implemented:
-- Schedule ticker messages with time triggers
-- One-time messages (specific date/time)
-- Recurring messages (daily/weekly on selected days)
-- Enable/disable individual scheduled messages
-- Edit scheduled message time/text/type
-- JSON file persistence (auto-saves)
-- 30-second check interval for due messages
-- UI shows scheduled messages list with next trigger time
-
-API Endpoints:
-- GET /api/ticker/schedule - List all scheduled messages
-- POST /api/ticker/schedule - Create scheduled message
-- PUT /api/ticker/schedule/:id - Update scheduled message
-- DELETE /api/ticker/schedule/:id - Delete scheduled message
-- DELETE /api/ticker/schedule - Clear all scheduled messages
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Schedule ticker messages, one-time/recurring, enable/disable, JSON persistence
 
 --------------------------------------------------------------------------------
 11. AUTOMATED SPONSOR ROTATION - COMPLETED 2025-12-10
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/services/sponsor.js (startSponsorRotation, rotateSponsor),
-       admin-dashboard/server.js (sponsor rotation startup, config endpoint),
-       admin-dashboard/public/sponsors.html (rotation settings UI),
-       admin-dashboard/public/js/sponsors.js (saveConfig with rotation),
-       MM-SponsorOverlay/node_helper.js (sponsor:rotate WebSocket handler),
-       MM-SponsorOverlay/MMM-SponsorOverlay.js (rotateSponsor with fade transition)
-
-Features implemented:
-- Time-based carousel rotation (10-300 second interval)
-- Sequential or random rotation order
-- Configurable fade transition duration (0-5000ms)
-- Auto-starts on server boot if enabled
-- Per-position rotation (positions with 2+ sponsors rotate independently)
-- WebSocket broadcast + HTTP fallback
-- Timer View mode (show/hide cycling)
-- Config saved in sponsor-state.json
-
-UI Controls (Sponsors page > Settings):
-- Master enable toggle
-- Auto-rotate checkbox
-- Interval (seconds)
-- Transition duration (ms)
-- Rotation order (Sequential/Random)
-- Timer View mode (show/hide intervals)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Time-based carousel, sequential/random order, per-position rotation, WebSocket + HTTP
 
 --------------------------------------------------------------------------------
 12. MATCH HISTORY LOG
@@ -426,51 +282,14 @@ around the venue (checking on matches, talking to participants, etc.).
 --------------------------------------------------------------------------------
 11. MOBILE ADMIN PWA - NOT PURSUED (2025-12-09)
 --------------------------------------------------------------------------------
-STATUS: Development attempted but cancelled - too complex for practical use.
-
-A dedicated mobile PWA was prototyped with:
-- Standalone PWA with manifest, service worker, offline queue
-- Swipe gestures, haptic feedback, IndexedDB caching
-- WebSocket real-time updates
-
-DECISION: The existing admin dashboard already works on mobile browsers.
-The added complexity of a separate mobile app (maintaining two UIs,
-debugging PWA issues, service worker caching problems) outweighed the
-benefits. The regular dashboard with responsive CSS is sufficient.
-
-ALTERNATIVE: The Command Center page (#1) is already mobile-optimized
-and provides the core tournament-day functionality needed.
+STATUS: CANCELLED - See COMPLETED_IMPROVEMENTS.txt for details
+Decision: Existing admin dashboard works on mobile browsers. Command Center is mobile-optimized.
 
 --------------------------------------------------------------------------------
 12. PUSH NOTIFICATIONS - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: server.js (sendPushNotification, broadcastPushNotification, 6 API endpoints),
-       analytics-db.js (push_subscriptions, notification_preferences tables),
-       sw.js (push event handlers), settings.js (push notification UI)
-
-Features implemented:
-- Browser push notifications via Web Push API with VAPID authentication
-- Push subscription management (enable/disable per browser)
-- Per-user notification preferences (6 notification types)
-- Notification types with triggers:
-  - Match completed (winner declared endpoint)
-  - Tournament started (tournament start endpoint)
-  - DQ timer expired (timer expiry handler)
-  - New participant signup (external activity webhook)
-  - Display disconnected (heartbeat expiry detection)
-  - Check-in deadline (preference stored, trigger pending)
-- Service worker with notification click routing
-- Action buttons per notification type (View Matches, View Displays, etc.)
-- Test notification button in Settings
-
-API Endpoints:
-- GET /api/notifications/vapid-public-key - Get VAPID public key
-- POST /api/notifications/subscribe - Subscribe to push
-- DELETE /api/notifications/unsubscribe - Unsubscribe
-- GET /api/notifications/preferences - Get notification preferences
-- PUT /api/notifications/preferences - Update preferences
-- POST /api/notifications/test - Send test notification
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Web Push API with VAPID, 6 notification types, per-user preferences, service worker
 
 --------------------------------------------------------------------------------
 13. VOICE COMMANDS (NEW)
@@ -531,35 +350,14 @@ improvements make it more responsive and capable.
 --------------------------------------------------------------------------------
 16. WEBSOCKET REAL-TIME UPDATES - COMPLETED 2025-12-07
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-
-Features implemented:
-- Socket.IO WebSocket connection via python-socketio library
-- Instant match updates (<100ms vs 2-5 seconds polling)
-- Connection status indicator on key 11 (WS=green, POLL=yellow, HTTP=purple)
-- Automatic reconnect with exponential backoff
-- HTTP polling fallback when WebSocket disconnects
-- Configuration options: websocket_enabled, reconnect_delay, poll_fallback_interval
-
-Files modified:
-- stream-deck-controller/websocket_client.py (NEW)
-- stream-deck-controller/api_client.py
-- stream-deck-controller/controller.py
-- stream-deck-controller/config.json
-- stream-deck-controller/requirements.txt
-- stream-deck-controller/install.sh
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Socket.IO via python-socketio, instant updates, connection status indicator, auto-reconnect
 
 --------------------------------------------------------------------------------
 17. CONNECTION STATUS INDICATOR - COMPLETED 2025-12-07
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED (included in #16 WebSocket implementation)
-
-Features implemented:
-- Key 11 shows connection status
-- GREEN (WS:X): WebSocket connected, X = live match count
-- YELLOW (POLL:X): WebSocket failed, using HTTP polling fallback
-- PURPLE (HTTP:X): WebSocket disabled, HTTP polling only
-- Auto-updates on connection state changes
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Key 11 status: GREEN (WS), YELLOW (POLL), PURPLE (HTTP) with match count
 
 --------------------------------------------------------------------------------
 18. LOCAL DATA CACHING FOR OFFLINE RESILIENCE
@@ -645,14 +443,8 @@ FEATURES:
 --------------------------------------------------------------------------------
 24. AUTO-RECONNECT WITH BACKOFF - COMPLETED 2025-12-07
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED (included in #16 WebSocket implementation)
-
-Features implemented:
-- Exponential backoff on WebSocket connection failures
-- Configurable: websocket_reconnect_delay (default: 1s)
-- Configurable: websocket_max_reconnect_delay (default: 60s)
-- Automatic retry on disconnect (unlimited attempts)
-- Backoff resets on successful connection
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Exponential backoff, configurable delays, unlimited retry attempts
 
 --------------------------------------------------------------------------------
 25. USB RESET AUTOMATION
@@ -675,195 +467,56 @@ reduce crashes, improve recovery, and enable remote management.
 --------------------------------------------------------------------------------
 26. CDN CACHE-BUSTING FOR DISPLAYS - COMPLETED 2025-12-08
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-
-PROBLEM: MagicMirror static files (JS/CSS) were being cached by Cloudflare
-and browser, causing ticker messages and timers to fail silently after
-deployments. API returned success, but old JavaScript lacked new handlers.
-
-SOLUTION:
-- Server adds no-cache headers to all responses and static files
-- All JS/CSS URLs include `?v=timestamp` cache-buster
-- Timestamp regenerates on service restart
-- Frontend loader uses `window.mmCacheBuster` for dynamic module loading
-
-FILES MODIFIED:
-- MagicMirror-match/js/server.js - Static file middleware with no-cache headers
-- MagicMirror-match/js/server_functions.js - HTML injection of timestamps
-- MagicMirror-match/js/loader.js - Dynamic file loading with cache-busting
-
-TROUBLESHOOTING:
-1. Restart MagicMirror service to generate new timestamp
-2. Clear Pi browser cache: `pkill -f chromium && rm -rf ~/.cache/chromium`
-3. Purge Cloudflare cache if needed
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+No-cache headers, ?v=timestamp cache-buster, window.mmCacheBuster for dynamic loading
 
 --------------------------------------------------------------------------------
 26b. SPONSOR OVERLAY MODULE CONSOLIDATION - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-
-PROBLEM: MMM-SponsorOverlay module was duplicated in both MagicMirror-match
-and MagicMirror-bracket with identical code (~1300 lines duplicated). CSS
-positioning values differed between instances (50px vs 20px/100px).
-
-SOLUTION:
-- Created shared module at `/root/tournament-control-center/MM-SponsorOverlay/`
-- Symlinked module into both MagicMirror instances
-- Made positioning config-driven via module config options
-- Each instance can customize positioning while sharing codebase
-- Both views can run simultaneously with independent sponsor rotation
-
-CONFIG OPTIONS:
-- `apiPort` - HTTP API port (2055 for match, 2056 for bracket)
-- `cornerOffset` - Pixels from edge for corner logos (default: 50)
-- `bannerOffset` - Pixels from edge for banners (default: 25)
-- `bottomCornerOffset` - Override for bottom corners (uses cornerOffset if null)
-
-FILES CREATED:
-- MM-SponsorOverlay/MMM-SponsorOverlay.js - Config-driven positioning
-- MM-SponsorOverlay/MMM-SponsorOverlay.css - Structural styles only
-- MM-SponsorOverlay/node_helper.js - API server and WebSocket client
-- MM-SponsorOverlay/package.json - Dependencies (express, body-parser, socket.io-client)
-
-SYMLINKS:
-- MagicMirror-match/modules/MMM-SponsorOverlay → ../../MM-SponsorOverlay
-- MagicMirror-bracket/modules/MMM-SponsorOverlay → ../../MM-SponsorOverlay
-
-SYMLINK CONSIDERATIONS:
-- Module requires its own node_modules (dependencies don't resolve through symlinks)
-- Uses `process.cwd()` instead of `__dirname` for config path resolution
-- Run `npm install` in MM-SponsorOverlay/ directory after cloning
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Shared module at MM-SponsorOverlay/, symlinked to both instances, config-driven positioning
 
 --------------------------------------------------------------------------------
 26c. SPONSOR OVERLAY UI IMPROVEMENTS - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: sponsors.html, sponsors.js, style.css, server.js, MMM-SponsorOverlay.js
-
-IMPROVEMENTS:
-1. Real-time X/Y offset sliders with number inputs (-500 to +500px range)
-   - Sliders in sponsor cards for immediate visual feedback
-   - Number inputs sync bidirectionally with sliders
-   - Debounced real-time updates to display (100ms)
-   - Values saved to database on change
-
-2. Per-sponsor Hide button
-   - Yellow "Hide" button on each sponsor card
-   - Hides single sponsor at specific position
-   - Calls POST /api/sponsors/hide with position parameter
-
-3. Position filter tabs moved inside gallery section
-   - 7 filter buttons (All + 6 positions) now inside gallery card
-   - Logically grouped with the content they filter
-   - Stops click propagation to prevent section collapse
-
-4. Consistent slider track styling across project
-   - CSS pseudo-element styling for range inputs
-   - Track: #4b5563 background with #6b7280 border
-   - Thumb: Blue (#3b82f6) with darker blue border
-   - Works in both WebKit and Firefox
-
-5. Banner transformOrigin fix
-   - Banners now anchor to top/bottom edge when scaled
-   - Prevents overflow below screen at large scales (e.g., 5.0x)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+X/Y offset sliders, per-sponsor Hide button, position filter tabs, banner transformOrigin fix
 
 --------------------------------------------------------------------------------
 27. INTENT RESTART DETECTION - BUG FIX - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/public/setup-pi.sh (kiosk.sh, display-manager.sh)
-
-PROBLEM: display-manager.sh creates intent_restart file but kiosk.sh only
-checked file existence, not timestamp. Stale intent files could incorrectly
-skip crash detection.
-
-FIX:
-- display-manager.sh writes epoch timestamp to intent file: `echo $(date +%s)`
-- kiosk.sh reads timestamp and validates it's within 10s grace window of browser start
-- Stale intent files are ignored and treated as crashes
-- Intent file is always cleaned up after checking
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Timestamp validation for intent file, 10s grace window, stale file handling
 
 --------------------------------------------------------------------------------
 28. CHROMIUM HANG DETECTION (WATCHDOG) - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/public/setup-pi.sh (kiosk.sh)
-Dependencies: xdotool package (added to apt install)
-
-PROBLEM: Only detects Chromium crashes (quick exits), not hangs (frozen, white screen).
-
-SOLUTION:
-- Background watchdog process checks Chromium responsiveness every 30 seconds
-- Uses xdotool to verify window exists and responds to queries
-- Force-kills Chromium after 90 seconds unresponsive (3 consecutive failures)
-- Graceful degradation if xdotool not installed (assumes responsive)
-- Watchdog stops when kiosk process exits (trap on EXIT)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Background watchdog every 30s, xdotool verification, force-kill after 90s unresponsive
 
 --------------------------------------------------------------------------------
 28b. STORAGE DETECTION FIX - BUG FIX - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: FIXED
-Files: admin-dashboard/public/setup-pi.sh
-
-PROBLEM: NVMe storage was incorrectly detected as "sdcard" because the storage
-detection was performed inside a function (subshell), preventing variable
-assignment from persisting.
-
-FIX:
-- Moved storage detection from function to direct execution at script start
-- Variables (STORAGE_TYPE, NVME_DEVICE, NVME_SIZE) now correctly persist
-- Pi 5 with NVMe now gets high-performance settings:
-  - CPU Governor: performance (not ondemand)
-  - Raster Threads: 4 (not 1)
-  - GPU Compositing: enabled (not disabled)
-  - Disk Cache: 500MB (not 100MB)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Moved storage detection from subshell to direct execution, NVMe gets performance settings
 
 --------------------------------------------------------------------------------
 28c. PACKAGE AVAILABILITY FIX - BUG FIX - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: FIXED
-Files: admin-dashboard/public/setup-pi.sh
-
-PROBLEM: Package `libraspberrypi-bin` is not available in Raspberry Pi OS
-Bookworm/Trixie.
-
-FIX:
-- Replaced `libraspberrypi-bin` with `raspi-utils-core` (modern replacement)
-- Contains vcgencmd and other Pi utilities
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Replaced libraspberrypi-bin with raspi-utils-core for Bookworm/Trixie compatibility
 
 --------------------------------------------------------------------------------
 28d. HEREDOC ESCAPING FIX - BUG FIX - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: FIXED
-Files: admin-dashboard/public/setup-pi.sh (kiosk.sh heredoc section)
-
-PROBLEM: The kiosk.sh heredoc used unquoted `<< KIOSKSCRIPT` which causes
-variable expansion at setup-time instead of runtime. This resulted in errors
-like "exponent less than 0" when arithmetic expressions were evaluated with
-unset variables.
-
-FIX:
-- Escaped all runtime variables with `\$` in the heredoc:
-  - PID file handling section
-  - Logging functions (log, debug_log)
-  - check_debug_mode, get_url, clear_cache functions
-  - Main loop (KIOSK_URL, CRASH_COUNTER, START_TIME)
-  - Stable run section
-- Setup-time variables (RASTER_THREADS, DISK_CACHE_SIZE, etc.) intentionally
-  NOT escaped - they are correctly baked in during installation
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Escaped runtime variables with \$ in heredoc, fixed "exponent less than 0" errors
 
 --------------------------------------------------------------------------------
 28e. WIFI NETWORK CONFIGURATION - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: admin-dashboard/public/setup-pi.sh
-
-Added 3 pre-configured WiFi networks with priorities:
-1. Neils Bahr - Guest (priority 30) - Primary venue network
-2. WeaponizedData_5G (priority 20) - Secondary network
-3. HTXPokemonCollectors-VZW (priority 10) - Tertiary network
-
-Pi will automatically connect to highest-priority available network.
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+3 pre-configured WiFi networks with priorities, auto-connect to highest available
 
 --------------------------------------------------------------------------------
 29. REMOTE SCREENSHOT CAPABILITY
@@ -931,28 +584,8 @@ FEATURES:
 --------------------------------------------------------------------------------
 35. CONFIGURABLE DISPLAY SCALE FACTOR - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED (enhanced with real-time CDP scaling)
-
-Features implemented:
-- Real-time scale changes via Chrome DevTools Protocol (CDP) - no browser restart
-- Auto TV detection via xrandr (reads physical dimensions from HDMI EDID)
-- Suggested scale based on diagonal: <32"=1.0x, 32-40"=1.5x, 40-50"=2.0x, >50"=2.5x
-- CDP status badge in admin UI (green "CDP" when enabled)
-- Fallback to browser restart if CDP unavailable
-- Scale range 0.5x to 3.0x
-- Collapsible "Advanced" section in display card UI (default collapsed)
-- Shows detected TV size in collapsed header for quick reference
-
-Admin UI:
-- Scale controls hidden under collapsible "Advanced" section by default
-- Header shows: "ADVANCED" label, CDP badge, detected TV size (e.g., "84.5" detected")
-- Click to expand: detection info, scale slider, preset buttons (0.5x-2.0x), Apply button
-- 1.0x works well across most TV sizes (tested 15.5" to 84.5")
-
-Files:
-- setup-pi.sh: cdp-service.js, detect-display.sh, cdp-scale.service templates
-- routes/displays.js: displayInfo, cdpEnabled in heartbeat/config
-- public/js/displays.js: Collapsible Advanced section, toggleAdvancedSection()
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+CDP real-time scaling, auto TV detection via xrandr, suggested scale, collapsible Advanced section
 
 --------------------------------------------------------------------------------
 36. AUDIO OUTPUT CONFIGURATION
@@ -1051,17 +684,8 @@ FEATURES:
 --------------------------------------------------------------------------------
 43. PARTICIPANT LOOKUP ("AM I REGISTERED?") - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: tournament-signup/public/index.html (lookup section, lookup toggle),
-       tournament-signup/server.js (GET /api/participants/lookup endpoint)
-
-Features implemented:
-- "Already registered? Check your status" toggle button on main page
-- Expandable search form with name input and Search button
-- Case-insensitive partial match search via API
-- Found result shows: name with "You're registered!" confirmation in green success card
-- Not found result shows: yellow warning card with signup prompt
-- API returns participant data including check-in status
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+"Check your status" toggle, case-insensitive search, registration confirmation
 
 --------------------------------------------------------------------------------
 44. REGISTRATION CONFIRMATION QR CODE
@@ -1075,20 +699,8 @@ FEATURES:
 --------------------------------------------------------------------------------
 45. DARK MODE TOGGLE (SIGNUP APP) - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: tournament-signup/public/index.html, rules.html, confirmation.html
-       (all pages have theme toggle and CSS custom properties)
-
-Features implemented:
-- Theme toggle button in top-right corner of all pages
-- Sun/moon SVG icons swap based on current theme
-- System preference detection via `prefers-color-scheme` media query
-- localStorage persistence (persists across pages and sessions)
-- Smooth 300ms transition animation for theme changes
-- CSS custom properties for all colors (matches STYLE_GUIDE.md)
-- Light mode: white cards on gray-100 background
-- Dark mode: gray-800 cards on black-deep background
-- Theme syncs across all signup pages automatically
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Theme toggle on all pages, system preference detection, localStorage persistence
 
 --------------------------------------------------------------------------------
 46. PUSH NOTIFICATIONS (SIGNUP APP)
@@ -1117,26 +729,8 @@ Reduce repetitive manual work for recurring weekly tournaments.
 --------------------------------------------------------------------------------
 48. TOURNAMENT TEMPLATES LIBRARY - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: analytics-db.js (tournament_templates table + CRUD functions),
-       server.js (6 API endpoints), tournament.html/js (wizard integration),
-       settings.html/js (template management UI)
-
-Features implemented:
-- SQLite table for template storage (name, description, game, settings JSON)
-- "Load from Template" dropdown in tournament wizard Step 1
-- "Save as Template" button in wizard completion success modal
-- Template management in Settings page (view, edit name/description, delete)
-- Default template protection (cannot delete)
-- Create template from existing tournament data
-
-API Endpoints:
-- GET /api/templates - List all templates
-- GET /api/templates/:id - Get template by ID
-- POST /api/templates - Create new template
-- PUT /api/templates/:id - Update template (name, description)
-- DELETE /api/templates/:id - Delete template
-- POST /api/templates/from-tournament - Create from tournament data
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+SQLite storage, Load from Template dropdown, Save as Template button, management UI
 
 --------------------------------------------------------------------------------
 49. SCHEDULED TOURNAMENT CREATION (NEW)
@@ -1176,29 +770,8 @@ IMPLEMENTATION:
 --------------------------------------------------------------------------------
 51. AUTO-DEPLOY TO DISPLAYS - COMPLETED 2025-12-13
 --------------------------------------------------------------------------------
-FEATURES:
-- When tournament started, auto-configure all displays
-- Match display: Tournament ID set automatically (via deploy)
-- Bracket display: Bracket URL set automatically (via deploy)
-- Flyer display: Game-matched flyer set automatically (on start)
-- "One-click setup" for tournament day
-
-IMPLEMENTATION (2025-12-13):
-- Added findMatchingFlyer() helper function in routes/tournaments.js
-  - Searches user's flyer directory for files matching game name
-  - Case-insensitive partial matching with game abbreviation support
-  - Supports SSBU, Melee, MKW, MK8DX, SF6, Tekken 8, GGST, MK1, GBVSR
-  - Falls back to first-letter abbreviation (e.g., "Super Smash Bros" -> "ssb")
-- Modified POST /:tournamentId/start endpoint in routes/tournaments.js:
-  - After tournament starts successfully, calls findMatchingFlyer(game_name, user_id)
-  - If match found, emits 'flyer:activated' WebSocket event to user's displays
-  - Returns autoDeployedFlyer in response for frontend awareness
-- Triggers on "Start Tournament" button click
-- Flyer displays immediately update via WebSocket
-
-FILES MODIFIED:
-- admin-dashboard/routes/tournaments.js (findMatchingFlyer function + start endpoint)
-- FUTURE_IMPROVEMENTS.txt (documentation)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Auto-configure flyer on tournament start, game name matching with abbreviation support
 
 --------------------------------------------------------------------------------
 52. COPY/CLONE TOURNAMENT SETTINGS
@@ -1346,29 +919,8 @@ Current AI Infrastructure (established in services/ai-seeding.js):
 --------------------------------------------------------------------------------
 AI-1. TOURNAMENT NARRATIVE GENERATOR - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: services/tournament-narrator.js, analytics-db.js (tournament_narratives table),
-       server.js (narrative endpoints), analytics.html (narrative modal),
-       analytics.js (narrative functions)
-
-Features implemented:
-- AI-powered tournament recap narratives for archived tournaments
-- Three output formats: Social (280 chars), Discord (2-3 paragraphs), Full Report
-- Storyline detection: upsets, close matches, reverse sweeps, losers bracket runs
-- "Generate Recap" button on each archived tournament card
-- Narrative modal with format tabs, progress indicator, copy-to-clipboard
-- SQLite caching with hash-based invalidation (tournament_narratives table)
-- Fallback template-based generation when AI unavailable
-- Shares Anthropic client and rate limiting with AI seeding service
-
-API Endpoints:
-- GET /api/analytics/ai/narrative/status - Check if AI available
-- GET /api/analytics/ai/narrative/:tournamentId?format=discord - Get/generate narrative
-- POST /api/analytics/ai/narrative/:tournamentId/regenerate - Force regenerate
-- GET /api/analytics/ai/narrative/:tournamentId/cached - List cached formats
-- DELETE /api/analytics/ai/narrative/:tournamentId/cache - Clear cache
-
-Requires: ANTHROPIC_API_KEY environment variable
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+AI-powered recaps, 3 formats (Social/Discord/Full), storyline detection, SQLite caching
 
 --------------------------------------------------------------------------------
 AI-2. PLAYER FORM ANALYSIS & MOMENTUM TRACKING
@@ -2432,64 +1984,262 @@ Enhanced WebSocket delivery (services/websocket-ack.js):
 --------------------------------------------------------------------------------
 P2-6. AI-POWERED TOURNAMENT SEEDING - COMPLETED 2025-12-09
 --------------------------------------------------------------------------------
-STATUS: IMPLEMENTED
-Files: services/ai-seeding.js (~740 lines), analytics-db.js (ai_seeding_cache table),
-       server.js (5 API endpoints), analytics.html, analytics.js (~300 lines)
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
+Claude Sonnet for seeding, locked positions, SQLite caching, bracket balance display
 
-Anthropic Claude integration for intelligent bracket seeding with explanations.
+================================================================================
+2025-12-14: NEW IMPROVEMENT IDEAS FROM CODEBASE EXPLORATION
+================================================================================
+
+Based on comprehensive codebase analysis, these are newly identified improvement
+opportunities organized by priority and impact.
+
+--------------------------------------------------------------------------------
+NEW-1. ERROR HANDLING STANDARDIZATION (HIGH PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Inconsistent error handling patterns across route files. Some endpoints
+have try-catch with minimal context, others lack proper logging.
 
 FEATURES:
-- Claude Sonnet model (claude-sonnet-4-20250514) analyzes player stats and generates optimal seeding
-- Comprehensive player data gathering:
-  - Elo rating, peak rating, win/loss record
-  - Tournaments attended (flags new players < 3 tournaments)
-  - Recent placements (last 5 tournaments)
-  - Recent matchups with other participants
-- AI prompt includes bracket seeding principles:
-  - Top seeds separated until late rounds
-  - New player protection (mid-tier R1 opponents)
-  - Repeat matchup avoidance (last 2 tournaments)
-  - Bracket balance by Elo sum
-- Locked seed positions (AI optimizes around locks)
-- Fallback to pure Elo-based seeding when API unavailable
-- SQLite caching with participant hash validation
-- Real-time progress indicator during generation
+- Create services/error-handler.js with standardized error types
+- Add exponential backoff retry logic for external API calls (Discord, analytics)
+- Implement circuit breaker pattern for flaky services
+- Add contextual logging with request ID tracking
+- Return consistent error response format across all endpoints
 
-API Endpoints:
-- GET /api/analytics/ai-seeding/status - Check if API key configured
-- GET /api/analytics/ai-seeding/:tournamentId - Get AI suggestions (cached or fresh)
-- GET /api/analytics/ai-seeding/:tournamentId?regenerate=true - Force regenerate
-- POST /api/analytics/ai-seeding/:tournamentId/lock - Lock seed positions
-- POST /api/analytics/ai-seeding/:tournamentId/apply - Apply to Challonge
+FILES TO MODIFY:
+- routes/matches.js (lines 303-470)
+- routes/analytics.js (nested try-catches)
+- routes/participants.js (bulk operations)
+- routes/displays.js (cross-network commands)
+- Create services/error-handler.js (NEW)
 
-WebSocket Events:
-- seeding:update - Recalculation complete
-- seeding:generating - Recalculation started
-- seeding:error - API/processing error
+EFFORT: Medium (2-3 days)
+IMPACT: High - System reliability
 
-UI (Analytics Page):
-- AI seeding toggle checkbox (shows availability status)
-- Progress indicator with animated spinner + status messages
-- Bracket balance display (top/bottom half Elo with percentage)
-- Lock column in seeding table (checkbox per row)
-- Regenerate button (optimizes around locked seeds)
-- Reasoning column showing AI explanation for each seed
-- "New Player" badges for players with < 3 tournaments
+--------------------------------------------------------------------------------
+NEW-2. INPUT VALIDATION COMPLETION (HIGH PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Joi validation schemas exist but not all routes use them. Participants
+route lacks validation. Bulk operations don't validate individual records.
 
-Response Format:
-```json
-{
-  "seeds": [{"seed": 1, "participantId": "xxx", "reasoning": "..."}],
-  "bracketBalance": {"topHalfElo": 12500, "bottomHalfElo": 12350},
-  "newPlayerPlacements": ["Placed NewPlayer1 (seed 12) vs mid-tier opponent"],
-  "avoidedMatchups": ["Player1 vs Player3 separated"],
-  "overallReasoning": "..."
-}
-```
+FEATURES:
+- Enforce validation middleware on ALL routes (currently selective)
+- Add comprehensive validation for bulk participant add (CSV parsing, duplicates)
+- Implement field-level transformation (trim, sanitize) for all string inputs
+- Add validation for seed numbers (must be 1-N, no duplicates)
+- Create reusable validators for common patterns
 
-Configuration:
-- ANTHROPIC_API_KEY environment variable in .env
-- Requires Anthropic credits (console.anthropic.com)
+VALIDATION GAPS:
+- routes/participants.js: No validation on PUT/POST bodies
+- routes/flyers.js: File type validation only on extension, not MIME type
+- routes/matches.js: Batch score entry lacks per-entry validation
+- routes/tournaments.js: Format-specific options not validated
+
+EFFORT: Medium (2 days)
+IMPACT: High - Security & data quality
+
+--------------------------------------------------------------------------------
+NEW-3. HEALTH CHECK DIAGNOSTICS ENHANCEMENT (HIGH PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Health checks only verify service is running. No detection of database
+corruption, disk space issues, memory leaks, or WebSocket queue backlog.
+
+FEATURES:
+- Add database integrity check (PRAGMA integrity_check)
+- Check disk space for database location (warn if < 10%)
+- Add memory usage monitoring (warn if > 80%)
+- Check WebSocket message queue length (warn if > 1000)
+- Verify latest match update is recent (< 30s old)
+- Return detailed health report JSON with all checks
+
+EFFORT: Medium (2 days)
+IMPACT: High - Proactive issue detection
+
+--------------------------------------------------------------------------------
+NEW-4. BRACKET RENDERER PERFORMANCE (MEDIUM PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Canvas rendering slows with 64+ participants in double elimination.
+No performance optimization for large brackets.
+
+FEATURES:
+- Implement viewport-based culling (only render visible matches)
+- Add canvas layer caching for static elements (titles, round labels)
+- Implement virtual scrolling for extremely large brackets
+- Add performance metrics dashboard showing render time
+- Optimize font rendering (use native canvas font, not web fonts)
+- Add GPU acceleration detection and fallback
+
+BENCHMARK TARGETS:
+- 64 participants (double elim) - target < 300ms render
+- 128 participants - target < 1000ms render
+
+FILES: bracket-display/public/js/bracket-renderer.js
+
+EFFORT: High (3-4 days)
+IMPACT: Medium - Better UX for large tournaments
+
+--------------------------------------------------------------------------------
+NEW-5. DISPLAY OFFLINE RESILIENCE (MEDIUM PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Display services go blank if WebSocket disconnects and HTTP polling
+fails. Should show cached data with "Connection Lost" overlay.
+
+FEATURES:
+- Store last successful bracket/match data in localStorage
+- Show "Connection Lost - Retrying..." overlay when disconnected
+- Display last-known match info (not live, but not blank)
+- Auto-reload page if disconnected > 2 minutes
+- Add visual indicator of data staleness (fade/opacity)
+- Log connectivity issues for debugging
+
+FILES:
+- bracket-display/public/js/bracket-display.js
+- match-display/public/js/match-display.js
+- flyer-display/public/js/flyer-display.js
+
+EFFORT: Medium (2 days)
+IMPACT: High - Prevents blank displays during network issues
+
+--------------------------------------------------------------------------------
+NEW-6. ACTIVITY LOGGING COMPLETENESS (MEDIUM PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Activity logging exists but misses critical operations. No logging for
+settings changes, failed logins, API errors, or data exports.
+
+FEATURES:
+- Add activity log entry for all settings changes (before/after values)
+- Log all failed login attempts with IP address and timestamp
+- Log all failed API requests (> 400 status) with user/IP
+- Add entry for data exports (tournaments/players, date range, who exported)
+- Create retention policy (auto-archive logs > 90 days)
+- Add filtering/search in Platform Admin audit log UI
+
+FILES:
+- services/activity-logger.js (extend)
+- routes/exports.js (add logging)
+- routes/auth.js (failed login logging)
+- middleware/auth.js (API error logging)
+
+EFFORT: Medium (2 days)
+IMPACT: Medium - Compliance & debugging
+
+--------------------------------------------------------------------------------
+NEW-7. BULK CHECK-IN OPERATIONS (LOW PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Check-in is single-participant only. With 64 participants, checking
+in each individually takes ~60 seconds.
+
+FEATURES:
+- Add "Check In Multiple" modal with participant selection
+- Implement QR code scanning for instant check-in (mobile camera)
+- Add batch check-in via CSV/names list
+- Show check-in count progress badge on participants page
+- Add "Check In All Remaining" button (after confirming)
+- Implement undo-last-N-check-ins feature
+
+FILES:
+- routes/participants.js (bulk check-in endpoint)
+- public/js/participants.js (UI for multi-select)
+
+EFFORT: Medium (2 days)
+IMPACT: Medium - Tournament day efficiency
+
+--------------------------------------------------------------------------------
+NEW-8. DQ TIMER ENHANCEMENTS (LOW PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Current DQ timer is basic. Missing features for competitive tournaments.
+
+FEATURES:
+- Add preset custom durations (30s, 60s, 90s, 180s) with quick buttons
+- Implement per-match DQ timer history
+- Add "Give Extra Time" button (+30s) during active timer
+- Send push notification when DQ timer expires
+- Add optional sound alert at specific thresholds (60s, 30s, 10s, 5s, 0s)
+- Track DQ time statistics (average DQ wait time, frequency)
+
+FILES:
+- services/dq-timer.js (extend)
+- public/js/command-center.js (UI enhancements)
+
+EFFORT: Low (1-2 days)
+IMPACT: Medium - Better tournament flow
+
+--------------------------------------------------------------------------------
+NEW-9. FLYER TRANSITION EFFECTS (LOW PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Flyer transitions are instant (jarring). No animation between images.
+
+FEATURES:
+- Add configurable transition effects (fade, slide, cross-fade)
+- Implement fade-in on flyer load (~500ms)
+- Add slideshow mode with auto-advance interval
+- Show visual indicator of "loading" during image fetch
+- Add debug mode showing current flyer URL and file size
+
+FILES: flyer-display/public/js/flyer-display.js
+
+EFFORT: Low (1 day)
+IMPACT: Low - Visual polish
+
+--------------------------------------------------------------------------------
+NEW-10. PLATFORM ADMIN SERVICE LOGS TAB (LOW PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Platform Admin has 7 tabs but "Service Logs" tab shows TODO comment.
+Superadmin can't view system service logs from UI.
+
+FEATURES:
+- Fetch journalctl output via /api/admin/logs endpoint
+- Support filtering by service (control-center-admin, match-display, etc.)
+- Support date range filtering and search
+- Add download as text file feature
+- Auto-refresh option with 5-second polling
+
+FILES:
+- routes/platform.js (add /logs endpoint)
+- public/js/platform-admin.js (add tab UI and handler)
+
+EFFORT: Low (1 day)
+IMPACT: Low - Operational convenience
+
+--------------------------------------------------------------------------------
+NEW-11. KEYBOARD SHORTCUTS VISUAL CHEATSHEET (LOW PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Keyboard shortcuts documented in code but not shown to users.
+Pressing '?' shows help but only as console message.
+
+FEATURES:
+- Add visual "Keyboard Shortcuts" modal accessible via '?' key
+- Show shortcuts with icons/graphics for intuitive learning
+- Highlight most frequently used shortcuts (1-5, W, L, Enter)
+- Add tutorial on first-time use suggesting keyboard shortcuts
+- Allow customization of keyboard bindings (user preferences)
+
+FILES:
+- public/command-center.html (add modal HTML)
+- public/js/command-center.js (modal handler)
+
+EFFORT: Low (1 day)
+IMPACT: Low - UX improvement
+
+--------------------------------------------------------------------------------
+NEW-12. TEMPLATE EXPORT/IMPORT (LOW PRIORITY)
+--------------------------------------------------------------------------------
+PROBLEM: Tournament templates exist but can't be shared/exported.
+
+FEATURES:
+- Add export template as JSON file
+- Add import template from JSON
+- Add cloud template sharing (community templates)
+- Add template versioning and changelog
+- Add template usage statistics
+
+FILES:
+- routes/templates.js (export/import endpoints)
+- public/js/settings.js (export/import UI)
+
+EFFORT: Low (1 day)
+IMPACT: Low - Operational convenience
 
 ================================================================================
 CONTACT & REFERENCES

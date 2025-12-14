@@ -18,8 +18,7 @@ const authDataFilePath = path.join(__dirname, '../../auth-data.json');
 // Test user credentials
 const TEST_ADMIN = {
 	username: 'testadmin',
-	password: 'testpassword123',
-	role: 'admin'
+	password: 'testpassword123'
 };
 
 describe('OAuth API', () => {
@@ -49,7 +48,6 @@ describe('OAuth API', () => {
 					id: 1,
 					username: TEST_ADMIN.username,
 					password: adminHash,
-					role: TEST_ADMIN.role,
 					createdAt: new Date().toISOString()
 				}
 			]

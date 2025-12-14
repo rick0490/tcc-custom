@@ -140,6 +140,17 @@ function getDQTimerSettings() {
 }
 
 /**
+ * Get bracket display settings with defaults
+ * @returns {Object} Bracket display settings
+ */
+function getBracketDisplaySettings() {
+	const settings = loadSystemSettings();
+	return {
+		theme: settings?.bracketDisplay?.theme || 'midnight'
+	};
+}
+
+/**
  * Get adaptive rate limit settings
  * @returns {Object} Rate limit settings
  */
@@ -477,6 +488,7 @@ module.exports = {
 	getSystemDefaults,
 	getDisplaySettings,
 	getDQTimerSettings,
+	getBracketDisplaySettings,
 	getAdaptiveRateLimitSettings,
 
 	// User management

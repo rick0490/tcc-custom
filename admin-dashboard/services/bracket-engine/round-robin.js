@@ -11,6 +11,9 @@
  * - Group stage support
  */
 
+const { createLogger } = require('../debug-logger');
+const logger = createLogger('bracket-engine:round-robin');
+
 /**
  * Generate round robin schedule using circle method
  *
@@ -29,6 +32,13 @@ function generate(participants, options = {}) {
         pointsPerResult = { win: 1, draw: 0.5, loss: 0 },
         allowTies = false
     } = options;
+
+    logger.log('generate:start', {
+        participantCount: participants.length,
+        iterations,
+        rankedBy,
+        allowTies
+    });
 
     // Sort by seed
     const sorted = [...participants].sort((a, b) => (a.seed || 999) - (b.seed || 999));
@@ -128,6 +138,15 @@ function generate(participants, options = {}) {
         isOdd,
         rankedBy
     };
+
+    logger.log('generate:complete', {
+        matchCount: matches.length,
+        totalRounds,
+        roundsPerIteration,
+        iterations,
+        isOdd,
+        expectedMatches
+    });
 
     return {
         type: 'round_robin',

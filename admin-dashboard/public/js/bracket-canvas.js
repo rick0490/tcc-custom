@@ -13,24 +13,151 @@ const BracketCanvas = (function() {
 	const PADDING = 50;
 	const PLAYER_HEIGHT = MATCH_HEIGHT / 2;
 
-	// Colors
-	const COLORS = {
-		background: '#111827',
-		matchBg: '#1f2937',
-		matchBgHover: '#374151',
-		matchBorder: '#4b5563',
-		matchBorderHighlight: '#f59e0b',
-		text: '#ffffff',
-		textMuted: '#9ca3af',
-		textSecondary: '#d1d5db',
-		seed: '#3b82f6',
-		seedChanged: '#f59e0b',
-		bye: '#4b5563',
-		byeBorder: '#6b7280',
-		connector: '#4b5563',
-		winner: '#22c55e',
-		roundHeader: '#6b7280'
+	// Theme Definitions
+	const THEMES = {
+		midnight: {
+			name: 'Midnight',
+			description: 'Professional esports aesthetic',
+			background: '#111827',
+			matchBg: '#1f2937',
+			matchBgHover: '#374151',
+			matchBorder: '#4b5563',
+			matchBorderHighlight: '#f59e0b',
+			text: '#ffffff',
+			textMuted: '#9ca3af',
+			textSecondary: '#d1d5db',
+			seed: '#3b82f6',
+			seedChanged: '#f59e0b',
+			bye: '#4b5563',
+			byeBorder: '#6b7280',
+			connector: '#4b5563',
+			winner: '#22c55e',
+			roundHeader: '#6b7280'
+		},
+		arctic: {
+			name: 'Arctic Light',
+			description: 'Clean, bright theme for well-lit venues',
+			background: '#f8fafc',
+			matchBg: '#ffffff',
+			matchBgHover: '#f1f5f9',
+			matchBorder: '#cbd5e1',
+			matchBorderHighlight: '#f59e0b',
+			text: '#1e293b',
+			textMuted: '#64748b',
+			textSecondary: '#475569',
+			seed: '#0ea5e9',
+			seedChanged: '#f59e0b',
+			bye: '#e2e8f0',
+			byeBorder: '#94a3b8',
+			connector: '#94a3b8',
+			winner: '#059669',
+			roundHeader: '#475569'
+		},
+		neon: {
+			name: 'Neon Arcade',
+			description: 'Vibrant cyberpunk/retro gaming',
+			background: '#0f0f1a',
+			matchBg: '#1a1a2e',
+			matchBgHover: '#252542',
+			matchBorder: '#e94560',
+			matchBorderHighlight: '#ff00ff',
+			text: '#eaeaea',
+			textMuted: '#8b8b9e',
+			textSecondary: '#b8b8cc',
+			seed: '#00d9ff',
+			seedChanged: '#ff00ff',
+			bye: '#16213e',
+			byeBorder: '#e94560',
+			connector: '#e94560',
+			winner: '#00ff88',
+			roundHeader: '#e94560'
+		},
+		royal: {
+			name: 'Royal Tournament',
+			description: 'Classic gold/navy sports feel',
+			background: '#0c1929',
+			matchBg: '#132743',
+			matchBgHover: '#1a3a5c',
+			matchBorder: '#d4af37',
+			matchBorderHighlight: '#ffd700',
+			text: '#f5f5f5',
+			textMuted: '#8fa3bf',
+			textSecondary: '#b8c9dc',
+			seed: '#d4af37',
+			seedChanged: '#ff6b35',
+			bye: '#1a3a5c',
+			byeBorder: '#d4af37',
+			connector: '#d4af37',
+			winner: '#50c878',
+			roundHeader: '#d4af37'
+		},
+		forest: {
+			name: 'Forest',
+			description: 'Nature-inspired, calming green tones',
+			background: '#1a2f1a',
+			matchBg: '#243524',
+			matchBgHover: '#2d4a2d',
+			matchBorder: '#4a7c4a',
+			matchBorderHighlight: '#7fff00',
+			text: '#e8f5e8',
+			textMuted: '#8fbc8f',
+			textSecondary: '#a8d8a8',
+			seed: '#32cd32',
+			seedChanged: '#ffa500',
+			bye: '#2d4a2d',
+			byeBorder: '#4a7c4a',
+			connector: '#4a7c4a',
+			winner: '#7fff00',
+			roundHeader: '#6b8e6b'
+		}
 	};
+
+	// Current theme (dynamic)
+	let currentThemeId = 'midnight';
+	let COLORS = { ...THEMES.midnight };
+
+	/**
+	 * Set the active theme
+	 * @param {string} themeId - Theme identifier (midnight, arctic, neon, royal, forest)
+	 */
+	function setTheme(themeId) {
+		if (THEMES[themeId]) {
+			currentThemeId = themeId;
+			COLORS = { ...THEMES[themeId] };
+			localStorage.setItem('bracketTheme', themeId);
+			// Re-render if canvas is initialized
+			if (canvas && state.visualization) {
+				render(state.visualization);
+			}
+		}
+	}
+
+	/**
+	 * Get the current theme ID
+	 * @returns {string} Current theme identifier
+	 */
+	function getTheme() {
+		return currentThemeId;
+	}
+
+	/**
+	 * Get all available themes
+	 * @returns {Object} All theme definitions
+	 */
+	function getThemes() {
+		return THEMES;
+	}
+
+	/**
+	 * Load theme from localStorage
+	 */
+	function loadTheme() {
+		const saved = localStorage.getItem('bracketTheme') || 'midnight';
+		if (THEMES[saved]) {
+			currentThemeId = saved;
+			COLORS = { ...THEMES[saved] };
+		}
+	}
 
 	// State
 	let canvas = null;
@@ -43,17 +170,30 @@ const BracketCanvas = (function() {
 		zoom: 1,
 		panX: 0,
 		panY: 0,
-		isDragging: false,
+		isPanning: false,
 		lastMouseX: 0,
 		lastMouseY: 0,
 		canvasWidth: 800,
-		canvasHeight: 600
+		canvasHeight: 600,
+		// Drag-drop state
+		playerSlots: [],       // Array of {x, y, width, height, participantId, seed}
+		dragState: {
+			isDragging: false,
+			sourceSlot: null,  // The slot being dragged
+			currentX: 0,
+			currentY: 0,
+			hoverSlot: null    // Slot being hovered over
+		},
+		onSwapCallback: null   // Callback when players are swapped
 	};
 
 	/**
 	 * Initialize canvas
 	 */
 	function init() {
+		// Load saved theme preference
+		loadTheme();
+
 		canvas = document.getElementById('bracketCanvas');
 		if (!canvas) return;
 
@@ -87,9 +227,10 @@ const BracketCanvas = (function() {
 		if (!canvas) return;
 
 		state.visualization = visualization;
-		state.participants = participants;
-		state.currentSeeds = currentSeeds;
-		state.originalSeeds = originalSeeds;
+		state.participants = participants || [];
+		state.currentSeeds = currentSeeds || new Map();
+		state.originalSeeds = originalSeeds || new Map();
+		state.playerSlots = []; // Clear slots on re-render
 
 		// Calculate canvas size based on bracket structure
 		const dims = calculateDimensions(visualization);
@@ -105,6 +246,13 @@ const BracketCanvas = (function() {
 		canvas.height = Math.max(dims.height, containerHeight);
 
 		draw();
+	}
+
+	/**
+	 * Set callback for when players are swapped
+	 */
+	function setSwapCallback(callback) {
+		state.onSwapCallback = callback;
 	}
 
 	/**
@@ -392,6 +540,7 @@ const BracketCanvas = (function() {
 	 */
 	function drawMatch(match, x, y, roundIndex, totalRounds) {
 		const isBye = match.isBye || (!match.player1 && !match.player2);
+		const isFirstRound = roundIndex === 0; // First round matches are draggable
 
 		// Match background
 		ctx.fillStyle = isBye ? COLORS.bye : COLORS.matchBg;
@@ -403,7 +552,7 @@ const BracketCanvas = (function() {
 		ctx.stroke();
 
 		// Player 1 (top half)
-		drawPlayer(match.player1, x, y, match.winnerId);
+		drawPlayer(match.player1, x, y, match.winnerId, isFirstRound);
 
 		// Divider line
 		ctx.strokeStyle = COLORS.matchBorder;
@@ -413,7 +562,7 @@ const BracketCanvas = (function() {
 		ctx.stroke();
 
 		// Player 2 (bottom half)
-		drawPlayer(match.player2, x, y + PLAYER_HEIGHT, match.winnerId);
+		drawPlayer(match.player2, x, y + PLAYER_HEIGHT, match.winnerId, isFirstRound);
 
 		// Match identifier badge
 		if (match.identifier) {
@@ -427,8 +576,13 @@ const BracketCanvas = (function() {
 
 	/**
 	 * Draw player row within match
+	 * @param {Object} player - Player object
+	 * @param {number} x - X position
+	 * @param {number} y - Y position
+	 * @param {number} winnerId - Winner's participant ID
+	 * @param {boolean} isFirstRound - Whether this is a first-round match (draggable)
 	 */
-	function drawPlayer(player, x, y, winnerId) {
+	function drawPlayer(player, x, y, winnerId, isFirstRound = false) {
 		if (!player) {
 			// TBD slot
 			ctx.fillStyle = COLORS.textMuted;
@@ -443,6 +597,39 @@ const BracketCanvas = (function() {
 		const seedChanged = seed !== originalSeed;
 		const isWinner = winnerId && participantId === winnerId;
 		const name = player.name || 'TBD';
+
+		// Check if this slot is being dragged or hovered
+		const isDragSource = state.dragState.isDragging &&
+			state.dragState.sourceSlot?.participantId === participantId;
+		const isHoverTarget = state.dragState.isDragging &&
+			state.dragState.hoverSlot?.participantId === participantId;
+
+		// Record slot position for hit detection (only for first-round matches with real participants)
+		if (isFirstRound && participantId && name !== 'BYE') {
+			state.playerSlots.push({
+				x: x,
+				y: y,
+				width: MATCH_WIDTH,
+				height: PLAYER_HEIGHT,
+				participantId: participantId,
+				seed: seed,
+				name: name
+			});
+		}
+
+		// Highlight hover target
+		if (isHoverTarget && !isDragSource) {
+			ctx.fillStyle = COLORS.matchBorderHighlight;
+			ctx.globalAlpha = 0.3;
+			roundRect(ctx, x + 2, y + 2, MATCH_WIDTH - 4, PLAYER_HEIGHT - 4, 2);
+			ctx.fill();
+			ctx.globalAlpha = 1;
+		}
+
+		// Dim the source slot while dragging
+		if (isDragSource) {
+			ctx.globalAlpha = 0.4;
+		}
 
 		// Seed badge
 		if (seed) {
@@ -479,6 +666,11 @@ const BracketCanvas = (function() {
 			ctx.textAlign = 'right';
 			ctx.fillText(player.score.toString(), x + MATCH_WIDTH - 8, y + 19);
 			ctx.textAlign = 'left';
+		}
+
+		// Reset alpha if it was dimmed
+		if (isDragSource) {
+			ctx.globalAlpha = 1;
 		}
 	}
 
@@ -527,32 +719,166 @@ const BracketCanvas = (function() {
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
 	}
 
+	/**
+	 * Convert screen coordinates to canvas coordinates (accounting for pan/zoom)
+	 */
+	function screenToCanvas(screenX, screenY) {
+		const rect = canvas.getBoundingClientRect();
+		const x = (screenX - rect.left - state.panX) / state.zoom;
+		const y = (screenY - rect.top - state.panY) / state.zoom;
+		return { x, y };
+	}
+
+	/**
+	 * Find player slot at given canvas coordinates
+	 */
+	function findSlotAtPosition(canvasX, canvasY) {
+		for (const slot of state.playerSlots) {
+			if (canvasX >= slot.x && canvasX <= slot.x + slot.width &&
+				canvasY >= slot.y && canvasY <= slot.y + slot.height) {
+				return slot;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Draw the drag preview overlay
+	 */
+	function drawDragPreview() {
+		if (!state.dragState.isDragging || !state.dragState.sourceSlot) return;
+
+		const slot = state.dragState.sourceSlot;
+		const canvasPos = screenToCanvas(state.dragState.currentX, state.dragState.currentY);
+
+		// Draw semi-transparent preview of the dragged player
+		ctx.save();
+
+		// Apply pan/zoom
+		ctx.translate(state.panX, state.panY);
+		ctx.scale(state.zoom, state.zoom);
+
+		// Draw at cursor position (centered)
+		const previewX = canvasPos.x - MATCH_WIDTH / 2;
+		const previewY = canvasPos.y - PLAYER_HEIGHT / 2;
+
+		// Background
+		ctx.globalAlpha = 0.9;
+		ctx.fillStyle = COLORS.matchBg;
+		ctx.strokeStyle = COLORS.matchBorderHighlight;
+		ctx.lineWidth = 2;
+		roundRect(ctx, previewX, previewY, MATCH_WIDTH, PLAYER_HEIGHT, 4);
+		ctx.fill();
+		ctx.stroke();
+
+		// Seed badge
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = COLORS.seedChanged;
+		roundRect(ctx, previewX + 5, previewY + 5, 22, 20, 3);
+		ctx.fill();
+
+		ctx.fillStyle = COLORS.text;
+		ctx.font = 'bold 10px JetBrains Mono, monospace';
+		ctx.textAlign = 'center';
+		ctx.fillText(slot.seed?.toString() || '?', previewX + 16, previewY + 18);
+		ctx.textAlign = 'left';
+
+		// Name
+		ctx.fillStyle = COLORS.text;
+		ctx.font = '12px Inter, sans-serif';
+		ctx.fillText(slot.name, previewX + 32, previewY + 19);
+
+		ctx.restore();
+	}
+
 	// Pan/Zoom handlers
 	function handleMouseDown(e) {
-		state.isDragging = true;
-		state.lastMouseX = e.clientX;
-		state.lastMouseY = e.clientY;
-		canvas.style.cursor = 'grabbing';
+		const canvasPos = screenToCanvas(e.clientX, e.clientY);
+		const slot = findSlotAtPosition(canvasPos.x, canvasPos.y);
+
+		if (slot) {
+			// Start drag-drop
+			state.dragState.isDragging = true;
+			state.dragState.sourceSlot = slot;
+			state.dragState.currentX = e.clientX;
+			state.dragState.currentY = e.clientY;
+			state.dragState.hoverSlot = null;
+			canvas.classList.add('dragging');
+			draw();
+		} else {
+			// Start panning
+			state.isPanning = true;
+			state.lastMouseX = e.clientX;
+			state.lastMouseY = e.clientY;
+			canvas.style.cursor = 'grabbing';
+		}
 	}
 
 	function handleMouseMove(e) {
-		if (!state.isDragging) return;
+		const canvasPos = screenToCanvas(e.clientX, e.clientY);
 
-		const dx = e.clientX - state.lastMouseX;
-		const dy = e.clientY - state.lastMouseY;
+		if (state.dragState.isDragging) {
+			// Update drag position
+			state.dragState.currentX = e.clientX;
+			state.dragState.currentY = e.clientY;
 
-		state.panX += dx;
-		state.panY += dy;
+			// Check for hover over other slots
+			const hoverSlot = findSlotAtPosition(canvasPos.x, canvasPos.y);
 
-		state.lastMouseX = e.clientX;
-		state.lastMouseY = e.clientY;
+			// Only hover if it's a different slot than source
+			if (hoverSlot && hoverSlot.participantId !== state.dragState.sourceSlot.participantId) {
+				state.dragState.hoverSlot = hoverSlot;
+			} else {
+				state.dragState.hoverSlot = null;
+			}
 
-		draw();
+			// Redraw with drag preview
+			draw();
+			drawDragPreview();
+		} else if (state.isPanning) {
+			// Handle panning
+			const dx = e.clientX - state.lastMouseX;
+			const dy = e.clientY - state.lastMouseY;
+
+			state.panX += dx;
+			state.panY += dy;
+
+			state.lastMouseX = e.clientX;
+			state.lastMouseY = e.clientY;
+
+			draw();
+		} else {
+			// Update cursor based on hover
+			const slot = findSlotAtPosition(canvasPos.x, canvasPos.y);
+			if (slot) {
+				canvas.classList.add('hovering-slot');
+			} else {
+				canvas.classList.remove('hovering-slot');
+			}
+		}
 	}
 
-	function handleMouseUp() {
-		state.isDragging = false;
-		canvas.style.cursor = 'grab';
+	function handleMouseUp(e) {
+		if (state.dragState.isDragging) {
+			// Complete the swap if hovering over a valid target
+			if (state.dragState.hoverSlot && state.onSwapCallback) {
+				const sourceId = state.dragState.sourceSlot.participantId;
+				const targetId = state.dragState.hoverSlot.participantId;
+				state.onSwapCallback(sourceId, targetId);
+			}
+
+			// Reset drag state
+			state.dragState.isDragging = false;
+			state.dragState.sourceSlot = null;
+			state.dragState.hoverSlot = null;
+			canvas.classList.remove('dragging');
+			draw();
+		}
+
+		if (state.isPanning) {
+			state.isPanning = false;
+			canvas.style.cursor = 'default';
+		}
 	}
 
 	function handleWheel(e) {
@@ -576,36 +902,91 @@ const BracketCanvas = (function() {
 	// Touch handlers
 	let touchStartX = 0;
 	let touchStartY = 0;
+	let touchStartTime = 0;
 
 	function handleTouchStart(e) {
 		if (e.touches.length === 1) {
 			e.preventDefault();
-			state.isDragging = true;
 			touchStartX = e.touches[0].clientX;
 			touchStartY = e.touches[0].clientY;
-			state.lastMouseX = touchStartX;
-			state.lastMouseY = touchStartY;
+			touchStartTime = Date.now();
+
+			const canvasPos = screenToCanvas(touchStartX, touchStartY);
+			const slot = findSlotAtPosition(canvasPos.x, canvasPos.y);
+
+			if (slot) {
+				// Start drag-drop on touch
+				state.dragState.isDragging = true;
+				state.dragState.sourceSlot = slot;
+				state.dragState.currentX = touchStartX;
+				state.dragState.currentY = touchStartY;
+				state.dragState.hoverSlot = null;
+				canvas.classList.add('dragging');
+				draw();
+			} else {
+				// Start panning
+				state.isPanning = true;
+				state.lastMouseX = touchStartX;
+				state.lastMouseY = touchStartY;
+			}
 		}
 	}
 
 	function handleTouchMove(e) {
-		if (e.touches.length === 1 && state.isDragging) {
+		if (e.touches.length === 1) {
 			e.preventDefault();
-			const dx = e.touches[0].clientX - state.lastMouseX;
-			const dy = e.touches[0].clientY - state.lastMouseY;
+			const touchX = e.touches[0].clientX;
+			const touchY = e.touches[0].clientY;
+			const canvasPos = screenToCanvas(touchX, touchY);
 
-			state.panX += dx;
-			state.panY += dy;
+			if (state.dragState.isDragging) {
+				// Update drag position
+				state.dragState.currentX = touchX;
+				state.dragState.currentY = touchY;
 
-			state.lastMouseX = e.touches[0].clientX;
-			state.lastMouseY = e.touches[0].clientY;
+				// Check for hover over other slots
+				const hoverSlot = findSlotAtPosition(canvasPos.x, canvasPos.y);
+				if (hoverSlot && hoverSlot.participantId !== state.dragState.sourceSlot.participantId) {
+					state.dragState.hoverSlot = hoverSlot;
+				} else {
+					state.dragState.hoverSlot = null;
+				}
 
-			draw();
+				draw();
+				drawDragPreview();
+			} else if (state.isPanning) {
+				const dx = touchX - state.lastMouseX;
+				const dy = touchY - state.lastMouseY;
+
+				state.panX += dx;
+				state.panY += dy;
+
+				state.lastMouseX = touchX;
+				state.lastMouseY = touchY;
+
+				draw();
+			}
 		}
 	}
 
-	function handleTouchEnd() {
-		state.isDragging = false;
+	function handleTouchEnd(e) {
+		if (state.dragState.isDragging) {
+			// Complete the swap if hovering over a valid target
+			if (state.dragState.hoverSlot && state.onSwapCallback) {
+				const sourceId = state.dragState.sourceSlot.participantId;
+				const targetId = state.dragState.hoverSlot.participantId;
+				state.onSwapCallback(sourceId, targetId);
+			}
+
+			// Reset drag state
+			state.dragState.isDragging = false;
+			state.dragState.sourceSlot = null;
+			state.dragState.hoverSlot = null;
+			canvas.classList.remove('dragging');
+			draw();
+		}
+
+		state.isPanning = false;
 	}
 
 	function zoomIn() {
@@ -633,6 +1014,10 @@ const BracketCanvas = (function() {
 		draw,
 		zoomIn,
 		zoomOut,
-		resetZoom
+		resetZoom,
+		setTheme,
+		getTheme,
+		getThemes,
+		setSwapCallback
 	};
 })();

@@ -78,6 +78,7 @@ function generateSingleElimVisualization(matches, participantMap, options) {
 	};
 
 	// Process each round
+	const customLabels = options.customLabels || null;
 	for (let r = 1; r <= maxRound; r++) {
 		const roundMatches = mainMatches
 			.filter(m => m.round === r)
@@ -85,7 +86,7 @@ function generateSingleElimVisualization(matches, participantMap, options) {
 
 		const roundData = {
 			round: r,
-			name: getRoundName(r, maxRound, 'single'),
+			name: getRoundName(r, maxRound, 'single', customLabels),
 			matches: roundMatches.map(m => formatMatchForViz(m, participantMap))
 		};
 
@@ -149,25 +150,27 @@ function generateDoubleElimVisualization(matches, participantMap, options) {
 	};
 
 	// Process winners bracket rounds
+	const customLabels = options.customLabels || null;
 	for (let r = 1; r <= maxWinnersRound; r++) {
 		const roundMatches = (winnersRounds[r] || [])
 			.sort((a, b) => (a.bracket_position || 0) - (b.bracket_position || 0));
 
 		bracket.winners.rounds.push({
 			round: r,
-			name: getRoundName(r, maxWinnersRound, 'winners'),
+			name: getRoundName(r, maxWinnersRound, 'winners', customLabels),
 			matches: roundMatches.map(m => formatMatchForViz(m, participantMap))
 		});
 	}
 
 	// Process losers bracket rounds
+	const maxLosersRound = Math.abs(minLosersRound);
 	for (let r = -1; r >= minLosersRound; r--) {
 		const roundMatches = (losersRounds[r] || [])
 			.sort((a, b) => (a.bracket_position || 0) - (b.bracket_position || 0));
 
 		bracket.losers.rounds.push({
 			round: Math.abs(r),
-			name: `Losers Round ${Math.abs(r)}`,
+			name: getRoundName(Math.abs(r), maxLosersRound, 'losers', customLabels),
 			matches: roundMatches.map(m => formatMatchForViz(m, participantMap))
 		});
 	}
@@ -363,8 +366,19 @@ function formatMatchForViz(match, participantMap) {
 
 /**
  * Get round name based on position
+ * @param {number} round - Round number
+ * @param {number} maxRound - Maximum round in bracket
+ * @param {string} bracketType - 'single', 'winners', or 'losers'
+ * @param {Object} customLabels - Optional custom labels { winners: { "1": "Label", ... }, losers: { ... } }
  */
-function getRoundName(round, maxRound, bracketType) {
+function getRoundName(round, maxRound, bracketType, customLabels = null) {
+	// Check for custom label first
+	const key = bracketType === 'losers' ? 'losers' : 'winners';
+	if (customLabels && customLabels[key] && customLabels[key][round.toString()]) {
+		return customLabels[key][round.toString()];
+	}
+
+	// Default behavior
 	const roundsFromEnd = maxRound - round;
 
 	if (bracketType === 'single' || bracketType === 'winners') {
@@ -376,7 +390,7 @@ function getRoundName(round, maxRound, bracketType) {
 		}
 	}
 
-	return `Round ${round}`;
+	return `Losers Round ${round}`;
 }
 
 /**

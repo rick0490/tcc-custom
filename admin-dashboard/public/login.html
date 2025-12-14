@@ -15,6 +15,10 @@
 	<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png">
 	<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png">
 	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+	<!-- Google Fonts -->
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 	<!-- Styles -->
 	<script src="https://cdn.tailwindcss.com"></script>
 	<script>tailwind.config = { corePlugins: { preflight: true } }</script>
@@ -27,18 +31,67 @@
 			document.documentElement.setAttribute('data-theme', theme);
 		})();
 	</script>
+	<style>
+		.tab-btn {
+			padding: 0.75rem 1.5rem;
+			font-weight: 600;
+			border-bottom: 2px solid transparent;
+			transition: all 0.2s;
+		}
+		.tab-btn.active {
+			border-bottom-color: #3b82f6;
+			color: #3b82f6;
+		}
+		.tab-btn:not(.active) {
+			color: #6b7280;
+		}
+		.tab-btn:not(.active):hover {
+			color: #374151;
+		}
+		.tab-content {
+			display: none;
+		}
+		.tab-content.active {
+			display: block;
+		}
+		.key-validation {
+			font-size: 0.75rem;
+			margin-top: 0.25rem;
+		}
+		.key-valid {
+			color: #10b981;
+		}
+		.key-invalid {
+			color: #ef4444;
+		}
+	</style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-4">
 	<div class="login-card rounded-lg shadow-lg w-full max-w-md p-8 border">
 		<!-- Header -->
-		<div class="text-center mb-8">
+		<div class="text-center mb-6">
 			<h1 class="text-3xl font-bold mb-2">Control Center</h1>
-			<p>Sign in to access the dashboard</p>
+			<p id="headerSubtext">Sign in to access the dashboard</p>
+		</div>
+
+		<!-- Tabs -->
+		<div class="flex border-b mb-6">
+			<button id="loginTab" class="tab-btn active flex-1" onclick="switchTab('login')">
+				Sign In
+			</button>
+			<button id="signupTab" class="tab-btn flex-1" onclick="switchTab('signup')">
+				Sign Up
+			</button>
 		</div>
 
 		<!-- Error Message -->
 		<div id="errorMessage" class="hidden mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
 			<span id="errorText"></span>
+		</div>
+
+		<!-- Success Message -->
+		<div id="successMessage" class="hidden mb-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative">
+			<span id="successText"></span>
 		</div>
 
 		<!-- Lockout Message -->
@@ -48,45 +101,139 @@
 		</div>
 
 		<!-- Login Form -->
-		<form id="loginForm" class="space-y-6">
-			<div>
-				<label for="username" class="block text-sm font-medium mb-2">
-					Username
-				</label>
-				<input
-					type="text"
-					id="username"
-					name="username"
-					required
-					autocomplete="username"
-					class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-					placeholder="Enter your username"
-				>
-			</div>
+		<div id="loginContent" class="tab-content active">
+			<form id="loginForm" class="space-y-4">
+				<div>
+					<label for="loginUsername" class="block text-sm font-medium mb-2">
+						Username
+					</label>
+					<input
+						type="text"
+						id="loginUsername"
+						name="username"
+						required
+						autocomplete="username"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						placeholder="Enter your username"
+					>
+				</div>
 
-			<div>
-				<label for="password" class="block text-sm font-medium mb-2">
-					Password
-				</label>
-				<input
-					type="password"
-					id="password"
-					name="password"
-					required
-					autocomplete="current-password"
-					class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-					placeholder="Enter your password"
-				>
-			</div>
+				<div>
+					<label for="loginPassword" class="block text-sm font-medium mb-2">
+						Password
+					</label>
+					<input
+						type="password"
+						id="loginPassword"
+						name="password"
+						required
+						autocomplete="current-password"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						placeholder="Enter your password"
+					>
+				</div>
 
-			<button
-				type="submit"
-				id="loginBtn"
-				class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md transition duration-200"
-			>
-				Sign In
-			</button>
-		</form>
+				<button
+					type="submit"
+					id="loginBtn"
+					class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md transition duration-200"
+				>
+					Sign In
+				</button>
+			</form>
+		</div>
+
+		<!-- Signup Form -->
+		<div id="signupContent" class="tab-content">
+			<form id="signupForm" class="space-y-4">
+				<div>
+					<label for="signupUsername" class="block text-sm font-medium mb-2">
+						Username
+					</label>
+					<input
+						type="text"
+						id="signupUsername"
+						name="username"
+						required
+						autocomplete="username"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						placeholder="Choose a username"
+						pattern="[a-zA-Z0-9_-]{3,30}"
+						title="3-30 characters, letters, numbers, underscores, hyphens"
+					>
+					<p class="text-xs text-gray-500 mt-1">3-30 characters, letters, numbers, underscores, hyphens</p>
+				</div>
+
+				<div>
+					<label for="signupEmail" class="block text-sm font-medium mb-2">
+						Email
+					</label>
+					<input
+						type="email"
+						id="signupEmail"
+						name="email"
+						required
+						autocomplete="email"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						placeholder="your@email.com"
+					>
+				</div>
+
+				<div>
+					<label for="signupPassword" class="block text-sm font-medium mb-2">
+						Password
+					</label>
+					<input
+						type="password"
+						id="signupPassword"
+						name="password"
+						required
+						autocomplete="new-password"
+						minlength="8"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						placeholder="Create a password (min 8 characters)"
+					>
+				</div>
+
+				<div>
+					<label for="signupConfirmPassword" class="block text-sm font-medium mb-2">
+						Confirm Password
+					</label>
+					<input
+						type="password"
+						id="signupConfirmPassword"
+						name="confirmPassword"
+						required
+						autocomplete="new-password"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						placeholder="Confirm your password"
+					>
+				</div>
+
+				<div id="inviteKeySection">
+					<label for="signupInviteKey" class="block text-sm font-medium mb-2">
+						Invite Key <span id="inviteKeyRequired" class="text-red-500">*</span>
+					</label>
+					<input
+						type="text"
+						id="signupInviteKey"
+						name="inviteKey"
+						autocomplete="off"
+						class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent uppercase"
+						placeholder="Enter your invite key"
+					>
+					<p id="keyValidation" class="key-validation"></p>
+				</div>
+
+				<button
+					type="submit"
+					id="signupBtn"
+					class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-md transition duration-200"
+				>
+					Create Account
+				</button>
+			</form>
+		</div>
 
 		<!-- Footer -->
 		<div class="mt-6 text-center text-sm text-gray-600">
@@ -96,62 +243,260 @@
 
 	<script src="js/pwa.js?v=2"></script>
 	<script>
+		// Elements
+		const loginTab = document.getElementById('loginTab');
+		const signupTab = document.getElementById('signupTab');
+		const loginContent = document.getElementById('loginContent');
+		const signupContent = document.getElementById('signupContent');
+		const headerSubtext = document.getElementById('headerSubtext');
+
 		const loginForm = document.getElementById('loginForm');
+		const signupForm = document.getElementById('signupForm');
+
 		const errorMessage = document.getElementById('errorMessage');
 		const errorText = document.getElementById('errorText');
+		const successMessage = document.getElementById('successMessage');
+		const successText = document.getElementById('successText');
 		const lockoutMessage = document.getElementById('lockoutMessage');
 		const lockoutText = document.getElementById('lockoutText');
-		const loginBtn = document.getElementById('loginBtn');
 
+		const loginBtn = document.getElementById('loginBtn');
+		const signupBtn = document.getElementById('signupBtn');
+
+		const inviteKeySection = document.getElementById('inviteKeySection');
+		const inviteKeyInput = document.getElementById('signupInviteKey');
+		const keyValidation = document.getElementById('keyValidation');
+		const inviteKeyRequired = document.getElementById('inviteKeyRequired');
+
+		// State
+		let signupStatus = { signupsAllowed: true, requireInviteKey: true };
+		let keyValidationTimeout = null;
+
+		// Tab switching
+		function switchTab(tab) {
+			// Hide messages
+			hideMessages();
+
+			if (tab === 'login') {
+				loginTab.classList.add('active');
+				signupTab.classList.remove('active');
+				loginContent.classList.add('active');
+				signupContent.classList.remove('active');
+				headerSubtext.textContent = 'Sign in to access the dashboard';
+			} else {
+				loginTab.classList.remove('active');
+				signupTab.classList.add('active');
+				loginContent.classList.remove('active');
+				signupContent.classList.add('active');
+				headerSubtext.textContent = 'Create a new account';
+			}
+		}
+
+		// Hide all messages
+		function hideMessages() {
+			errorMessage.classList.add('hidden');
+			successMessage.classList.add('hidden');
+			lockoutMessage.classList.add('hidden');
+		}
+
+		// Show error
+		function showError(message) {
+			errorText.textContent = message;
+			errorMessage.classList.remove('hidden');
+			successMessage.classList.add('hidden');
+		}
+
+		// Show success
+		function showSuccess(message) {
+			successText.textContent = message;
+			successMessage.classList.remove('hidden');
+			errorMessage.classList.add('hidden');
+		}
+
+		// Check signup status on load
+		async function checkSignupStatus() {
+			try {
+				const response = await fetch('/api/auth/signup-status');
+				const data = await response.json();
+
+				if (data.success) {
+					signupStatus = data;
+
+					// Update invite key visibility
+					if (!data.requireInviteKey) {
+						inviteKeyRequired.style.display = 'none';
+						inviteKeyInput.removeAttribute('required');
+					} else {
+						inviteKeyRequired.style.display = 'inline';
+						inviteKeyInput.setAttribute('required', 'required');
+					}
+
+					// Disable signup tab if signups not allowed
+					if (!data.signupsAllowed) {
+						signupTab.disabled = true;
+						signupTab.title = data.reason || 'Signups are currently closed';
+						signupTab.style.opacity = '0.5';
+						signupTab.style.cursor = 'not-allowed';
+					}
+				}
+			} catch (err) {
+				console.error('Failed to check signup status:', err);
+			}
+		}
+
+		// Validate invite key (debounced)
+		function validateInviteKey() {
+			const key = inviteKeyInput.value.trim();
+
+			if (!key || key.length < 8) {
+				keyValidation.textContent = '';
+				return;
+			}
+
+			clearTimeout(keyValidationTimeout);
+			keyValidationTimeout = setTimeout(async () => {
+				try {
+					keyValidation.textContent = 'Validating...';
+					keyValidation.className = 'key-validation text-gray-500';
+
+					const response = await fetch('/api/auth/validate-key', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ inviteKey: key })
+					});
+
+					const data = await response.json();
+
+					if (data.valid) {
+						keyValidation.textContent = 'Valid invite key';
+						keyValidation.className = 'key-validation key-valid';
+					} else {
+						keyValidation.textContent = data.error || 'Invalid key';
+						keyValidation.className = 'key-validation key-invalid';
+					}
+				} catch (err) {
+					keyValidation.textContent = 'Could not validate key';
+					keyValidation.className = 'key-validation key-invalid';
+				}
+			}, 500);
+		}
+
+		// Login form submit
 		loginForm.addEventListener('submit', async (e) => {
 			e.preventDefault();
+			hideMessages();
 
-			// Hide previous messages
-			errorMessage.classList.add('hidden');
-			lockoutMessage.classList.add('hidden');
+			const username = document.getElementById('loginUsername').value;
+			const password = document.getElementById('loginPassword').value;
 
-			// Get form values
-			const username = document.getElementById('username').value;
-			const password = document.getElementById('password').value;
-
-			// Disable button during request
 			loginBtn.disabled = true;
 			loginBtn.textContent = 'Signing in...';
 
 			try {
 				const response = await fetch('/api/auth/login', {
 					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json'
-					},
-					credentials: 'include', // Ensure cookies are sent and received
+					headers: { 'Content-Type': 'application/json' },
+					credentials: 'include',
 					body: JSON.stringify({ username, password })
 				});
 
 				const data = await response.json();
 
 				if (response.ok && data.success) {
-					// Redirect to dashboard
 					window.location.href = '/';
 				} else {
-					// Show error message
 					if (data.locked) {
 						lockoutText.textContent = data.message;
 						lockoutMessage.classList.remove('hidden');
 					} else {
-						errorText.textContent = data.message || 'Username or password is incorrect. Please try again.';
-						errorMessage.classList.remove('hidden');
+						showError(data.message || 'Username or password is incorrect.');
 					}
 				}
 			} catch (error) {
-				errorText.textContent = 'An error occurred. Please try again.';
-				errorMessage.classList.remove('hidden');
+				showError('An error occurred. Please try again.');
 			} finally {
-				// Re-enable button
 				loginBtn.disabled = false;
 				loginBtn.textContent = 'Sign In';
 			}
 		});
+
+		// Signup form submit
+		signupForm.addEventListener('submit', async (e) => {
+			e.preventDefault();
+			hideMessages();
+
+			const username = document.getElementById('signupUsername').value;
+			const email = document.getElementById('signupEmail').value;
+			const password = document.getElementById('signupPassword').value;
+			const confirmPassword = document.getElementById('signupConfirmPassword').value;
+			const inviteKey = inviteKeyInput.value.trim();
+
+			// Client-side validation
+			if (password !== confirmPassword) {
+				showError('Passwords do not match');
+				return;
+			}
+
+			if (password.length < 8) {
+				showError('Password must be at least 8 characters');
+				return;
+			}
+
+			if (signupStatus.requireInviteKey && !inviteKey) {
+				showError('Invite key is required');
+				return;
+			}
+
+			signupBtn.disabled = true;
+			signupBtn.textContent = 'Creating account...';
+
+			try {
+				const response = await fetch('/api/auth/signup', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					credentials: 'include',
+					body: JSON.stringify({
+						username,
+						email,
+						password,
+						confirmPassword,
+						inviteKey
+					})
+				});
+
+				const data = await response.json();
+
+				if (response.ok && data.success) {
+					showSuccess('Account created! Redirecting...');
+					setTimeout(() => {
+						window.location.href = '/';
+					}, 1000);
+				} else {
+					showError(data.error || 'Failed to create account');
+				}
+			} catch (error) {
+				showError('An error occurred. Please try again.');
+			} finally {
+				signupBtn.disabled = false;
+				signupBtn.textContent = 'Create Account';
+			}
+		});
+
+		// Invite key input listener
+		inviteKeyInput.addEventListener('input', validateInviteKey);
+
+		// Auto-uppercase invite key
+		inviteKeyInput.addEventListener('input', function() {
+			this.value = this.value.toUpperCase();
+		});
+
+		// Initialize
+		checkSignupStatus();
+
+		// Check URL for tab switch
+		if (window.location.hash === '#signup') {
+			switchTab('signup');
+		}
 	</script>
 </body>
 </html>

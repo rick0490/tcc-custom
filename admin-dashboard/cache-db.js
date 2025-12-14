@@ -1,10 +1,10 @@
 /**
  * Cache Database Module
- * SQLite-based caching for Challonge API responses
- * Reduces redundant API calls and provides offline resilience
+ * SQLite-based caching for tournament data
+ * Reduces redundant queries and provides offline resilience
  */
 
-const analyticsDb = require('./analytics-db');
+const cacheDb = require('./db/cache-db');
 
 // Default TTL values in seconds
 const DEFAULT_TTL = {
@@ -61,7 +61,7 @@ function getTTL(type) {
  * @returns {Object|null} Cached data with metadata or null if not found/expired
  */
 function getCachedData(type, key) {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 	const table = CACHE_TABLES[type];
 
 	if (!table) {
@@ -120,7 +120,7 @@ function getCachedData(type, key) {
  * @param {number} ttlSeconds - Optional TTL override
  */
 function setCachedData(type, key, data, ttlSeconds = null) {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 	const table = CACHE_TABLES[type];
 
 	if (!table) {
@@ -308,7 +308,7 @@ async function getCachedOrFetch(type, key, fetchFn, ttlSeconds = null, options =
 function extractVersion(data) {
 	if (!data) return new Date().toISOString();
 
-	// Tournament data from Challonge v2.1
+	// Tournament data cache
 	if (data.updated_at) return data.updated_at;
 	if (data.updatedAt) return data.updatedAt;
 
@@ -334,7 +334,7 @@ function extractVersion(data) {
  * @param {string} key - Cache key (optional, if not provided invalidates all of type)
  */
 function invalidateCache(type, key = null) {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 	const table = CACHE_TABLES[type];
 
 	if (!table) {
@@ -382,7 +382,7 @@ function invalidateTournamentCaches(tournamentId) {
  * Invalidate all cached data
  */
 function invalidateAllCache() {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 
 	try {
 		Object.values(CACHE_TABLES).forEach(table => {
@@ -400,7 +400,7 @@ function invalidateAllCache() {
  * Clean up expired cache entries
  */
 function cleanupExpiredCache() {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 	const now = new Date().toISOString();
 	let totalDeleted = 0;
 
@@ -426,7 +426,7 @@ function cleanupExpiredCache() {
  * @param {string} stat - Stat to increment ('hit', 'miss', 'api_saved')
  */
 function incrementStats(type, stat) {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 	const now = new Date().toISOString();
 
 	try {
@@ -460,7 +460,7 @@ function incrementStats(type, stat) {
  * @returns {Object} Cache statistics by type
  */
 function getCacheStats() {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 
 	try {
 		const stats = db.prepare('SELECT * FROM cache_stats').all();
@@ -516,7 +516,7 @@ function getCacheStats() {
  * Reset cache statistics
  */
 function resetCacheStats() {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 
 	try {
 		db.prepare('DELETE FROM cache_stats').run();
@@ -534,7 +534,7 @@ function resetCacheStats() {
  * @returns {Object} Summary of cached data for tournament
  */
 function getTournamentCacheSummary(tournamentId) {
-	const db = analyticsDb.getDb();
+	const db = cacheDb.getDb();
 	const summary = {};
 
 	try {

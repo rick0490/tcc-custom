@@ -1,0 +1,9 @@
+{
+  "tournamentId": "local_tour_dec25_vete",
+  "tournamentDbId": 2,
+  "tournamentName": "Test 1",
+  "gameName": null,
+  "bracketUrl": "http://192.168.1.28:2053/bracket/local_tour_dec25_vete",
+  "deployedAt": "2025-12-14T10:59:34.785Z",
+  "lastUpdated": "2025-12-14T10:59:34.785Z"
+}

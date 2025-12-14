@@ -243,26 +243,29 @@ sudo ufw allow from 192.168.1.0/24 to any port 3000
 
 ### Issue: Dashboard Loads but Shows Errors
 
-**Cause:** MagicMirror modules not running or accessible
+**Cause:** Display services not running or accessible
 
 **Fix:**
 
-Check both MagicMirror services:
+Check all display services:
 ```bash
-sudo systemctl status magic-mirror-match
-sudo systemctl status magic-mirror-bracket
+sudo systemctl status match-display
+sudo systemctl status bracket-display
+sudo systemctl status flyer-display
 ```
 
-Test module APIs:
+Test service APIs:
 ```bash
-curl http://localhost:2052/api/tournament/status
-curl http://localhost:2053/api/tournament/status
+curl http://localhost:2052/api/health
+curl http://localhost:2053/api/health
+curl http://localhost:2054/api/health
 ```
 
-If modules are offline:
+If services are offline:
 ```bash
-sudo systemctl start magic-mirror-match
-sudo systemctl start magic-mirror-bracket
+sudo systemctl start match-display
+sudo systemctl start bracket-display
+sudo systemctl start flyer-display
 ```
 
 ---

@@ -106,6 +106,58 @@ class FlyerDisplay {
                 this.handleFlyerUpdate(data);
             }
         });
+
+        // Emergency mode events
+        this.wsClient.on('emergency:activated', (data) => {
+            this.log('emergency:activated', data);
+            this.showTechnicalDifficulties(data);
+        });
+
+        this.wsClient.on('emergency:deactivated', (data) => {
+            this.log('emergency:deactivated', data);
+            this.hideTechnicalDifficulties();
+        });
+
+        this.wsClient.on('emergency:status', (data) => {
+            this.log('emergency:status', data);
+            if (data.active) {
+                this.showTechnicalDifficulties(data);
+            } else {
+                this.hideTechnicalDifficulties();
+            }
+        });
+    }
+
+    /**
+     * Show Technical Difficulties overlay (emergency mode)
+     */
+    showTechnicalDifficulties(data = {}) {
+        const overlay = document.getElementById('emergency-overlay');
+        const timestamp = document.getElementById('emergency-timestamp');
+
+        if (overlay) {
+            overlay.classList.add('active');
+
+            // Update timestamp
+            if (timestamp) {
+                const time = data.activatedAt ? new Date(data.activatedAt) : new Date();
+                timestamp.textContent = `Emergency mode activated at ${time.toLocaleTimeString()}`;
+            }
+
+            this.log('showTechnicalDifficulties', { activatedAt: data.activatedAt });
+        }
+    }
+
+    /**
+     * Hide Technical Difficulties overlay (all clear)
+     */
+    hideTechnicalDifficulties() {
+        const overlay = document.getElementById('emergency-overlay');
+
+        if (overlay) {
+            overlay.classList.remove('active');
+            this.log('hideTechnicalDifficulties');
+        }
     }
 
     /**

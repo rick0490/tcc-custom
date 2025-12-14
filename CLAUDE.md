@@ -48,6 +48,16 @@
 
 All code contributions must follow these standards to maintain consistency across the project.
 
+### [Monetization Strategy](MONETIZATION.md)
+- SaaS subscription tiers and pricing
+- Sponsor revenue system (positions, pricing, features)
+- Hardware bundles and professional services
+- Implementation roadmap and revenue projections
+
+### Project Progress & Planning
+- **[Completed Features](COMPLETED_IMPROVEMENTS.txt)** - All implemented features with dates and details
+- **[Future Roadmap](FUTURE_IMPROVEMENTS.txt)** - Planned features, improvements, and priorities
+
 ## Architecture
 ```
 Admin Dashboard (3000) → Controls all displays via REST API + WebSocket
@@ -61,8 +71,8 @@ Admin Dashboard (3000) → Controls all displays via REST API + WebSocket
 └─ Socket.IO server for instant updates
 
 Match Display (2052)             - Standalone web-based match display (multi-tenant, TV 1/TV 2 layout)
+Bracket Display (2053)           - Standalone web-based bracket display (multi-tenant, native canvas rendering)
 Flyer Display (2054)             - Standalone web-based flyer display (multi-tenant)
-MagicMirror Bracket (8081/2053)  - Native bracket rendering (legacy Challonge iframe fallback available)
 Tournament Signup (3001)         - Mobile PWA for registration
 Stream Deck Controller (Pi Zero 2 W) - Physical control interface (3×5 keys)
 ```
@@ -388,29 +398,22 @@ POST /api/bracket-editor/apply-seeds/:tournamentId // Apply seed changes
 GET  /api/bracket-editor/status/:tournamentId     // Get editor status
 ```
 
-## MagicMirror Bracket Display
+## Bracket Display Service
 
-The bracket display (`MMM-BracketView.js`) supports two modes:
+Standalone web-based bracket display service for browser-based displays.
 
-### Native Mode (default for tcc-custom)
-```javascript
-config: {
-    renderMode: "native",  // Use custom bracket renderer
-    // ...
-}
-```
-- Canvas-based rendering
-- Supports all 4 formats
-- Real-time updates via WebSocket
-- Zoom/pan support
+**Port:** 2053
+**URL Pattern:** `/u/:userId/bracket`
+**Location:** `/root/tcc-custom/bracket-display/`
 
-### Iframe Mode (legacy fallback)
-```javascript
-config: {
-    renderMode: "iframe",  // Legacy: Use external iframe embed
-    // ...
-}
-```
+**Features:**
+- Native canvas bracket rendering (no iframes)
+- All 4 tournament formats supported
+- 5 color themes (Midnight, Arctic, Neon, Royal, Forest)
+- Pan/zoom with mouse and touch
+- Real-time WebSocket updates from admin dashboard
+- Sponsor overlay system (6 positions)
+- Multi-tenant support via userId rooms
 
 ## Match Polling
 
@@ -427,24 +430,24 @@ config: {
 cd /root/tcc-custom/admin-dashboard && npm run dev
 
 # Start all services
-sudo systemctl restart match-display flyer-display magic-mirror-bracket control-center-admin control-center-signup
+sudo systemctl restart control-center-admin control-center-signup match-display bracket-display flyer-display
 
 # Start individual services
 sudo systemctl restart control-center-admin       # Admin Dashboard (port 3000)
 sudo systemctl restart control-center-signup      # Tournament Signup (port 3001)
 sudo systemctl restart match-display              # Match Display (port 2052) - Standalone web service
+sudo systemctl restart bracket-display            # Bracket Display (port 2053) - Standalone web service
 sudo systemctl restart flyer-display              # Flyer Display (port 2054) - Standalone web service
-sudo systemctl restart magic-mirror-bracket       # Bracket Display (ports 8081, 2053)
 
 # View logs
 sudo journalctl -u control-center-admin -f
 sudo journalctl -u control-center-signup -f
 sudo journalctl -u match-display -f
+sudo journalctl -u bracket-display -f
 sudo journalctl -u flyer-display -f
-sudo journalctl -u magic-mirror-bracket -f
 
 # Check service status
-sudo systemctl status control-center-admin control-center-signup match-display flyer-display magic-mirror-bracket
+sudo systemctl status control-center-admin control-center-signup match-display bracket-display flyer-display
 
 # Database inspection
 sqlite3 admin-dashboard/tournaments.db "SELECT * FROM tcc_tournaments;"
@@ -539,7 +542,7 @@ These files from original TCC are not present in tcc-custom:
 │   │   └── match-display.ejs     # HTML template
 │   └── public/
 │       ├── css/
-│       │   └── match-display.css # Styles (migrated from MagicMirror)
+│       │   └── match-display.css # Styles
 │       └── js/
 │           ├── match-display.js  # Main controller
 │           ├── websocket-client.js # Socket.IO client
@@ -559,9 +562,21 @@ These files from original TCC are not present in tcc-custom:
 │       └── js/
 │           ├── flyer-display.js  # Main controller
 │           └── websocket-client.js # Socket.IO client
-├── MagicMirror-bracket/
-│   └── modules/MMM-BracketView/
-│       └── MMM-BracketView.js
+├── bracket-display/                # Standalone web-based bracket display (port 2053)
+│   ├── server.js                 # Express server with EJS templates
+│   ├── package.json
+│   ├── .env                      # ADMIN_WS_URL config (direct IP for WebSocket)
+│   ├── bracket-display.service   # Systemd service file
+│   ├── views/
+│   │   └── bracket-display.ejs   # HTML template with canvas
+│   └── public/
+│       ├── css/
+│       │   └── bracket-display.css # Fullscreen + sponsor overlay styles
+│       └── js/
+│           ├── bracket-display.js  # Main controller
+│           ├── websocket-client.js # Socket.IO client
+│           ├── bracket-renderer.js # Canvas bracket rendering
+│           └── sponsor-overlay.js  # Sponsor overlay manager
 ├── tournament-signup/
 └── stream-deck-controller/
 ```
@@ -621,6 +636,65 @@ These work identically to original TCC:
 - DQ timers
 - Display management
 - Authentication system
+
+## Emergency Controls (Panic Mode)
+
+Emergency mode for fast recovery from issues (power flicker, network issue, wrong score).
+
+**Command Center Controls:**
+| Control | Shortcut | Action |
+|---------|----------|--------|
+| STOP Button (red) | P | Activate emergency mode - all displays show "Technical Difficulties" |
+| Resume Button (amber) | P | Deactivate emergency mode - resume normal operation |
+| Undo | Z | Rollback last match result |
+| Reboot TVs | - | Queue reboot command for all Pi displays |
+
+**API Endpoints:**
+```
+GET  /api/emergency/status      - Get current emergency state
+POST /api/emergency/activate    - Trigger panic mode (body: {reason})
+POST /api/emergency/deactivate  - Resume normal operation
+GET  /api/matches/:id/history   - Get match change history (last 10)
+POST /api/matches/:id/undo      - Undo last match result
+```
+
+**WebSocket Events:**
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `emergency:activated` | Server → Client | `{ active, activatedAt, activatedBy, reason }` |
+| `emergency:deactivated` | Server → Client | `{ deactivatedBy, previousState, timestamp }` |
+| `emergency:status` | Server → Client | `{ active, activatedAt, activatedBy }` |
+
+**Display Overlays:**
+All three display services (match, bracket, flyer) show a "Technical Difficulties" overlay when emergency mode is active:
+- Full-screen black background with z-index 100000
+- Pulsing icon with unique accent color per service:
+  - Match Display: Red (#ff2e2e)
+  - Bracket Display: Blue (#3b82f6)
+  - Flyer Display: Purple (#8b5cf6)
+- "Technical Difficulties" title and "Please stand by" message
+- Timestamp of when emergency was activated
+
+**Match Rollback:**
+Match history is tracked in memory for undo functionality:
+- `recordMatchChange()` called before each score update
+- History stored per tournament in Map
+- Undo reopens match via `matchDb.reopen()`
+- Clears winner/loser and timestamps
+
+**Server State:**
+```javascript
+// Emergency mode state (server.js)
+emergencyModeState = {
+    active: false,
+    activatedAt: null,
+    activatedBy: null,
+    reason: null
+};
+
+// Match history (Map per tournament)
+matchHistory = new Map(); // tournamentId -> [{matchId, previousState, action, user, timestamp}]
+```
 
 ## Match Display Service
 
@@ -767,7 +841,7 @@ All debug logs follow a consistent format:
 | HTTP Requests | `http` | server.js middleware |
 | Match Display | `match-display` | match-display/public/js/*.js |
 | Flyer Display | `flyer-display` | flyer-display/public/js/*.js |
-| Bracket Display | `bracket-display` | MagicMirror-bracket node_helper.js |
+| Bracket Display | `bracket-display` | bracket-display/public/js/*.js |
 | Signup PWA | `signup` | tournament-signup/server.js |
 
 ### Frontend Debug Methods

@@ -106,11 +106,26 @@ Comprehensive unified design specifications for all tournament dashboard compone
 
 ### Font Stack
 
+Uses Google Fonts for consistency across all platforms. Add to `<head>` in all HTML files:
+
+```html
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+```
+
 ```css
---font-primary: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
---font-mono: 'Courier New', Courier, monospace;
+--font-primary: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+--font-display: 'Oswald', 'Inter', sans-serif;
+--font-mono: 'JetBrains Mono', 'Courier New', monospace;
 --font-pdf: 'Helvetica', 'Helvetica Neue', Arial, sans-serif;
 ```
+
+| Font | Variable | Weights | Usage |
+|------|----------|---------|-------|
+| Inter | `--font-primary` | 400-900 | Body text, UI elements |
+| Oswald | `--font-display` | 500-700 | Player names, TV labels, ticker |
+| JetBrains Mono | `--font-mono` | 500, 700 | Timers, scores, code |
 
 ### Dashboard Typography Scale
 
@@ -128,11 +143,11 @@ Comprehensive unified design specifications for all tournament dashboard compone
 
 | Token | Size | Weight | Usage |
 |-------|------|--------|-------|
-| `--tv-title` | 5vw | 900 | Main headings |
-| `--tv-subtitle` | 4.5vw | 900 | Match names |
-| `--tv-body` | 3.5vw | 800 | List items |
-| `--tv-small` | 2.8vw | 700 | Subtitles |
-| `--tv-ticker` | 6vw | 700 | Announcements |
+| `--tv-title` | 5vw | 700 | Main headings |
+| `--tv-subtitle` | 4.5vw | 700 | Match names |
+| `--tv-body` | 3.5vw | 700 | List items |
+| `--tv-small` | 2.8vw | 600 | Subtitles |
+| `--tv-ticker` | 5vw | 700 | Announcements |
 
 ### PDF Typography Scale (Points)
 
@@ -149,9 +164,11 @@ Comprehensive unified design specifications for all tournament dashboard compone
 
 ```css
 :root {
-  /* Font Families */
-  --font-primary: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'Courier New', Courier, monospace;
+  /* Font Families (Google Fonts) */
+  --font-primary: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Oswald', 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-pdf: 'Helvetica', 'Helvetica Neue', Arial, sans-serif;
 
   /* Dashboard Scale */
   --text-display: 2rem;
@@ -167,7 +184,7 @@ Comprehensive unified design specifications for all tournament dashboard compone
   --tv-subtitle: 4.5vw;
   --tv-body: 3.5vw;
   --tv-small: 2.8vw;
-  --tv-ticker: 6vw;
+  --tv-ticker: 5vw;
 }
 ```
 
@@ -650,7 +667,7 @@ Comprehensive unified design specifications for all tournament dashboard compone
 - Background: Pure black (#000000) for OLED power savings
 - Text: Pure white (#FFFFFF) for maximum contrast
 - Borders: 4px width for visibility at distance
-- Font weights: 800-900 for legibility from 10+ feet
+- Font weights: 600-700 for legibility from 10+ feet (max 700)
 - Viewport units (vw) for responsive scaling
 - High contrast animations for active states
 
@@ -668,7 +685,7 @@ Comprehensive unified design specifications for all tournament dashboard compone
   border: var(--border-width-tv) solid var(--gray-700);
   color: var(--color-white);
   font-size: var(--tv-body);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .tv-match-card.active {

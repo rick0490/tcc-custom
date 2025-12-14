@@ -23,13 +23,13 @@ let h2hSearchTimer = null;
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-	console.log('Analytics page loaded');
+	FrontendDebug.log('Analytics', 'Initializing Analytics page');
 
 	await loadGames();
 	await loadOverviewStats();
 	await loadTournaments();
 
-	console.log('Analytics initialization complete');
+	FrontendDebug.log('Analytics', 'Initialization complete');
 });
 
 // ============================================
@@ -46,7 +46,7 @@ async function loadGames() {
 			renderGameTabs();
 		}
 	} catch (error) {
-		console.error('Error loading games:', error);
+		FrontendDebug.error('Analytics', 'Failed to load games', error);
 	}
 }
 
@@ -140,7 +140,7 @@ async function loadOverviewStats() {
 			renderOverviewStats();
 		}
 	} catch (error) {
-		console.error('Error loading overview stats:', error);
+		FrontendDebug.error('Analytics', 'Failed to load overview stats', error);
 	}
 }
 
@@ -184,7 +184,7 @@ async function loadRankings() {
 			content.innerHTML = '<p class="text-gray-400 text-center py-8">No ranking data available for this game</p>';
 		}
 	} catch (error) {
-		console.error('Error loading rankings:', error);
+		FrontendDebug.error('Analytics', 'Failed to load rankings', error);
 		content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading rankings</p>';
 	}
 }
@@ -276,7 +276,7 @@ function searchPlayers() {
 				content.innerHTML = '<p class="text-gray-400 text-center py-8 col-span-full">No players found</p>';
 			}
 		} catch (error) {
-			console.error('Error searching players:', error);
+			FrontendDebug.error('Analytics', 'Failed to search players', error);
 			content.innerHTML = '<p class="text-red-400 text-center py-8 col-span-full">Error searching players</p>';
 		}
 	}, 300);
@@ -320,7 +320,7 @@ async function openPlayerProfile(playerId) {
 			content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading profile</p>';
 		}
 	} catch (error) {
-		console.error('Error loading player profile:', error);
+		FrontendDebug.error('Analytics', 'Failed to load player profile', error);
 		content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading profile</p>';
 	}
 }
@@ -443,7 +443,7 @@ async function loadTournaments() {
 			content.innerHTML = '<p class="text-gray-400 text-center py-8">No archived tournaments found</p>';
 		}
 	} catch (error) {
-		console.error('Error loading tournaments:', error);
+		FrontendDebug.error('Analytics', 'Failed to load tournaments', error);
 		content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading tournaments</p>';
 	}
 }
@@ -510,7 +510,7 @@ async function openTournamentDetails(tournamentId) {
 			content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading tournament</p>';
 		}
 	} catch (error) {
-		console.error('Error loading tournament details:', error);
+		FrontendDebug.error('Analytics', 'Failed to load tournament details', error);
 		content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading tournament</p>';
 	}
 }
@@ -600,7 +600,7 @@ function searchH2HPlayer(playerNum) {
 				dropdown.classList.add('hidden');
 			}
 		} catch (error) {
-			console.error('Error searching players:', error);
+			FrontendDebug.error('Analytics', 'Failed to search H2H players', error);
 			dropdown.classList.add('hidden');
 		}
 	}, 300);
@@ -641,7 +641,7 @@ async function loadHeadToHead() {
 			content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading head-to-head</p>';
 		}
 	} catch (error) {
-		console.error('Error loading head-to-head:', error);
+		FrontendDebug.error('Analytics', 'Failed to load head-to-head', error);
 		content.innerHTML = '<p class="text-red-400 text-center py-8">Error loading head-to-head</p>';
 	}
 }
@@ -724,7 +724,7 @@ async function loadAttendanceStats() {
 			renderTopAttendees(data.topAttendees);
 		}
 	} catch (error) {
-		console.error('Error loading attendance stats:', error);
+		FrontendDebug.error('Analytics', 'Failed to load attendance stats', error);
 	}
 }
 
@@ -861,7 +861,7 @@ async function openArchiveModal() {
 			content.innerHTML = `<p class="text-red-400 text-center py-4">${data.error || 'Error loading tournaments'}</p>`;
 		}
 	} catch (error) {
-		console.error('Error loading archive status:', error);
+		FrontendDebug.error('Analytics', 'Failed to load archive status', error);
 		content.innerHTML = '<p class="text-red-400 text-center py-4">Error loading tournaments</p>';
 	}
 }
@@ -940,7 +940,7 @@ async function archiveTournament(tournamentUrl) {
 			btn.textContent = 'Archive';
 		}
 	} catch (error) {
-		console.error('Error archiving tournament:', error);
+		FrontendDebug.error('Analytics', 'Failed to archive tournament', error);
 		showAlert('Error archiving tournament', 'error');
 	}
 }
@@ -968,7 +968,7 @@ async function loadUpcomingTournaments() {
 			renderSeedingTournamentOptions(data.tournaments);
 		}
 	} catch (error) {
-		console.error('Error loading upcoming tournaments:', error);
+		FrontendDebug.error('Analytics', 'Failed to load upcoming tournaments', error);
 	}
 }
 
@@ -1028,7 +1028,7 @@ function startSeedingPolling() {
 		loadSeedingSuggestions();
 	}, 30000);
 
-	console.log('[Seeding] Started polling every 30 seconds');
+	FrontendDebug.log('Analytics', 'Started seeding polling (30s interval)');
 }
 
 function stopSeedingPolling() {
@@ -1038,7 +1038,7 @@ function stopSeedingPolling() {
 		seedingPollingInterval = null;
 	}
 	updateSeedingPollingUI();
-	console.log('[Seeding] Stopped polling');
+	FrontendDebug.log('Analytics', 'Stopped seeding polling');
 }
 
 function updateSeedingPollingUI() {
@@ -1094,7 +1094,7 @@ async function loadSeedingSuggestions() {
 				`<p class="text-red-400 text-center py-8">${data.error || 'Error loading suggestions'}</p>`;
 		}
 	} catch (error) {
-		console.error('Error loading seeding suggestions:', error);
+		FrontendDebug.error('Analytics', 'Failed to load seeding suggestions', error);
 		document.getElementById('seedingContent').innerHTML =
 			'<p class="text-red-400 text-center py-8">Error loading seeding suggestions</p>';
 	}
@@ -1253,11 +1253,11 @@ document.addEventListener('DOMContentLoaded', () => {
 // Stop polling when page is hidden
 document.addEventListener('visibilitychange', () => {
 	if (document.hidden && seedingPollingActive) {
-		console.log('[Seeding] Page hidden, pausing polling');
+		FrontendDebug.log('Analytics', 'Page hidden, pausing seeding polling');
 		clearInterval(seedingPollingInterval);
 		seedingPollingInterval = null;
 	} else if (!document.hidden && seedingPollingActive && !seedingPollingInterval) {
-		console.log('[Seeding] Page visible, resuming polling');
+		FrontendDebug.log('Analytics', 'Page visible, resuming seeding polling');
 		loadSeedingSuggestions();
 		seedingPollingInterval = setInterval(() => {
 			loadSeedingSuggestions();
@@ -1299,14 +1299,14 @@ async function checkAISeedingStatus() {
 			label.title = data.reason || 'AI seeding not available';
 		}
 	} catch (error) {
-		console.error('[AI Seeding] Error checking status:', error);
+		FrontendDebug.error('Analytics', 'AI seeding status check failed', error);
 	}
 }
 
 // Toggle AI seeding mode
 function toggleAISeeding(enabled) {
 	aiSeedingEnabled = enabled;
-	console.log('[AI Seeding] Mode:', enabled ? 'enabled' : 'disabled');
+	FrontendDebug.log('Analytics', 'AI seeding mode toggled', { enabled });
 
 	// Show/hide regenerate button
 	const regenerateBtn = document.getElementById('regenerateSeedingBtn');
@@ -1331,12 +1331,13 @@ function toggleAISeeding(enabled) {
 
 // Load AI seeding suggestions
 async function loadAISeedingSuggestions(forceRegenerate = false) {
-	console.log('[AI Seeding] === Starting loadAISeedingSuggestions ===');
-	console.log('[AI Seeding] Tournament:', selectedSeedingTournament);
-	console.log('[AI Seeding] Force regenerate:', forceRegenerate);
+	FrontendDebug.log('Analytics', 'Loading AI seeding suggestions', {
+		tournament: selectedSeedingTournament,
+		forceRegenerate
+	});
 
 	if (!selectedSeedingTournament) {
-		console.log('[AI Seeding] No tournament selected, aborting');
+		FrontendDebug.log('Analytics', 'No tournament selected, aborting AI seeding');
 		return;
 	}
 
@@ -1359,32 +1360,31 @@ async function loadAISeedingSuggestions(forceRegenerate = false) {
 
 	try {
 		const url = `/api/analytics/ai-seeding/${selectedSeedingTournament}${forceRegenerate ? '?regenerate=true' : ''}`;
-		console.log('[AI Seeding] Fetching URL:', url);
+		FrontendDebug.api('Analytics', 'Fetching AI seeding', { url });
 
 		const response = await fetch(url);
-		console.log('[AI Seeding] Response status:', response.status);
+		FrontendDebug.api('Analytics', 'AI seeding response', { status: response.status });
 
 		const data = await response.json();
-		console.log('[AI Seeding] Response data:', data);
+		FrontendDebug.api('Analytics', 'AI seeding data received', { success: data.success, source: data.source });
 
 		clearInterval(progressInterval);
 		progressDiv.classList.add('hidden');
 
 		if (data.success) {
-			console.log('[AI Seeding] Success! Source:', data.source);
-			console.log('[AI Seeding] Seeds count:', data.seeds?.length || 0);
+			FrontendDebug.log('Analytics', 'AI seeding success', { source: data.source, seedCount: data.seeds?.length || 0 });
 			currentSeedingSuggestions = data;
 			renderAISeedingSuggestions(data);
 			updateAISeedingStatus(data);
 		} else {
-			console.error('[AI Seeding] API returned error:', data.error);
+			FrontendDebug.error('Analytics', 'AI seeding API error', { error: data.error });
 			document.getElementById('seedingContent').innerHTML =
 				`<p class="text-red-400 text-center py-8">${data.error || 'Error loading AI suggestions'}</p>`;
 		}
 	} catch (error) {
 		clearInterval(progressInterval);
 		progressDiv.classList.add('hidden');
-		console.error('[AI Seeding] Exception caught:', error);
+		FrontendDebug.error('Analytics', 'AI seeding exception', error);
 		document.getElementById('seedingContent').innerHTML =
 			'<p class="text-red-400 text-center py-8">Error loading AI seeding suggestions</p>';
 	}
@@ -1638,7 +1638,7 @@ async function toggleSeedLock(participantId, seed) {
 				})
 			});
 		} catch (error) {
-			console.error('[AI Seeding] Error updating locked seeds:', error);
+			FrontendDebug.error('Analytics', 'Failed to update locked seeds', error);
 		}
 	}
 }
@@ -1762,7 +1762,7 @@ async function exportStandingsCSV(tournamentId, source) {
 
 		showAlert('Standings exported successfully', 'success');
 	} catch (error) {
-		console.error('Error exporting standings:', error);
+		FrontendDebug.error('Analytics', 'Failed to export standings', error);
 		showAlert('Failed to export standings: ' + error.message, 'error');
 	}
 }
@@ -1791,7 +1791,7 @@ async function exportMatchesCSV(tournamentId, source) {
 
 		showAlert('Matches exported successfully', 'success');
 	} catch (error) {
-		console.error('Error exporting matches:', error);
+		FrontendDebug.error('Analytics', 'Failed to export matches', error);
 		showAlert('Failed to export matches: ' + error.message, 'error');
 	}
 }
@@ -1822,7 +1822,7 @@ async function exportPDF(tournamentId, source) {
 
 		showAlert('PDF report downloaded', 'success');
 	} catch (error) {
-		console.error('Error exporting PDF:', error);
+		FrontendDebug.error('Analytics', 'Failed to export PDF', error);
 		showAlert('Failed to export PDF: ' + error.message, 'error');
 	}
 }
@@ -1858,7 +1858,7 @@ async function checkNarrativeStatus() {
 			btn.style.display = narrativeAvailable ? 'inline-flex' : 'none';
 		});
 	} catch (error) {
-		console.error('[Narrative] Status check failed:', error);
+		FrontendDebug.error('Analytics', 'Narrative status check failed', error);
 		narrativeAvailable = false;
 	}
 }
@@ -1933,7 +1933,7 @@ async function generateNarrative(tournamentId, format, regenerate = false) {
 			`;
 		}
 	} catch (error) {
-		console.error('[Narrative] Generation failed:', error);
+		FrontendDebug.error('Analytics', 'Narrative generation failed', error);
 		showAlert('Failed to generate narrative', 'error');
 		document.getElementById('narrativeText').innerHTML = `
 			<p class="text-red-400">Failed to generate narrative: ${escapeHtml(error.message)}</p>

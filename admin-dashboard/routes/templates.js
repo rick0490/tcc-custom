@@ -9,6 +9,9 @@ const express = require('express');
 const router = express.Router();
 const { requireAuthAPI } = require('../middleware/auth');
 const activityLogger = require('../services/activity-logger');
+const { createLogger } = require('../services/debug-logger');
+
+const logger = createLogger('routes:templates');
 
 // Reference to analytics database (set by init)
 let analyticsDb = null;
@@ -36,7 +39,7 @@ router.get('/', requireAuthAPI, (req, res) => {
 		const templates = analyticsDb.getAllTemplates({ gameName: game || null });
 		res.json({ success: true, templates });
 	} catch (error) {
-		console.error('Error fetching templates:', error);
+		logger.error('list', error);
 		res.status(500).json({ success: false, error: error.message });
 	}
 });
@@ -54,7 +57,7 @@ router.get('/:id', requireAuthAPI, (req, res) => {
 		}
 		res.json({ success: true, template });
 	} catch (error) {
-		console.error('Error fetching template:', error);
+		logger.error('get', error, { templateId: req.params.id });
 		res.status(500).json({ success: false, error: error.message });
 	}
 });
@@ -89,7 +92,7 @@ router.post('/', requireAuthAPI, (req, res) => {
 
 		res.json({ success: true, template, message: 'Template created successfully' });
 	} catch (error) {
-		console.error('Error creating template:', error);
+		logger.error('create', error);
 		if (error.message.includes('UNIQUE constraint')) {
 			return res.status(400).json({ success: false, error: 'A template with this name already exists' });
 		}
@@ -118,7 +121,7 @@ router.put('/:id', requireAuthAPI, (req, res) => {
 
 		res.json({ success: true, template, message: 'Template updated successfully' });
 	} catch (error) {
-		console.error('Error updating template:', error);
+		logger.error('update', error, { templateId: req.params.id });
 		if (error.message.includes('UNIQUE constraint')) {
 			return res.status(400).json({ success: false, error: 'A template with this name already exists' });
 		}
@@ -151,7 +154,7 @@ router.delete('/:id', requireAuthAPI, (req, res) => {
 
 		res.json({ success: true, message: 'Template deleted successfully' });
 	} catch (error) {
-		console.error('Error deleting template:', error);
+		logger.error('delete', error, { templateId: req.params.id });
 		if (error.message.includes('Cannot delete default template')) {
 			return res.status(400).json({ success: false, error: 'Cannot delete the default template' });
 		}
@@ -188,7 +191,7 @@ router.post('/from-tournament', requireAuthAPI, (req, res) => {
 
 		res.json({ success: true, template, message: 'Template created from tournament successfully' });
 	} catch (error) {
-		console.error('Error creating template from tournament:', error);
+		logger.error('createFromTournament', error);
 		if (error.message.includes('UNIQUE constraint')) {
 			return res.status(400).json({ success: false, error: 'A template with this name already exists' });
 		}

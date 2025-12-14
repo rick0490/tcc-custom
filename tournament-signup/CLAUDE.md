@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Coding Standards
+
+**IMPORTANT:** Before writing any code, review the [Coding Style Guide](../CODING_STYLE.md) which defines naming conventions, API patterns, and common pitfalls.
+
 ## Project Overview
 
-**Tournament Signup** is a mobile-first Progressive Web App (PWA) for participant registration in gaming tournaments. It integrates with the Challonge API to automatically display current tournament information and register participants on-the-fly.
+**Tournament Signup** is a mobile-first Progressive Web App (PWA) for participant registration in gaming tournaments. It integrates with the admin dashboard's local database to automatically display current tournament information and register participants on-the-fly.
 
 **Key Features:**
 - Mobile-optimized signup form with participant name + optional Instagram handle
@@ -101,32 +105,31 @@ Express Server (port 3001)
     ├─ Static Files (public/*.html)
     └─ REST API (/api/*)
         ├─ Reads tournament ID from state file
-        ├─ Fetches data from Challonge API
-        └─ Submits participants to Challonge
+        ├─ Fetches data from admin dashboard API (local database)
+        └─ Submits participants to local database via admin dashboard
 ```
 
 ### Key Integration Points
 
-**Tournament State File:** `/root/tournament-dashboard/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json`
+**Tournament State File:** `/root/tcc-custom/admin-dashboard/tournament-state.json`
 - Shared with admin dashboard
 - Contains current `tournamentId` and `apiKey`
 - Auto-syncs when admin dashboard updates tournament
 
-**Challonge API v2.1 Endpoints Used:**
-- `GET /v2.1/tournaments/{id}.json` - Fetch tournament details (name, participant count, game name, state)
-- `POST /v2.1/tournaments/{id}/participants.json` - Add new participant
+**Admin Dashboard API Endpoints Used:**
+- `GET /api/tournament/:id` - Fetch tournament details (name, participant count, game name, state)
+- `POST /api/participants/:tournamentId` - Add new participant
 
-**v2.1 API Authentication:**
-- Uses v1 API key with `Authorization-Type: v1` header
-- Content-Type: `application/vnd.api+json` (JSON:API format)
-- No Bearer prefix on Authorization header
+**API Authentication:**
+- Signup app communicates with admin dashboard's local REST API
+- All tournament data stored in local SQLite database
 
 ## Technology Stack
 
 **Backend:**
 - Node.js 24.11.1
 - Express 5.1.0 (routing, static files)
-- Axios 1.7.2 (HTTP client for Challonge API)
+- Axios 1.7.2 (HTTP client for admin dashboard API)
 - dotenv 16.4.5 (environment config)
 - body-parser 1.20.2 (request parsing)
 
@@ -188,11 +191,11 @@ control-center-signup/
 |----------|-------------|---------|
 | `PORT` | Server port | 3001 |
 | `NODE_ENV` | Environment mode | production |
-| `CHALLONGE_API_KEY` | Challonge API key | Required |
-| `TOURNAMENT_STATE_FILE` | Path to shared tournament state JSON | `/root/tournament-dashboard/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json` |
+| `ADMIN_API_URL` | Admin dashboard API URL | `http://localhost:3000` |
+| `TOURNAMENT_STATE_FILE` | Path to shared tournament state JSON | `/root/tcc-custom/admin-dashboard/tournament-state.json` |
 | `FALLBACK_TOURNAMENT_ID` | Optional backup tournament ID if state file unavailable | (empty) |
 
-**IMPORTANT:** API keys are never exposed to the frontend. All Challonge API requests are proxied through the backend.
+**IMPORTANT:** All tournament data requests are proxied through the admin dashboard API.
 
 ### Game Configuration System
 
@@ -212,7 +215,7 @@ Defines game-specific rules, prizes, and additional info for different tournamen
 **Hot-Reload:** Game configs are automatically reloaded when `game-configs.json` is modified, without requiring a service restart. This is powered by chokidar file watcher.
 
 **Game detection logic** (`server.js:28-41`):
-- Matches game name from Challonge to config key
+- Matches game name from tournament data to config key
 - Case-insensitive matching on keywords
 - Example: "Super Smash Bros. Ultimate" → `ssbu` config
 
@@ -275,7 +278,7 @@ The signup form adapts its UI based on the tournament's current lifecycle state,
 
 1. **State Detection** (`public/index.html:221-237`):
    - Fetches tournament data from `/api/tournament` endpoint
-   - Server returns tournament state from Challonge API
+   - Server returns tournament state from local database
    - Calls `updateUIForState()` to show/hide appropriate sections
 
 2. **Auto-Refresh** (`public/index.html:390-400`):
@@ -290,7 +293,7 @@ The signup form adapts its UI based on the tournament's current lifecycle state,
    - Automatically hides when time expires or state changes
 
 4. **Dynamic Bracket Links** (`public/index.html:249-252`):
-   - Uses `full_challonge_url` from API response
+   - Uses `bracketUrl` from API response
    - Fallback to constructing URL from tournament ID
    - Shown during `underway`, `awaiting_review`, and `complete` states
 
@@ -315,9 +318,9 @@ The signup form adapts its UI based on the tournament's current lifecycle state,
 </div>
 ```
 
-**API Enhancements:**
+**API Response:**
 
-The `/api/tournament` endpoint was enhanced to return additional fields:
+The `/api/tournament` endpoint returns tournament details from local database:
 
 ```javascript
 // server.js:198-210
@@ -325,11 +328,11 @@ The `/api/tournament` endpoint was enhanced to return additional fields:
   id: tournamentDetails.id,
   name: tournamentDetails.name,
   gameName: tournamentDetails.game_name,
-  state: tournamentDetails.state,              // NEW: Tournament state
+  state: tournamentDetails.state,              // Tournament state
   participantsCount: tournamentDetails.participants_count,
-  url: tournamentDetails.url,                  // NEW: Tournament URL slug
-  fullChallongeUrl: tournamentDetails.full_challonge_url,  // NEW: Full bracket URL
-  startAt: tournamentDetails.start_at          // NEW: Tournament start time (ISO 8601)
+  urlSlug: tournamentDetails.url_slug,         // Tournament URL slug
+  bracketUrl: tournamentDetails.bracket_url,   // Full bracket URL
+  startAt: tournamentDetails.starts_at         // Tournament start time (ISO 8601)
 }
 ```
 
@@ -368,7 +371,7 @@ Registration settings are configured per-tournament via the admin dashboard and 
 | Signup cap reached | `isFull: true` | 🚫 Red banner: "Tournament Full!"<br>Shows capacity (e.g., "32/32")<br>Signup form hidden |
 | Tournament started (via admin) | `registrationOpen: false`<br>`reason: 'tournament_started'` | 🎮 State-based UI<br>"Tournament In Progress" message<br>Link to live bracket |
 
-**IMPORTANT:** Registration does NOT close based on the scheduled start time in Challonge. Registration stays open until the tournament is **explicitly started** via the admin dashboard "Start Tournament" button. This allows for late walk-in entries at live events.
+**IMPORTANT:** Registration does NOT close based on the scheduled start time. Registration stays open until the tournament is **explicitly started** via the admin dashboard "Start Tournament" button. This allows for late walk-in entries at live events.
 
 **Implementation Details:**
 
@@ -493,7 +496,7 @@ Tournament Starts
 
 Organizers set registration settings when configuring tournaments:
 1. Navigate to admin dashboard (`admin.despairhardware.com`)
-2. Select tournament from Challonge
+2. Create or select tournament
 3. Set **Registration Window** (default: 48 hours, range: 1-336 hours)
 4. Set **Signup Cap** (optional, leave empty for unlimited)
 5. Submit configuration
@@ -527,10 +530,10 @@ When user submits signup form:
 2. **Backend** (`server.js:217-280`):
    - Validates request body
    - Fetches tournament ID from state file
-   - Calls Challonge API to add participant
-   - Instagram handle stored in Challonge's `misc` field as "Instagram: @handle"
+   - Calls admin dashboard API to add participant to local database
+   - Instagram handle stored in `misc` field as "Instagram: @handle"
    - Returns participant ID and seed
-   - Handles Challonge API errors gracefully
+   - Handles API errors gracefully
 
 ### PWA Features
 
@@ -557,7 +560,7 @@ When user submits signup form:
 
 **Edit existing game config:**
 ```bash
-nano /root/tournament-dashboard/control-center-signup/game-configs.json
+nano /root/tcc-custom/tournament-signup/game-configs.json
 # Make changes to rules, prizes, or additional info
 sudo systemctl restart control-center-signup
 ```
@@ -578,14 +581,14 @@ sudo systemctl restart control-center-signup
 
 **Update signup form** (`public/index.html`):
 ```bash
-nano /root/tournament-dashboard/control-center-signup/public/index.html
+nano /root/tcc-custom/tournament-signup/public/index.html
 # Make changes - no build step required
 # Refresh browser to see changes (hard refresh: Ctrl+Shift+R)
 ```
 
 **Update rules page** (`public/rules.html`):
 ```bash
-nano /root/tournament-dashboard/control-center-signup/public/rules.html
+nano /root/tcc-custom/tournament-signup/public/rules.html
 # Dynamic content loaded via JavaScript from /api/game-config
 # Static structure can be modified directly
 ```
@@ -613,20 +616,20 @@ app.get('/api/my-endpoint', async (req, res) => {
 sudo systemctl restart control-center-signup
 ```
 
-### Testing Challonge Integration
+### Testing Admin Dashboard Integration
 
-**Verify API key:**
+**Verify admin dashboard API:**
 ```bash
-curl "https://api.challonge.com/v1/tournaments.json?api_key=YOUR_API_KEY"
+curl "http://localhost:3000/api/status"
 ```
 
 **Check tournament access:**
 ```bash
 # Get tournament ID from state file
-cat /root/tournament-dashboard/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json
+cat /root/tcc-custom/admin-dashboard/tournament-state.json
 
 # Test API access
-curl "https://api.challonge.com/v1/tournaments/TOURNAMENT_ID.json?api_key=YOUR_API_KEY"
+curl "http://localhost:3000/api/tournament/TOURNAMENT_ID"
 ```
 
 **Monitor signup submissions:**
@@ -657,8 +660,56 @@ curl -sf http://localhost:3001/ > /dev/null && echo "OK" || echo "FAIL"
 
 **Related Testing:**
 - Admin dashboard E2E tests cover tournament setup that affects signup
-- See `/root/tournament-dashboard/admin-dashboard/__tests__/` for test suite
-- See `/root/tournament-dashboard/CLAUDE.md` for full testing documentation
+- See `/root/tcc-custom/admin-dashboard/__tests__/` for test suite
+- See `/root/tcc-custom/CLAUDE.md` for full testing documentation
+
+## Debugging Infrastructure
+
+Verbose debugging for troubleshooting signup PWA issues.
+
+### Backend Logging (server.js)
+
+Debug logging controlled via `DEBUG_MODE` environment variable:
+
+```bash
+# In .env file
+DEBUG_MODE=true
+
+# Or environment variable
+DEBUG_MODE=true npm start
+```
+
+**Log Format:**
+```
+[2025-12-11T10:30:45.123Z] [signup:ACTION] { context data }
+```
+
+**Logged Operations:**
+- Game configs loaded/reloaded (hot-reload via chokidar)
+- Webhook sends (Discord notifications)
+- Tournament state reads
+- System settings reads
+- Admin dashboard API calls (fetch tournament, fetch participants, add participant)
+- Participant signups
+- API errors with full context
+
+**View Logs:**
+```bash
+# View all signup logs
+sudo journalctl -u control-center-signup -f
+
+# Filter by action type
+sudo journalctl -u control-center-signup -f | grep "signup:"
+sudo journalctl -u control-center-signup -f | grep "api"
+sudo journalctl -u control-center-signup -f | grep "participant"
+```
+
+**Example Log Output:**
+```
+[2025-12-11T10:30:45.123Z] [signup:game-configs:loaded] { games: ["ssbu", "melee", "mkw", "default"] }
+[2025-12-11T10:30:46.234Z] [signup:participant:added] { name: "Player1", seed: 12 }
+[2025-12-11T10:30:47.345Z] [signup:webhook:sent] { action: "participant_signup", details: {...} }
+```
 
 ## Troubleshooting
 
@@ -674,15 +725,15 @@ sudo lsof -i :3001
 # Kill conflicting process or change PORT in .env
 
 # 2. Missing dependencies
-cd /root/tournament-dashboard/control-center-signup
+cd /root/tcc-custom/tournament-signup
 npm install
 
 # 3. Permission issues
-ls -la /root/tournament-dashboard/control-center-signup/.env
+ls -la /root/tcc-custom/tournament-signup/.env
 # Ensure .env is readable by root (service runs as root)
 
 # 4. Invalid .env file
-cat /root/tournament-dashboard/control-center-signup/.env
+cat /root/tcc-custom/tournament-signup/.env
 # Verify CHALLONGE_API_KEY is set
 ```
 
@@ -690,7 +741,7 @@ cat /root/tournament-dashboard/control-center-signup/.env
 
 ```bash
 # Check state file exists and contains tournament ID
-cat /root/tournament-dashboard/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json
+cat /root/tcc-custom/admin-dashboard/tournament-state.json
 
 # Should contain:
 # {"tournamentId":"abc123","apiKey":"...","gameName":"..."}
@@ -698,27 +749,26 @@ cat /root/tournament-dashboard/MagicMirror-match/modules/MMM-TournamentNowPlayin
 # If missing:
 # 1. Set up tournament via admin dashboard (admin.despairhardware.com)
 # 2. OR set FALLBACK_TOURNAMENT_ID in .env
-nano /root/tournament-dashboard/control-center-signup/.env
+nano /root/tcc-custom/tournament-signup/.env
 # Add: FALLBACK_TOURNAMENT_ID=your_tournament_id
 sudo systemctl restart control-center-signup
 ```
 
-### Signup Fails / Challonge API Errors
+### Signup Fails / API Errors
 
 ```bash
 # View real-time logs while testing
 sudo journalctl -u control-center-signup -f
 
-# Test Challonge API directly
-curl "https://api.challonge.com/v1/tournaments/TOURNAMENT_ID.json?api_key=YOUR_API_KEY"
+# Test admin dashboard API directly
+curl "http://localhost:3000/api/tournament/TOURNAMENT_ID"
 
-# Common Challonge errors:
-# - 401 Unauthorized: Invalid API key
+# Common API errors:
 # - 404 Not Found: Invalid tournament ID
 # - 422 Unprocessable: Duplicate participant name, tournament started, etc.
 
 # Check error details in browser console (F12)
-# Backend logs show full Challonge error response
+# Backend logs show full API error response
 ```
 
 ### Mobile Access Issues
@@ -770,7 +820,7 @@ navigator.serviceWorker.getRegistrations().then(registrations => {
 
 ```bash
 # Verify game-configs.json is valid JSON
-cat /root/tournament-dashboard/control-center-signup/game-configs.json | python3 -m json.tool
+cat /root/tcc-custom/tournament-signup/game-configs.json | python3 -m json.tool
 
 # Check logs for config loading message on startup
 sudo journalctl -u control-center-signup -n 50 | grep "Loaded game configurations"
@@ -792,10 +842,10 @@ sudo journalctl -u control-center-signup -f
 - Consider adding rate limiting for production (not currently implemented)
 - Client-side validation + server-side validation on all inputs
 
-**API Key Protection:**
-- Challonge API key stored in `.env` (server-side only)
-- Never exposed to browser or frontend code
-- All Challonge API requests proxied through backend
+**API Communication:**
+- All tournament data requests proxied through backend to admin dashboard
+- No direct database access from frontend
+- Server-to-server communication with admin dashboard API
 
 **Input Sanitization:**
 - Participant names: trimmed, max 50 characters (enforced client + server)
@@ -814,26 +864,27 @@ This app is part of a larger tournament system:
 | Component | URL/Port | Purpose |
 |-----------|----------|---------|
 | **Admin Dashboard** | `admin.despairhardware.com:3000` | Tournament setup & control |
-| **MagicMirror Match** | Port 2052 | Current match display (API) |
-| **MagicMirror Bracket** | Port 2053 | Bracket & flyer display (API) |
+| **Match Display** | Port 2052 | Standalone web-based match display |
+| **Bracket Display** | Port 2053 | Standalone web-based bracket display |
+| **Flyer Display** | Port 2054 | Standalone web-based flyer display |
 | **Tournament Signup** | `signup.despairhardware.com:3001` | Participant registration (this app) |
 
 **Shared state file:** All components read/write tournament info via:
 ```
-/root/tournament-dashboard/MagicMirror-match/modules/MMM-TournamentNowPlaying/tournament-state.json
+/root/tcc-custom/admin-dashboard/tournament-state.json
 ```
 
 **Workflow:**
 1. Admin sets up tournament → writes `tournament-state.json`
 2. Signup app reads tournament ID from state file
 3. Participants register via signup app
-4. MagicMirror displays live matches and brackets
+4. Display services show live matches, brackets, and flyers
 
 ## Deployment Checklist
 
 **Initial setup:**
 ```bash
-cd /root/tournament-dashboard/control-center-signup
+cd /root/tcc-custom/tournament-signup
 npm install
 cp .env.example .env  # If exists
 nano .env  # Set CHALLONGE_API_KEY
@@ -867,7 +918,7 @@ curl https://signup.despairhardware.com/api/health
 ## Version History
 
 - **v1.0.0** - Initial release (Nov 19, 2024)
-  - Basic signup form + Challonge integration
+  - Basic signup form + tournament integration
   - Mobile-first responsive design
   - Auto-sync with admin dashboard
 
@@ -880,14 +931,14 @@ curl https://signup.despairhardware.com/api/health
 - **v1.2.0** - Dynamic game configs (Nov 20, 2025)
   - Game-specific rules and prizes
   - Support for SSBU, Melee, MK8, SF6
-  - Automatic game detection from Challonge
+  - Automatic game detection from tournament data
 
 - **v1.3.0** - Tournament state awareness (Nov 20, 2025)
   - Adaptive UI based on tournament lifecycle state
   - State-specific displays: pending, check-in, underway, complete
   - Auto-refresh every 30 seconds to detect state changes
   - Registration countdown timer (when start time is set)
-  - Dynamic bracket links to Challonge
+  - Dynamic bracket links
   - Prevents late signups after tournament starts
   - Better user communication throughout tournament lifecycle
 
@@ -902,12 +953,11 @@ curl https://signup.despairhardware.com/api/health
   - Clear user communication for registration status (too early, full, open)
   - Backend validation enforces restrictions (403 status for blocked signups)
 
-- **v1.5.0** - Challonge API v2.1 Migration (Nov 27, 2025)
-  - Migrated from deprecated Challonge API v1 to v2.1
-  - Uses JSON:API format for requests/responses
-  - `fetchTournamentDetails()` now uses v2.1 endpoint
-  - `addParticipant()` now uses v2.1 endpoint with proper JSON:API structure
-  - Added `getChallongeV2Headers()` helper for consistent API authentication
+- **v1.5.0** - Local Database Migration (Nov 27, 2025)
+  - Migrated from external API to local SQLite database via admin dashboard
+  - All tournament data now stored locally
+  - `fetchTournamentDetails()` now uses admin dashboard API
+  - `addParticipant()` now uses admin dashboard API
   - Response mapping maintains backward compatibility with existing code
 
 - **v1.6.0** - Hot-Reload Game Configs (Dec 7, 2025)

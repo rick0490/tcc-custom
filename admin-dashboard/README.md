@@ -86,7 +86,7 @@ sudo systemctl status tournament-admin
 | `PORT` | Server port | `3000` |
 | `MATCH_API_URL` | Match module API | `http://localhost:2052` |
 | `BRACKET_API_URL` | Bracket module API | `http://localhost:2053` |
-| `FLYERS_PATH` | Flyer storage directory | `/root/tournament-dashboard/MagicMirror-bracket/flyers` |
+| `FLYERS_PATH` | Flyer storage directory | `/root/tcc-custom/admin-dashboard/flyers` |
 
 ## Usage
 
@@ -197,22 +197,24 @@ sudo lsof -i :3000
 
 ### Modules not responding
 
-1. Verify MagicMirror services are running:
+1. Verify display services are running:
    ```bash
-   sudo systemctl status magic-mirror-match
-   sudo systemctl status magic-mirror-bracket
+   sudo systemctl status match-display
+   sudo systemctl status bracket-display
+   sudo systemctl status flyer-display
    ```
 2. Test API endpoints directly:
    ```bash
-   curl http://localhost:2052/api/tournament/status
-   curl http://localhost:2053/api/tournament/status
+   curl http://localhost:2052/api/health
+   curl http://localhost:2053/api/health
+   curl http://localhost:2054/api/health
    ```
 
 ### Flyer upload fails
 
 1. Check permissions on flyers directory:
    ```bash
-   ls -la /root/tournament-dashboard/MagicMirror-bracket/flyers
+   ls -la /root/tcc-custom/admin-dashboard/flyers
    ```
 2. Verify file is PNG format and under 5MB
 3. Check disk space: `df -h`

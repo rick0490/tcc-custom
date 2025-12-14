@@ -34,6 +34,8 @@ const bracketEngine = require('./services/bracket-engine');
 const bracketRenderer = require('./services/bracket-renderer');
 const discordNotify = require('./services/discord-notify');
 const activeTournamentService = require('./services/active-tournament');
+const metricsAggregator = require('./services/metrics-aggregator');
+const backupScheduler = require('./services/backup-scheduler');
 
 // PDF Report Color Palette
 const PDF_COLORS = {
@@ -156,6 +158,7 @@ const systemMonitor = require('./system-monitor');
 // Database modules
 const analyticsDb = require('./analytics-db');  // For player analytics & archiving
 const systemDb = require('./db/system-db');     // For API tokens, OAuth, push subscriptions
+const db = require('./db');                      // Unified database access (for paths)
 
 // Cache database module for API response caching
 const cacheDb = require('./cache-db');
@@ -9218,6 +9221,24 @@ if (require.main === module) {
 			console.log('[Ticker Scheduler] Initialized');
 		} catch (err) {
 			console.error('[Ticker Scheduler] Failed to initialize:', err.message);
+		}
+
+		// Initialize Phase 2 services: Metrics Aggregator
+		try {
+			metricsAggregator.init({ systemDb });
+			console.log('[Metrics Aggregator] Initialized');
+		} catch (err) {
+			console.error('[Metrics Aggregator] Failed to initialize:', err.message);
+		}
+
+		// Initialize Phase 2 services: Backup Scheduler
+		try {
+			const dbPaths = db.getDbPaths();
+			backupScheduler.init({ systemDb, dbPaths });
+			backupScheduler.startScheduler();
+			console.log('[Backup Scheduler] Initialized and started');
+		} catch (err) {
+			console.error('[Backup Scheduler] Failed to initialize:', err.message);
 		}
 	});
 }

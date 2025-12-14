@@ -1,0 +1,59 @@
+{
+  "sponsors": [
+    {
+      "id": "sponsor_1765035546466",
+      "name": "Eureka Heights",
+      "filename": "sponsor_1765035546465.png",
+      "originalFilename": "IMG_0046 (1).png",
+      "position": "bottom-right",
+      "type": "corner",
+      "size": 100,
+      "opacity": 100,
+      "active": true,
+      "order": 1,
+      "createdAt": "2025-12-06T15:39:06.466Z",
+      "updatedAt": "2025-12-09T17:21:26.707Z",
+      "borderRadius": 3
+    },
+    {
+      "id": "sponsor_1765300872304",
+      "name": "Sierra Nevada",
+      "filename": "sponsor_1765300872304.png",
+      "originalFilename": "Untitled design.png",
+      "position": "bottom-banner",
+      "type": "banner",
+      "size": 500,
+      "opacity": 100,
+      "borderRadius": 5,
+      "active": true,
+      "order": 3,
+      "createdAt": "2025-12-09T17:21:12.304Z",
+      "updatedAt": "2025-12-09T19:24:27.739Z",
+      "offsetX": 0,
+      "offsetY": -10
+    }
+  ],
+  "config": {
+    "enabled": false,
+    "rotationEnabled": false,
+    "rotationInterval": 10,
+    "rotationOrder": "sequential",
+    "displays": {
+      "match": true,
+      "bracket": true
+    },
+    "currentIndex": {
+      "top-left": 0,
+      "top-right": 1,
+      "bottom-left": 0,
+      "bottom-right": 1,
+      "top-banner": 0,
+      "bottom-banner": 0
+    },
+    "timerViewEnabled": true,
+    "timerShowDuration": 10,
+    "timerHideDuration": 5,
+    "rotationTransition": 2000
+  },
+  "lastUpdated": "2025-12-09T19:24:27.739Z"
+}
