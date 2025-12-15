@@ -3,9 +3,9 @@ TOURNAMENT CONTROL CENTER - FUTURE IMPROVEMENTS & FEATURE ROADMAP
 ================================================================================
 
 Generated: 2025-11-23
-Updated: 2025-12-14 (Moved 26+ completed features to COMPLETED_IMPROVEMENTS.txt, added new improvement ideas)
+Updated: 2025-12-15 (Added 8 more completed features from Dec 13-15, updated references)
 System: Six-service tournament control platform with admin dashboard,
-        signup PWA, three MagicMirror displays, and Stream Deck controller
+        signup PWA, three standalone display services, and Stream Deck controller
 
 ================================================================================
 OPERATING ENVIRONMENT & CONSTRAINTS
@@ -703,22 +703,16 @@ STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt for full details
 Theme toggle on all pages, system preference detection, localStorage persistence
 
 --------------------------------------------------------------------------------
-46. PUSH NOTIFICATIONS (SIGNUP APP)
+46. PUSH NOTIFICATIONS (SIGNUP APP) - COMPLETED 2025-12-13
 --------------------------------------------------------------------------------
-FEATURES:
-- Push notification opt-in during signup
-- Match called notifications
-- Check-in reminder notifications
-- Tournament starting soon notifications
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt (#57) for full details
+Push notifications for signup confirmations, tournament reminders, check-in alerts.
 
 --------------------------------------------------------------------------------
-47. OFFLINE SIGNUP QUEUE (BACKGROUND SYNC)
+47. OFFLINE SIGNUP QUEUE (BACKGROUND SYNC) - COMPLETED 2025-12-13
 --------------------------------------------------------------------------------
-FEATURES:
-- Queue signup locally when offline
-- Automatically submit when online
-- Show pending status to user
-- Sync status indicator
+STATUS: IMPLEMENTED - See COMPLETED_IMPROVEMENTS.txt (#57) for full details
+Service worker background sync, queue signups when offline, auto-submit when online.
 
 ================================================================================
 TIER 6: AUTOMATION & EFFICIENCY

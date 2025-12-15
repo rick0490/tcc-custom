@@ -29,14 +29,14 @@
 
 These items must be complete before launch. A single failure during a live tournament damages reputation.
 
-### 1.1 Error Handling Standardization
+### 1.1 Error Handling Standardization ✅ COMPLETED 2025-12-15
 **Effort:** 2-3 days | **Source:** NEW-1
 
-- [ ] Create `services/error-handler.js` with standardized error types
-- [ ] Add exponential backoff retry logic for external API calls
-- [ ] Implement circuit breaker pattern for flaky services
-- [ ] Add contextual logging with request ID tracking
-- [ ] Return consistent error response format across all endpoints
+- [x] Create `services/error-handler.js` with standardized error types
+- [x] Add exponential backoff retry logic for external API calls
+- [x] Implement circuit breaker pattern for flaky services
+- [x] Add contextual logging with request ID tracking
+- [x] Return consistent error response format across all endpoints
 
 **Files:** routes/matches.js, routes/analytics.js, routes/participants.js, routes/displays.js
 
@@ -192,15 +192,15 @@ These items must be complete before launch. A single failure during a live tourn
 **Priority:** HIGH
 **Goal:** Features that set bracketspot.com apart from competitors
 
-### 4.1 Discord Bot Integration
+### 4.1 Discord Bot Integration ✅ COMPLETED 2025-12-14
 **Effort:** 3-4 days | **Source:** NEW-1 (Tier 12)
 
-- [ ] Automated match announcements to Discord channel
-- [ ] Player @mentions when matches are called
-- [ ] Results posting with bracket graphics
-- [ ] Commands: !bracket, !standings, !nextmatch @player
+- [x] Automated match announcements to Discord channel
+- [x] Player @mentions when matches are called
+- [x] Results posting with rich embeds
+- [x] Slash commands: /tournament-status, /bracket, /results, /announce
 
-**Files:** admin-dashboard/services/discord-bot.js, admin-dashboard/routes/discord.js
+**Files:** admin-dashboard/services/discord-bot/, admin-dashboard/routes/discord-bot.js
 
 ### 4.2 Real-Time Analytics Dashboard
 **Effort:** 2-3 days | **Source:** NEW-8 (Tier 12)
@@ -321,21 +321,21 @@ These items must be complete before launch. A single failure during a live tourn
 - [ ] Printable confirmation (PDF download)
 - [ ] Scannable by admin for quick check-in
 
-### 6.4 Push Notifications (Signup App)
+### 6.4 Push Notifications (Signup App) ✅ COMPLETED 2025-12-13
 **Effort:** 2-3 days | **Source:** Item #46
 
-- [ ] Push notification opt-in during signup
-- [ ] Match called notifications
-- [ ] Check-in reminder notifications
-- [ ] Tournament starting soon notifications
+- [x] Push notification opt-in during signup
+- [x] Signup confirmation notifications
+- [x] Check-in reminder notifications
+- [x] Tournament starting soon notifications
 
-### 6.5 Offline Signup Queue
+### 6.5 Offline Signup Queue ✅ COMPLETED 2025-12-13
 **Effort:** 2-3 days | **Source:** Item #47
 
-- [ ] Queue signup locally when offline
-- [ ] Automatically submit when online
-- [ ] Show pending status to user
-- [ ] Sync status indicator
+- [x] Queue signup locally when offline
+- [x] Automatically submit when online
+- [x] Show pending status to user
+- [x] Sync status indicator
 
 ---
 
@@ -467,7 +467,7 @@ These items must be complete before launch. A single failure during a live tourn
 
 ## Already Completed (Reference)
 
-Features completed as of 2025-12-14:
+Features completed as of 2025-12-15:
 
 | Feature | Completed |
 |---------|-----------|
@@ -476,13 +476,11 @@ Features completed as of 2025-12-14:
 | Stream Deck WebSocket | 2025-12-07 |
 | Push Notifications | 2025-12-09 |
 | Tournament Templates | 2025-12-09 |
-| Auto-Deploy to Displays | 2025-12-13 |
 | Batch Score Entry | 2025-12-09 |
 | DQ/Forfeit Automation | 2025-12-09 |
 | Match Queue Auto-Advance | 2025-12-09 |
 | Audio Announcements | 2025-12-10 |
 | Tournament Day Checklist | 2025-12-10 |
-| Panic Mode / Emergency Controls | 2025-12-14 |
 | Scheduled Ticker Messages | 2025-12-10 |
 | Automated Sponsor Rotation | 2025-12-10 |
 | AI-Powered Seeding | 2025-12-09 |
@@ -492,6 +490,17 @@ Features completed as of 2025-12-14:
 | Participant Lookup | 2025-12-09 |
 | Dark Mode Toggle | 2025-12-09 |
 | Modular Refactor | 2025-12-09 |
+| Auto-Deploy to Displays | 2025-12-13 |
+| Always-Live Displays | 2025-12-13 |
+| Signup PWA Push Notifications | 2025-12-13 |
+| Signup PWA Offline Support | 2025-12-13 |
+| Backup Scheduling UI | 2025-12-13 |
+| Panic Mode / Emergency Controls | 2025-12-14 |
+| Discord Bot Integration | 2025-12-14 |
+| Video Media Controls (Flyer) | 2025-12-14 |
+| Three New Tournament Formats | 2025-12-15 |
+| Bracket Editor Improvements | 2025-12-15 |
+| Error Handling Standardization | 2025-12-15 |
 
 See **COMPLETED_IMPROVEMENTS.txt** for full details.
 

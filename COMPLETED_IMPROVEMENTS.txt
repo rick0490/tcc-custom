@@ -1530,6 +1530,277 @@ Files:
 - flyer-display/public/css/flyer-display.css (overlay CSS)
 - flyer-display/public/js/flyer-display.js (emergency handlers)
 
+--------------------------------------------------------------------------------
+2025-12-14: Discord Bot Integration (#52)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Full Discord bot with slash commands for tournament notifications
+- Rich embeds for tournament announcements
+- Real-time match updates to designated Discord channels
+- Configurable notification settings per guild
+
+SLASH COMMANDS:
+- /tournament-status - Show current tournament status
+- /bracket - Post bracket link
+- /results - Post tournament results
+- /announce <message> - Send custom announcement
+
+CONFIGURATION:
+- Discord Bot Token in system settings
+- Channel ID configuration per notification type
+- Enable/disable per notification category
+- Rich embed formatting with game icons
+
+FILES CREATED/MODIFIED:
+- admin-dashboard/services/discord-bot/ (NEW directory)
+- admin-dashboard/routes/discord-bot.js (NEW)
+- admin-dashboard/services/discord-notify.js (enhanced)
+
+--------------------------------------------------------------------------------
+2025-12-14: Video Media Controls for Flyer Display (#53)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Remote play/pause/restart controls for video flyers
+- Volume control 0-100% with mute toggle
+- Playlist mode with queue management and auto-advance
+- Drag-drop reorder for playlist items
+- Status reporting from display to admin dashboard
+- Playback state sync across multiple displays
+
+API ENDPOINTS:
+- GET /api/displays/flyer/settings - Get flyer media settings
+- PUT /api/displays/flyer/settings - Update settings
+- POST /api/displays/flyer/control - play/pause/restart/mute/unmute
+- POST /api/displays/flyer/volume - Set volume 0-100
+- GET /api/displays/flyer/playlist - Get playlist
+- PUT /api/displays/flyer/playlist - Update playlist
+- POST /api/displays/flyer/playlist/control - skip/goto/toggle
+- POST /api/displays/flyer/status - Status from display (no auth)
+
+WEBSOCKET EVENTS:
+- flyer:control - Media control commands
+- flyer:volume - Volume changes
+- flyer:settings - Settings updates
+- flyer:playlist - Playlist changes
+- flyer:status - Playback status from display
+
+DATABASE (system.db):
+- flyer_media_settings table with columns:
+  loop_enabled, autoplay_enabled, default_muted, default_volume,
+  playlist_enabled, playlist_loop, playlist_auto_advance, playlist_items_json,
+  playback_state, current_time, duration, is_muted, current_volume
+
+FILES MODIFIED:
+- admin-dashboard/routes/displays.js (new endpoints)
+- admin-dashboard/db/system-db.js (new table)
+- admin-dashboard/public/displays.html (media controls UI)
+- admin-dashboard/public/js/displays.js (control functions)
+- flyer-display/public/js/flyer-display.js (media handlers)
+
+--------------------------------------------------------------------------------
+2025-12-15: Three New Tournament Formats (#54)
+--------------------------------------------------------------------------------
+
+NEW TOURNAMENT FORMATS:
+1. Two-Stage (World Cup Style) - Group stage → knockout playoffs
+2. Free-for-All - Multi-player matches with placement points
+3. Leaderboard - Ongoing rankings across multiple events
+
+TWO-STAGE FORMAT:
+- group_count: 2-8 groups
+- advance_per_group: 1-4 players advance from each group
+- knockout_format: single_elimination or double_elimination
+- current_stage: groups or knockout
+- Group stage uses round robin scheduling
+- Automatic seeding for knockout based on group standings
+
+FREE-FOR-ALL FORMAT:
+- players_per_match: 4-16 players per match
+- total_rounds: 1-10 rounds
+- points_system_json: Customizable placement points
+- tcc_ffa_placements table tracks per-match results
+- Standings calculated by total points
+
+LEADERBOARD FORMAT:
+- format_settings_json with rankingType, decayEnabled, minEventsToRank
+- tcc_leaderboard_events table tracks individual events
+- tcc_leaderboard_results table tracks placements per event
+- Points accumulated across events
+- Optional decay for older events
+
+DATABASE CHANGES:
+- tcc_tournaments: Added group_count, advance_per_group, knockout_format,
+  current_stage, players_per_match, total_rounds, points_system_json,
+  format_settings_json columns
+- tcc_ffa_placements: NEW table (match_id, participant_id, placement, points_awarded)
+- tcc_leaderboard_events: NEW table (tournament_id, event_name, event_date, is_complete)
+- tcc_leaderboard_results: NEW table (event_id, participant_id, placement, points_awarded)
+
+FILES CREATED/MODIFIED:
+- admin-dashboard/services/bracket-engine/two-stage.js (NEW)
+- admin-dashboard/services/bracket-engine/free-for-all.js (NEW)
+- admin-dashboard/services/bracket-engine/leaderboard.js (NEW)
+- admin-dashboard/services/bracket-engine/index.js (format registration)
+- admin-dashboard/services/bracket-engine/test-new-formats.js (NEW)
+- admin-dashboard/services/tournament-db.js (format column support)
+- admin-dashboard/routes/tournaments.js (format handling)
+- admin-dashboard/public/tournament.html (format wizard steps)
+- admin-dashboard/public/js/tournament.js (format UI logic)
+
+--------------------------------------------------------------------------------
+2025-12-15: Bracket Editor Improvements (#55)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Read-only viewing mode for active tournaments (underway state)
+- BYE matches display "BYE" instead of "TBD" for clarity
+- Improved status indicator showing editable vs read-only state
+- Warning banner when viewing non-editable tournament
+
+IMPLEMENTATION:
+- Bracket editor checks tournament state before enabling editing
+- Read-only mode: drag-drop disabled, save button hidden
+- Visual distinction between pending (editable) and underway (view-only)
+- Canvas renders BYE matches with distinct styling
+
+FILES MODIFIED:
+- admin-dashboard/routes/bracket-editor.js
+- admin-dashboard/public/bracket-editor.html
+- admin-dashboard/public/js/bracket-editor.js
+- admin-dashboard/public/js/bracket-canvas.js
+
+--------------------------------------------------------------------------------
+2025-12-13: Always-Live Displays (#56)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Displays auto-sync with tournament data when tournament is deployed
+- No manual refresh required on display TVs
+- WebSocket push for all tournament state changes
+- Automatic bracket re-render on match updates
+- Flyer display auto-updates when new flyer activated
+
+WEBSOCKET EVENTS ENHANCED:
+- tournament:deployed - Sent to all user displays on deploy
+- tournament:activated - Bracket/match displays subscribe
+- matches:update - Real-time match data push (includes full match list)
+- bracket:update - Canvas re-render trigger with theme
+
+IMPLEMENTATION:
+- Display services register with userId on connection
+- Server maintains room subscriptions per user
+- All tournament mutations broadcast to user's room
+- Displays receive full dataset, not just diffs
+
+FILES MODIFIED:
+- admin-dashboard/server.js (enhanced WebSocket broadcasting)
+- admin-dashboard/routes/tournaments.js (deploy broadcasts)
+- match-display/public/js/match-display.js (auto-update handlers)
+- bracket-display/public/js/bracket-display.js (auto-update handlers)
+- flyer-display/public/js/flyer-display.js (activation handlers)
+
+--------------------------------------------------------------------------------
+2025-12-13: Signup PWA Push Notifications and Offline Support (#57)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Push notifications for signup confirmations
+- Offline-first PWA with service worker caching
+- Background sync for queued signups when offline
+- Improved install prompts for iOS/Android
+- Cache-first strategy for static assets
+
+SERVICE WORKER CAPABILITIES:
+- Caches all static assets (HTML, CSS, JS, icons)
+- Queue signups when offline, sync when online
+- Push notification click handling with routing
+- Periodic cache refresh for tournament data
+
+PUSH NOTIFICATION TYPES:
+- Signup confirmation with registration number
+- Tournament starting reminder (1 hour before)
+- Check-in reminder when check-in opens
+
+FILES MODIFIED:
+- tournament-signup/public/service-worker.js (enhanced)
+- tournament-signup/public/manifest.json (updated)
+- tournament-signup/server.js (push subscription handling)
+- tournament-signup/public/index.html (install prompts)
+
+--------------------------------------------------------------------------------
+2025-12-13: Backup Scheduling UI (#58)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Platform Admin backup scheduler interface
+- Daily, weekly, monthly backup schedules
+- Backup retention policies (keep N backups)
+- Email notifications on backup completion/failure
+- One-click manual backup trigger
+- Backup status and history display
+
+CONFIGURATION:
+- Schedule type: Daily at specific time, Weekly on specific day, Monthly
+- Retention: Number of backups to keep (default 30)
+- Notification email (optional)
+- Enabled/disabled toggle per schedule
+
+DATABASE (system.db):
+- backup_schedules table
+- backup_history table with status, size, duration
+
+FILES MODIFIED:
+- admin-dashboard/services/backup-scheduler.js (NEW)
+- admin-dashboard/routes/platform.js (backup endpoints)
+- admin-dashboard/public/platform-admin.html (scheduler UI)
+- admin-dashboard/public/js/platform-admin.js (scheduler functions)
+
+--------------------------------------------------------------------------------
+2025-12-15: Error Handling Standardization (#59)
+--------------------------------------------------------------------------------
+
+FEATURES:
+- Unified error handling across all admin dashboard routes
+- Consistent error response format with codes and messages
+- Error classification: validation, auth, not_found, conflict, server
+- Detailed error logging with request context
+- User-friendly error messages in frontend
+
+ERROR RESPONSE FORMAT:
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "User-friendly error message",
+    "details": {} // Optional additional context
+  }
+}
+```
+
+ERROR CODES:
+- VALIDATION_ERROR - Invalid input data
+- AUTHENTICATION_ERROR - Auth required or invalid
+- AUTHORIZATION_ERROR - Insufficient permissions
+- NOT_FOUND - Resource doesn't exist
+- CONFLICT - Resource state conflict
+- RATE_LIMITED - Too many requests
+- SERVER_ERROR - Internal server error
+
+IMPLEMENTATION:
+- Centralized error handler middleware
+- Route-level try-catch wrappers
+- Async error handling with express-async-errors pattern
+- Error logging with debug-logger service
+
+FILES MODIFIED:
+- admin-dashboard/services/error-handler.js (NEW/enhanced)
+- admin-dashboard/routes/*.js (all route files updated)
+- admin-dashboard/server.js (error middleware)
+- admin-dashboard/public/js/utils.js (error display helpers)
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================

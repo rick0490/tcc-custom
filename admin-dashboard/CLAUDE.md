@@ -649,6 +649,17 @@ TCC-Custom uses local SQLite database instead of external APIs. All tournament d
 | Double Elimination | `services/bracket-engine/double-elimination.js` | Winners + losers brackets, BYE handling for odd counts |
 | Round Robin | `services/bracket-engine/round-robin.js` | Circle method scheduling |
 | Swiss | `services/bracket-engine/swiss.js` | Score-based pairing |
+| Two-Stage | `services/bracket-engine/two-stage.js` | Group stage → knockout (FIFA World Cup style) |
+| Free-for-All | `services/bracket-engine/free-for-all.js` | Multi-player matches with placement points |
+| Leaderboard | `services/bracket-engine/leaderboard.js` | Ongoing rankings across multiple events |
+
+**Additional Services:**
+| Service | File | Description |
+|---------|------|-------------|
+| Discord Bot | `services/discord-bot/` | Full Discord bot with slash commands |
+| Discord Notify | `services/discord-notify.js` | Tournament notifications to Discord channels |
+| Error Handler | `services/error-handler.js` | Standardized error handling middleware |
+| Backup Scheduler | `services/backup-scheduler.js` | Automated database backup scheduling |
 
 **Double Elimination BYE Handling:**
 The losers bracket supports any participant count (3, 5, 6, 7, 9, 11, etc.) by creating BYE placeholder matches when an odd number of losers enter any round. This ensures proper bracket progression:

@@ -215,6 +215,41 @@ validateBracket(tournament, matches)       // Verify bracket integrity
 advanceWinner(match, winnerId, loserId)    // Calculate next match
 ```
 
+### discord-notify.js
+```javascript
+sendTournamentStarted(tournament)         // Discord embed on tournament start
+sendMatchCalled(match, participants)      // Notify players their match is ready
+sendTournamentResults(tournament, results) // Post final standings
+sendCustomAnnouncement(message)           // Custom message to configured channel
+```
+
+**Discord Bot Slash Commands (discord-bot/):**
+- `/tournament-status` - Show current tournament status embed
+- `/bracket` - Post bracket link to channel
+- `/results` - Post tournament results
+- `/announce <message>` - Send custom announcement
+
+### error-handler.js
+```javascript
+ValidationError(message, details)          // Input validation failures
+NotFoundError(resource, id)                // Resource not found
+ConflictError(message)                     // Resource state conflicts
+createErrorMiddleware()                    // Express error middleware
+wrapAsync(fn)                              // Async route wrapper
+```
+
+**Error Response Format:**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "User-friendly message",
+    "details": {}
+  }
+}
+```
+
 ## WebSocket Broadcasting
 
 | Route | Function | Events |
@@ -383,8 +418,9 @@ Requires `role === 'admin' && userId === 1`
 │   ├── services/
 │   │   ├── tournament-db.js, match-db.js, participant-db.js, station-db.js
 │   │   ├── bracket-engine/ (index, single/double-elim, round-robin, swiss, two-stage, ffa, leaderboard)
-│   │   ├── bracket-renderer.js, match-polling.js, ai-seeding.js
-│   └── routes/ (tournaments, matches, participants, flyers, displays, bracket-editor, platform)
+│   │   ├── discord-bot/, discord-notify.js, error-handler.js
+│   │   ├── bracket-renderer.js, match-polling.js, ai-seeding.js, backup-scheduler.js
+│   └── routes/ (tournaments, matches, participants, flyers, displays, bracket-editor, platform, discord-bot)
 ├── match-display/ (2052)
 │   ├── server.js, views/match-display.ejs
 │   └── public/js/ (match-display, websocket-client, timer-manager, overlay-manager, podium-display)
