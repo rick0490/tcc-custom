@@ -28,7 +28,7 @@ function initDatabase() {
             description TEXT,
             game_id INTEGER,  -- References system.db games (app-level)
             tournament_type TEXT NOT NULL CHECK(tournament_type IN
-                ('single_elimination', 'double_elimination', 'round_robin', 'swiss')),
+                ('single_elimination', 'double_elimination', 'round_robin', 'swiss', 'two_stage', 'free_for_all', 'leaderboard')),
             state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN
                 ('pending', 'checking_in', 'underway', 'awaiting_review', 'complete')),
 
@@ -63,7 +63,18 @@ function initDatabase() {
             format_settings_json TEXT,
 
             -- Custom round labels (JSON: { winners: { "1": "Pools", ... }, losers: { ... } })
-            round_labels_json TEXT
+            round_labels_json TEXT,
+
+            -- Two-stage tournament settings
+            current_stage TEXT DEFAULT 'group' CHECK(current_stage IN ('group', 'knockout', 'complete', NULL)),
+            knockout_format TEXT CHECK(knockout_format IN ('single_elimination', 'double_elimination', NULL)),
+            group_count INTEGER DEFAULT 4,
+            advance_per_group INTEGER DEFAULT 2,
+
+            -- Free-for-all settings
+            players_per_match INTEGER DEFAULT 8,
+            total_rounds INTEGER DEFAULT 3,
+            points_system_json TEXT  -- JSON for custom points per placement
         );
 
         -- Local participants
@@ -246,6 +257,56 @@ function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_tcc_waitlist_tournament ON tcc_waitlist(tournament_id);
         CREATE INDEX IF NOT EXISTS idx_tcc_waitlist_status ON tcc_waitlist(tournament_id, status);
         CREATE INDEX IF NOT EXISTS idx_tcc_waitlist_position ON tcc_waitlist(tournament_id, position);
+
+        -- Free-for-All placements (for multi-player matches)
+        CREATE TABLE IF NOT EXISTS tcc_ffa_placements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL,
+            participant_id INTEGER NOT NULL,
+            placement INTEGER NOT NULL,        -- 1st, 2nd, 3rd, etc.
+            points_awarded INTEGER DEFAULT 0,  -- Points for this placement
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (match_id) REFERENCES tcc_matches(id) ON DELETE CASCADE,
+            FOREIGN KEY (participant_id) REFERENCES tcc_participants(id) ON DELETE CASCADE,
+            UNIQUE(match_id, participant_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tcc_ffa_match ON tcc_ffa_placements(match_id);
+        CREATE INDEX IF NOT EXISTS idx_tcc_ffa_participant ON tcc_ffa_placements(participant_id);
+        CREATE INDEX IF NOT EXISTS idx_tcc_ffa_placement ON tcc_ffa_placements(match_id, placement);
+
+        -- Leaderboard events (for ongoing rankings)
+        CREATE TABLE IF NOT EXISTS tcc_leaderboard_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tournament_id INTEGER NOT NULL,   -- The leaderboard "tournament"
+            event_name TEXT,
+            event_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            is_complete INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tcc_leaderboard_events_tournament ON tcc_leaderboard_events(tournament_id);
+        CREATE INDEX IF NOT EXISTS idx_tcc_leaderboard_events_date ON tcc_leaderboard_events(event_date);
+
+        -- Leaderboard event results
+        CREATE TABLE IF NOT EXISTS tcc_leaderboard_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            participant_id INTEGER NOT NULL,
+            placement INTEGER,
+            points_awarded INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (event_id) REFERENCES tcc_leaderboard_events(id) ON DELETE CASCADE,
+            FOREIGN KEY (participant_id) REFERENCES tcc_participants(id) ON DELETE CASCADE,
+            UNIQUE(event_id, participant_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tcc_leaderboard_results_event ON tcc_leaderboard_results(event_id);
+        CREATE INDEX IF NOT EXISTS idx_tcc_leaderboard_results_participant ON tcc_leaderboard_results(participant_id);
     `);
 
     // Migration: Add round_labels_json column if it doesn't exist (for existing databases)
@@ -254,6 +315,29 @@ function initDatabase() {
     if (!hasRoundLabels) {
         db.exec("ALTER TABLE tcc_tournaments ADD COLUMN round_labels_json TEXT");
         console.log('[Tournaments DB] Migration: Added round_labels_json column');
+    }
+
+    // Migration: Add two-stage tournament columns
+    const hasCurrentStage = tableInfo.some(col => col.name === 'current_stage');
+    if (!hasCurrentStage) {
+        db.exec(`
+            ALTER TABLE tcc_tournaments ADD COLUMN current_stage TEXT DEFAULT 'group' CHECK(current_stage IN ('group', 'knockout', 'complete', NULL));
+            ALTER TABLE tcc_tournaments ADD COLUMN knockout_format TEXT CHECK(knockout_format IN ('single_elimination', 'double_elimination', NULL));
+            ALTER TABLE tcc_tournaments ADD COLUMN group_count INTEGER DEFAULT 4;
+            ALTER TABLE tcc_tournaments ADD COLUMN advance_per_group INTEGER DEFAULT 2;
+        `);
+        console.log('[Tournaments DB] Migration: Added two-stage tournament columns');
+    }
+
+    // Migration: Add free-for-all columns
+    const hasPlayersPerMatch = tableInfo.some(col => col.name === 'players_per_match');
+    if (!hasPlayersPerMatch) {
+        db.exec(`
+            ALTER TABLE tcc_tournaments ADD COLUMN players_per_match INTEGER DEFAULT 8;
+            ALTER TABLE tcc_tournaments ADD COLUMN total_rounds INTEGER DEFAULT 3;
+            ALTER TABLE tcc_tournaments ADD COLUMN points_system_json TEXT;
+        `);
+        console.log('[Tournaments DB] Migration: Added free-for-all columns');
     }
 
     console.log('[Tournaments DB] Database initialized at', DB_PATH);

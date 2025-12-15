@@ -6,6 +6,9 @@
  * - Double Elimination
  * - Round Robin
  * - Swiss System
+ * - Two-Stage (Group + Knockout)
+ * - Free-for-All (Multi-player)
+ * - Leaderboard (Ongoing Rankings)
  *
  * Usage:
  *   const bracketEngine = require('./services/bracket-engine');
@@ -16,6 +19,9 @@ const singleElimination = require('./single-elimination');
 const doubleElimination = require('./double-elimination');
 const roundRobin = require('./round-robin');
 const swiss = require('./swiss');
+const twoStage = require('./two-stage');
+const freeForAll = require('./free-for-all');
+const leaderboard = require('./leaderboard');
 const { createLogger } = require('../debug-logger');
 
 const logger = createLogger('bracket-engine');
@@ -31,15 +37,20 @@ const logger = createLogger('bracket-engine');
 function generate(type, participants, options = {}) {
     const logComplete = logger.start('generate', { type, participantCount: participants?.length, options });
 
-    if (!Array.isArray(participants) || participants.length < 2) {
-        logger.error('generate', new Error('Need at least 2 participants'), { participantCount: participants?.length });
-        throw new Error('Need at least 2 participants');
+    // Leaderboards can start empty - participants join via events
+    const minParticipants = type === 'leaderboard' ? 0 : 2;
+
+    if (!Array.isArray(participants) || participants.length < minParticipants) {
+        logger.error('generate', new Error(`Need at least ${minParticipants} participants`), { participantCount: participants?.length });
+        throw new Error(`Need at least ${minParticipants} participants`);
     }
 
-    logger.log('generate:participants', {
-        count: participants.length,
-        seeds: participants.map(p => ({ id: p.id, seed: p.seed, name: p.name }))
-    });
+    if (participants.length > 0) {
+        logger.log('generate:participants', {
+            count: participants.length,
+            seeds: participants.map(p => ({ id: p.id, seed: p.seed, name: p.name }))
+        });
+    }
 
     let result;
     switch (type) {
@@ -82,6 +93,40 @@ function generate(type, participants, options = {}) {
             });
             break;
 
+        case 'two_stage':
+            result = twoStage.generate(participants, {
+                groupCount: options.group_count || options.groupCount || 4,
+                advancePerGroup: options.advance_per_group || options.advancePerGroup || 2,
+                knockoutFormat: options.knockout_format || options.knockoutFormat || 'single_elimination',
+                groupIterations: options.group_iterations || options.groupIterations || 1,
+                rankedBy: options.ranked_by || options.rankedBy || 'match wins',
+                holdThirdPlaceMatch: options.hold_third_place_match || options.holdThirdPlaceMatch || false,
+                grandFinalsModifier: options.grand_finals_modifier || options.grandFinalsModifier || null
+            });
+            break;
+
+        case 'free_for_all':
+            result = freeForAll.generate(participants, {
+                playersPerMatch: options.players_per_match || options.playersPerMatch || 8,
+                totalRounds: options.total_rounds || options.totalRounds || 3,
+                pointsSystem: options.points_system || options.pointsSystem || freeForAll.DEFAULT_POINTS_SYSTEM,
+                allPlayAllRounds: options.all_play_all_rounds !== false
+            });
+            break;
+
+        case 'leaderboard':
+            result = leaderboard.generate(participants, {
+                rankingType: options.ranking_type || options.rankingType || 'points',
+                pointsSystem: options.points_system || options.pointsSystem || leaderboard.DEFAULT_POINTS_SYSTEM,
+                decayEnabled: options.decay_enabled || options.decayEnabled || false,
+                decayRate: options.decay_rate || options.decayRate || 10,
+                decayPeriodDays: options.decay_period_days || options.decayPeriodDays || 30,
+                minEventsToRank: options.min_events_to_rank || options.minEventsToRank || 1,
+                eloConfig: options.elo_config || options.eloConfig || leaderboard.DEFAULT_ELO_CONFIG,
+                seasonName: options.season_name || options.seasonName || null
+            });
+            break;
+
         default:
             logger.error('generate', new Error(`Unknown tournament type: ${type}`), { type });
             throw new Error(`Unknown tournament type: ${type}`);
@@ -118,6 +163,17 @@ function calculateFinalRanks(type, matches, participants, options = {}) {
         case 'swiss':
             return swiss.calculateFinalRanks(matches, participants);
 
+        case 'two_stage':
+            // For two-stage, matches is actually the tournament object
+            return twoStage.calculateFinalRanks(matches);
+
+        case 'free_for_all':
+            return freeForAll.calculateFinalRanks(matches, participants, options);
+
+        case 'leaderboard':
+            // For leaderboard, matches is actually the leaderboard object
+            return leaderboard.calculateFinalRanks(matches);
+
         default:
             throw new Error(`Unknown tournament type: ${type}`);
     }
@@ -144,6 +200,17 @@ function getVisualizationData(type, matches, participants) {
 
         case 'swiss':
             return swiss.getVisualizationData(matches, participants);
+
+        case 'two_stage':
+            // For two-stage, matches is actually the tournament object
+            return twoStage.getVisualizationData(matches);
+
+        case 'free_for_all':
+            return freeForAll.getVisualizationData(matches, participants);
+
+        case 'leaderboard':
+            // For leaderboard, matches is actually the leaderboard object
+            return leaderboard.getVisualizationData(matches);
 
         default:
             throw new Error(`Unknown tournament type: ${type}`);
@@ -194,6 +261,21 @@ function isTournamentComplete(type, matches, options = {}) {
         }
     }
 
+    // Handle new tournament types
+    if (type === 'two_stage') {
+        // For two-stage, matches is the tournament object
+        return twoStage.isTournamentComplete(matches);
+    }
+
+    if (type === 'free_for_all') {
+        return freeForAll.isTournamentComplete(matches);
+    }
+
+    if (type === 'leaderboard') {
+        // Leaderboards don't "complete" - they're ongoing
+        return leaderboard.isTournamentComplete(matches);
+    }
+
     // Default: check if all non-pending matches are complete
     return realMatches.every(m => m.state === 'complete');
 }
@@ -214,6 +296,29 @@ function getStandings(type, matches, participants, options = {}) {
 
         case 'swiss':
             return swiss.calculateStandings(matches, participants);
+
+        case 'free_for_all':
+            return freeForAll.calculateStandings(matches, participants, options);
+
+        case 'leaderboard':
+            // For leaderboard, matches is the leaderboard object
+            return leaderboard.calculateStandings(matches);
+
+        case 'two_stage':
+            // For two-stage during group phase, return group standings
+            if (matches.currentStage === 'group') {
+                return twoStage.calculateGroupStandings(
+                    matches.groupStage.matches,
+                    matches.groupStage.groups,
+                    options
+                );
+            }
+            // During knockout, return knockout standings
+            return calculateEliminationStandings(
+                matches.options.knockoutFormat,
+                matches.knockoutStage?.matches || [],
+                matches.knockoutStage?.participants || []
+            );
 
         default:
             // For elimination brackets, calculate based on elimination round
@@ -298,7 +403,10 @@ const TOURNAMENT_TYPES = [
     'single_elimination',
     'double_elimination',
     'round_robin',
-    'swiss'
+    'swiss',
+    'two_stage',
+    'free_for_all',
+    'leaderboard'
 ];
 
 /**
@@ -332,6 +440,37 @@ function getDefaultOptions(type) {
             return {
                 rounds: null, // Auto-calculated based on participant count
                 allowRematches: true
+            };
+
+        case 'two_stage':
+            return {
+                groupCount: 4,
+                advancePerGroup: 2,
+                knockoutFormat: 'single_elimination',
+                groupIterations: 1,
+                rankedBy: 'match wins',
+                holdThirdPlaceMatch: false,
+                grandFinalsModifier: null
+            };
+
+        case 'free_for_all':
+            return {
+                playersPerMatch: 8,
+                totalRounds: 3,
+                pointsSystem: freeForAll.DEFAULT_POINTS_SYSTEM,
+                allPlayAllRounds: true
+            };
+
+        case 'leaderboard':
+            return {
+                rankingType: 'points',
+                pointsSystem: leaderboard.DEFAULT_POINTS_SYSTEM,
+                decayEnabled: false,
+                decayRate: 10,
+                decayPeriodDays: 30,
+                minEventsToRank: 1,
+                eloConfig: leaderboard.DEFAULT_ELO_CONFIG,
+                seasonName: null
             };
 
         default:
@@ -397,6 +536,21 @@ module.exports = {
     generateGroupStage,
     getGroupStageAdvancers,
 
+    // Two-stage specific
+    transitionToKnockout: twoStage.transitionToKnockout,
+    isGroupStageComplete: twoStage.isGroupStageComplete,
+    getAdvancingParticipants: twoStage.getAdvancingParticipants,
+
+    // Free-for-all specific
+    recordFFAPlacements: freeForAll.recordPlacements,
+    openNextFFARound: freeForAll.openNextRound,
+
+    // Leaderboard specific
+    addLeaderboardEvent: leaderboard.addEvent,
+    applyLeaderboardDecay: leaderboard.applyDecay,
+    resetLeaderboardSeason: leaderboard.resetSeason,
+    getLeaderboardParticipantHistory: leaderboard.getParticipantHistory,
+
     // Utilities
     getDefaultOptions,
     validateOptions,
@@ -407,5 +561,8 @@ module.exports = {
     singleElimination,
     doubleElimination,
     roundRobin,
-    swiss
+    swiss,
+    twoStage,
+    freeForAll,
+    leaderboard
 };

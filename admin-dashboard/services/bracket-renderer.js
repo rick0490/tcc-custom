@@ -2,7 +2,15 @@
  * Bracket Renderer Service
  *
  * Generates visualization data for tournament brackets.
- * Supports single elimination, double elimination, round robin, and swiss formats.
+ * Supports all 7 tournament formats:
+ * - single_elimination: Standard knockout bracket
+ * - double_elimination: Winners/losers bracket with grand finals
+ * - round_robin: Everyone plays everyone, standings table
+ * - swiss: Score-based pairing with Buchholz tiebreaker
+ * - two_stage: Group stage (round robin) → knockout bracket
+ * - free_for_all: Multi-player matches with points by placement
+ * - leaderboard: Ongoing rankings across multiple events
+ *
  * Replaces Challonge iframe with native bracket rendering.
  */
 
@@ -14,7 +22,7 @@ const bracketEngine = require('./bracket-engine');
  * @param {string} type - Tournament type
  * @param {Array} matches - All tournament matches
  * @param {Array} participants - All participants
- * @param {Object} options - Additional options
+ * @param {Object} options - Additional options (tournament object for two_stage/ffa/leaderboard)
  * @returns {Object} Visualization data structure
  */
 function generateVisualization(type, matches, participants, options = {}) {
@@ -23,7 +31,8 @@ function generateVisualization(type, matches, participants, options = {}) {
 		participantMap[p.id] = {
 			id: p.id,
 			name: p.name || p.display_name || 'TBD',
-			seed: p.seed
+			seed: p.seed,
+			group_id: p.group_id
 		};
 	});
 
@@ -39,6 +48,15 @@ function generateVisualization(type, matches, participants, options = {}) {
 
 		case 'swiss':
 			return generateSwissVisualization(matches, participantMap, options);
+
+		case 'two_stage':
+			return generateTwoStageVisualization(matches, participantMap, options);
+
+		case 'free_for_all':
+			return generateFreeForAllVisualization(matches, participantMap, options);
+
+		case 'leaderboard':
+			return generateLeaderboardVisualization(matches, participantMap, options);
 
 		default:
 			return generateSingleElimVisualization(matches, participantMap, options);
@@ -319,6 +337,221 @@ function generateSwissVisualization(matches, participantMap, options) {
 }
 
 /**
+ * Generate two-stage tournament visualization (groups + knockout)
+ */
+function generateTwoStageVisualization(matches, participantMap, options) {
+	const participants = Object.values(participantMap);
+	const tournament = options.tournament || {};
+	const currentStage = tournament.current_stage || 'group';
+	const groupCount = tournament.group_count || 4;
+
+	// Separate group stage and knockout matches
+	const groupMatches = matches.filter(m => m.group_id);
+	const knockoutMatches = matches.filter(m => !m.group_id && m.round > 0);
+
+	// Group participants by group_id
+	const groups = {};
+	participants.forEach(p => {
+		const gid = p.group_id || 0;
+		if (!groups[gid]) {
+			groups[gid] = {
+				id: gid,
+				name: `Group ${String.fromCharCode(64 + gid)}`, // A, B, C, D...
+				participants: [],
+				matches: [],
+				standings: []
+			};
+		}
+		groups[gid].participants.push(p);
+	});
+
+	// Assign matches to groups
+	groupMatches.forEach(m => {
+		const gid = m.group_id;
+		if (groups[gid]) {
+			groups[gid].matches.push(m);
+		}
+	});
+
+	// Calculate standings for each group
+	Object.values(groups).forEach(group => {
+		if (group.matches.length > 0) {
+			const standings = bracketEngine.roundRobin.calculateStandings(
+				group.matches,
+				group.participants,
+				options
+			);
+			group.standings = standings.map((s, index) => ({
+				rank: index + 1,
+				participantId: s.participant_id,
+				name: s.participant_name || participantMap[s.participant_id]?.name || 'Unknown',
+				matchesPlayed: s.matches_played,
+				wins: s.matches_won,
+				losses: s.matches_lost,
+				points: s.points,
+				pointsDiff: s.points_difference || 0
+			}));
+		}
+	});
+
+	// Build knockout bracket visualization if in knockout stage
+	let knockoutBracket = null;
+	if (knockoutMatches.length > 0) {
+		const knockoutFormat = tournament.knockout_format || 'single_elimination';
+		if (knockoutFormat === 'double_elimination') {
+			knockoutBracket = generateDoubleElimVisualization(knockoutMatches, participantMap, options);
+		} else {
+			knockoutBracket = generateSingleElimVisualization(knockoutMatches, participantMap, options);
+		}
+	}
+
+	return {
+		type: 'two_stage',
+		currentStage,
+		groups: Object.values(groups).filter(g => g.id > 0).sort((a, b) => a.id - b.id),
+		knockoutBracket,
+		stats: {
+			groupCount,
+			totalGroupMatches: groupMatches.length,
+			completedGroupMatches: groupMatches.filter(m => m.state === 'complete').length,
+			totalKnockoutMatches: knockoutMatches.length,
+			completedKnockoutMatches: knockoutMatches.filter(m => m.state === 'complete').length,
+			participantCount: participants.length,
+			advancePerGroup: tournament.advance_per_group || 2
+		}
+	};
+}
+
+/**
+ * Generate free-for-all tournament visualization (standings + rounds)
+ */
+function generateFreeForAllVisualization(matches, participantMap, options) {
+	const participants = Object.values(participantMap);
+	const tournament = options.tournament || {};
+	const pointsSystem = tournament.points_system_json
+		? JSON.parse(tournament.points_system_json)
+		: bracketEngine.freeForAll.DEFAULT_POINTS_SYSTEM;
+
+	// Calculate standings from matches
+	const standings = bracketEngine.freeForAll.calculateStandings(matches, participants, { pointsSystem });
+
+	// Group matches by round
+	const rounds = {};
+	let maxRound = 0;
+
+	matches.forEach(m => {
+		const round = m.round;
+		if (!rounds[round]) rounds[round] = [];
+		rounds[round].push(m);
+		maxRound = Math.max(maxRound, round);
+	});
+
+	// Format standings for display
+	const formattedStandings = standings.map(s => ({
+		rank: s.rank,
+		participantId: s.participant_id,
+		name: s.participant_name || participantMap[s.participant_id]?.name || 'Unknown',
+		totalPoints: s.total_points,
+		roundsPlayed: s.rounds_played,
+		wins: s.wins,
+		podiums: s.podiums,
+		averagePlacement: s.average_placement ? s.average_placement.toFixed(2) : '-',
+		bestPlacement: s.best_placement,
+		worstPlacement: s.worst_placement
+	}));
+
+	// Format rounds for display
+	const formattedRounds = Object.keys(rounds).sort((a, b) => a - b).map(r => {
+		const roundMatches = rounds[r];
+		const isComplete = roundMatches.every(m => m.state === 'complete');
+
+		return {
+			round: parseInt(r),
+			name: `Round ${r}`,
+			isComplete,
+			lobbies: roundMatches.map(m => ({
+				id: m.id,
+				identifier: m.identifier,
+				lobby: m.lobby || 1,
+				state: m.state,
+				playerCount: m.player_count || (m.participant_ids ? m.participant_ids.length : 0),
+				placements: m.placements || [],
+				participants: (m.participant_ids || []).map(pid => ({
+					id: pid,
+					name: participantMap[pid]?.name || `Player ${pid}`
+				}))
+			}))
+		};
+	});
+
+	return {
+		type: 'free_for_all',
+		standings: formattedStandings,
+		rounds: formattedRounds,
+		pointsSystem,
+		currentRound: formattedRounds.find(r => !r.isComplete)?.round || maxRound,
+		stats: {
+			totalRounds: tournament.total_rounds || maxRound,
+			completedRounds: formattedRounds.filter(r => r.isComplete).length,
+			playersPerMatch: tournament.players_per_match || 8,
+			participantCount: participants.length,
+			totalMatches: matches.length,
+			completedMatches: matches.filter(m => m.state === 'complete').length
+		}
+	};
+}
+
+/**
+ * Generate leaderboard visualization (standings + events)
+ */
+function generateLeaderboardVisualization(matches, participantMap, options) {
+	const participants = Object.values(participantMap);
+	const tournament = options.tournament || {};
+	const leaderboardData = options.leaderboardData || null;
+
+	// If we have leaderboard data from the engine, use it directly
+	if (leaderboardData) {
+		const vizData = bracketEngine.leaderboard.getVisualizationData(leaderboardData);
+		return {
+			type: 'leaderboard',
+			...vizData,
+			stats: {
+				...vizData.stats,
+				rankingType: leaderboardData.rankingType || 'points'
+			}
+		};
+	}
+
+	// Otherwise, build from tournament/participant data
+	const standings = participants.map((p, index) => ({
+		rank: index + 1,
+		participantId: p.id,
+		name: p.name || 'Unknown',
+		totalPoints: 0,
+		eventsPlayed: 0,
+		wins: 0,
+		podiums: 0
+	}));
+
+	return {
+		type: 'leaderboard',
+		standings,
+		allStandings: standings,
+		recentEvents: [],
+		trends: {},
+		rankingType: 'points',
+		seasonName: tournament.name || 'Current Season',
+		stats: {
+			participantCount: participants.length,
+			eventCount: 0,
+			totalResults: 0,
+			lastEventDate: null,
+			rankingType: 'points'
+		}
+	};
+}
+
+/**
  * Format a match for visualization
  */
 function formatMatchForViz(match, participantMap) {
@@ -558,6 +791,9 @@ module.exports = {
 	generateDoubleElimVisualization,
 	generateRoundRobinVisualization,
 	generateSwissVisualization,
+	generateTwoStageVisualization,
+	generateFreeForAllVisualization,
+	generateLeaderboardVisualization,
 	formatMatchForViz,
 	getRoundName,
 	calculateBracketDimensions,

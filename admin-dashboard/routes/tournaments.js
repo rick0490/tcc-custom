@@ -1693,6 +1693,541 @@ async function clearTournamentStateFile() {
 }
 
 // ============================================
+// TWO-STAGE TOURNAMENT ROUTES
+// ============================================
+
+/**
+ * POST /api/tournaments/:tournamentId/transition-to-knockout
+ * Transition a two-stage tournament from group stage to knockout stage
+ */
+router.post('/:tournamentId/transition-to-knockout', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        if (tournament.tournament_type !== 'two_stage') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a two-stage tournament' });
+        }
+
+        if (tournament.current_stage !== 'group') {
+            return res.status(400).json({ success: false, error: 'Tournament is not in group stage' });
+        }
+
+        // Get all group stage matches
+        const matches = matchDb.getByTournament(tournament.id);
+        const groupMatches = matches.filter(m => m.stage === 'group' || m.group_id);
+
+        // Check if group stage is complete
+        if (!bracketEngine.twoStage.isGroupStageComplete(groupMatches)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Group stage is not complete - all matches must be finished'
+            });
+        }
+
+        // Get participants and build group structure for standings calculation
+        const participants = participantDb.getByTournament(tournament.id);
+        const groups = [];
+        const groupIds = [...new Set(participants.map(p => p.group_id).filter(Boolean))];
+
+        groupIds.forEach(groupId => {
+            groups.push({
+                groupId,
+                participants: participants.filter(p => p.group_id === groupId)
+            });
+        });
+
+        // Get advancing participants
+        const advancingParticipants = bracketEngine.twoStage.getAdvancingParticipants(
+            groupMatches,
+            groups,
+            tournament.advance_per_group || 2,
+            { rankedBy: tournament.ranked_by || 'match wins' }
+        );
+
+        // Generate knockout bracket
+        const knockoutStage = bracketEngine.twoStage.generateKnockoutBracket(
+            advancingParticipants,
+            participants,
+            {
+                knockoutFormat: tournament.knockout_format || 'single_elimination',
+                holdThirdPlaceMatch: !!tournament.hold_third_place_match,
+                grandFinalsModifier: tournament.grand_finals_modifier,
+                startMatchId: matches.length
+            }
+        );
+
+        // Create knockout matches in database
+        const matchIds = matchDb.bulkCreate(tournament.id, knockoutStage.matches);
+
+        // Update prereq match IDs
+        const idMap = {};
+        knockoutStage.matches.forEach((m, index) => {
+            idMap[m.id] = matchIds[index];
+        });
+
+        knockoutStage.matches.forEach((m, index) => {
+            if (m.player1_prereq_match_id !== null || m.player2_prereq_match_id !== null) {
+                matchDb.updatePrereqs(matchIds[index], {
+                    player1_prereq_match_id: m.player1_prereq_match_id !== null ? idMap[m.player1_prereq_match_id] : null,
+                    player2_prereq_match_id: m.player2_prereq_match_id !== null ? idMap[m.player2_prereq_match_id] : null,
+                    player1_is_prereq_loser: m.player1_is_prereq_loser,
+                    player2_is_prereq_loser: m.player2_is_prereq_loser
+                });
+            }
+        });
+
+        // Update tournament stage
+        tournamentDb.update(tournament.id, { current_stage: 'knockout' });
+
+        logger.log('transitionToKnockout:success', {
+            tournamentId: tournament.id,
+            advancingCount: advancingParticipants.length,
+            knockoutMatches: matchIds.length
+        });
+
+        // Broadcast update
+        const updatedTournament = tournamentDb.getById(tournament.id);
+        broadcastTournament(WS_EVENTS.TOURNAMENT_UPDATED, transformTournament(updatedTournament));
+        broadcastIfActiveTournament(updatedTournament, tournament.user_id);
+
+        res.json({
+            success: true,
+            tournament: transformTournament(updatedTournament),
+            advancing: advancingParticipants,
+            knockoutMatches: matchIds.length
+        });
+    } catch (error) {
+        logger.error('transitionToKnockout', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/tournaments/:tournamentId/group-standings
+ * Get standings for all groups in a two-stage tournament
+ */
+router.get('/:tournamentId/group-standings', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (tournament.tournament_type !== 'two_stage') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a two-stage tournament' });
+        }
+
+        const matches = matchDb.getByTournament(tournament.id);
+        const participants = participantDb.getByTournament(tournament.id);
+
+        // Build groups structure
+        const groups = [];
+        const groupIds = [...new Set(participants.map(p => p.group_id).filter(Boolean))].sort((a, b) => a - b);
+
+        groupIds.forEach(groupId => {
+            const groupParticipants = participants.filter(p => p.group_id === groupId);
+            const groupMatches = matches.filter(m => m.group_id === groupId);
+
+            const standings = bracketEngine.roundRobin.calculateStandings(
+                groupMatches,
+                groupParticipants,
+                { rankedBy: tournament.ranked_by || 'match wins' }
+            );
+
+            groups.push({
+                groupId,
+                groupName: `Group ${String.fromCharCode(64 + groupId)}`,
+                standings,
+                matchesComplete: groupMatches.filter(m => m.state === 'complete').length,
+                matchesTotal: groupMatches.length
+            });
+        });
+
+        res.json({
+            success: true,
+            currentStage: tournament.current_stage,
+            advancePerGroup: tournament.advance_per_group || 2,
+            groups
+        });
+    } catch (error) {
+        logger.error('getGroupStandings', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// FREE-FOR-ALL TOURNAMENT ROUTES
+// ============================================
+
+/**
+ * POST /api/tournaments/:tournamentId/matches/:matchId/ffa-placements
+ * Record placements for a free-for-all match
+ */
+router.post('/:tournamentId/matches/:matchId/ffa-placements', async (req, res) => {
+    try {
+        const { tournamentId, matchId } = req.params;
+        const { placements } = req.body; // Array of {participant_id, placement}
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        if (tournament.tournament_type !== 'free_for_all') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a free-for-all tournament' });
+        }
+
+        const match = matchDb.getById(parseInt(matchId));
+        if (!match || match.tournament_id !== tournament.id) {
+            return res.status(404).json({ success: false, error: 'Match not found' });
+        }
+
+        if (!Array.isArray(placements) || placements.length === 0) {
+            return res.status(400).json({ success: false, error: 'Placements array is required' });
+        }
+
+        // Get points system from tournament settings
+        const pointsSystem = tournament.points_system_json
+            ? JSON.parse(tournament.points_system_json)
+            : bracketEngine.freeForAll.DEFAULT_POINTS_SYSTEM;
+
+        // Record placements in database
+        const db = require('../db/tournaments-db').getDb();
+
+        // Clear existing placements for this match
+        db.prepare('DELETE FROM tcc_ffa_placements WHERE match_id = ?').run(match.id);
+
+        // Insert new placements
+        const insertStmt = db.prepare(`
+            INSERT INTO tcc_ffa_placements (match_id, participant_id, placement, points_awarded)
+            VALUES (?, ?, ?, ?)
+        `);
+
+        placements.forEach(p => {
+            const placement = p.placement;
+            const points = pointsSystem[placement] !== undefined
+                ? pointsSystem[placement]
+                : (pointsSystem.default || 0);
+
+            insertStmt.run(match.id, p.participant_id, placement, points);
+        });
+
+        // Update match state to complete
+        matchDb.update(match.id, {
+            state: 'complete',
+            winner_id: placements.find(p => p.placement === 1)?.participant_id || null,
+            completed_at: new Date().toISOString()
+        });
+
+        // Check if this completes a round and open next round if needed
+        const matches = matchDb.getByTournament(tournament.id);
+        const currentRound = match.round;
+
+        if (bracketEngine.freeForAll.isRoundComplete(matches, currentRound)) {
+            const updatedMatches = bracketEngine.freeForAll.openNextRound(matches, currentRound);
+
+            // Update match states in database
+            updatedMatches.forEach(m => {
+                if (m.state === 'open' && matches.find(orig => orig.id === m.id)?.state === 'pending') {
+                    matchDb.update(m.id, { state: 'open' });
+                }
+            });
+        }
+
+        logger.log('ffaPlacements:success', {
+            tournamentId: tournament.id,
+            matchId: match.id,
+            placementCount: placements.length
+        });
+
+        // Broadcast update
+        broadcastTournament(WS_EVENTS.TOURNAMENT_UPDATED, transformTournament(tournament));
+
+        res.json({
+            success: true,
+            match: matchDb.getById(match.id),
+            placements
+        });
+    } catch (error) {
+        logger.error('ffaPlacements', error, { tournamentId: req.params.tournamentId, matchId: req.params.matchId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/tournaments/:tournamentId/ffa-standings
+ * Get current standings for a free-for-all tournament
+ */
+router.get('/:tournamentId/ffa-standings', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (tournament.tournament_type !== 'free_for_all') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a free-for-all tournament' });
+        }
+
+        const matches = matchDb.getByTournament(tournament.id);
+        const participants = participantDb.getByTournament(tournament.id);
+
+        // Get placements from database
+        const db = require('../db/tournaments-db').getDb();
+        const placements = db.prepare(`
+            SELECT * FROM tcc_ffa_placements
+            WHERE match_id IN (SELECT id FROM tcc_matches WHERE tournament_id = ?)
+        `).all(tournament.id);
+
+        // Attach placements to matches
+        matches.forEach(m => {
+            m.placements = placements.filter(p => p.match_id === m.id);
+        });
+
+        const standings = bracketEngine.freeForAll.calculateStandings(matches, participants);
+
+        res.json({
+            success: true,
+            standings,
+            roundsComplete: Math.max(...matches.filter(m => m.state === 'complete').map(m => m.round), 0),
+            totalRounds: tournament.total_rounds || 3
+        });
+    } catch (error) {
+        logger.error('ffaStandings', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// LEADERBOARD TOURNAMENT ROUTES
+// ============================================
+
+/**
+ * POST /api/tournaments/:tournamentId/events
+ * Add a new event to a leaderboard tournament
+ */
+router.post('/:tournamentId/events', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+        const { name, results, date } = req.body; // results: [{participant_id, placement}]
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (!validateTenantAccess(req, tournament.user_id)) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        if (tournament.tournament_type !== 'leaderboard') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a leaderboard' });
+        }
+
+        if (!Array.isArray(results) || results.length === 0) {
+            return res.status(400).json({ success: false, error: 'Results array is required' });
+        }
+
+        const db = require('../db/tournaments-db').getDb();
+
+        // Create event
+        const eventResult = db.prepare(`
+            INSERT INTO tcc_leaderboard_events (tournament_id, event_name, event_date, is_complete)
+            VALUES (?, ?, ?, 1)
+        `).run(tournament.id, name || `Event ${Date.now()}`, date || new Date().toISOString());
+
+        const eventId = eventResult.lastInsertRowid;
+
+        // Get points system
+        const pointsSystem = tournament.points_system_json
+            ? JSON.parse(tournament.points_system_json)
+            : bracketEngine.leaderboard.DEFAULT_POINTS_SYSTEM;
+
+        // Insert results
+        const insertStmt = db.prepare(`
+            INSERT INTO tcc_leaderboard_results (event_id, participant_id, placement, points_awarded)
+            VALUES (?, ?, ?, ?)
+        `);
+
+        results.forEach(r => {
+            const points = pointsSystem[r.placement] !== undefined
+                ? pointsSystem[r.placement]
+                : (pointsSystem.default || 0);
+
+            // Ensure participant exists
+            let participant = participantDb.getById(r.participant_id);
+            if (!participant) {
+                // Create participant if they don't exist
+                const newParticipant = participantDb.create(tournament.id, {
+                    name: r.participant_name || `Player ${r.participant_id}`,
+                    player_id: r.participant_id
+                });
+                r.participant_id = newParticipant.id;
+            }
+
+            insertStmt.run(eventId, r.participant_id, r.placement, points);
+        });
+
+        logger.log('leaderboardEvent:created', {
+            tournamentId: tournament.id,
+            eventId,
+            resultCount: results.length
+        });
+
+        // Broadcast update
+        broadcastTournament(WS_EVENTS.TOURNAMENT_UPDATED, transformTournament(tournament));
+
+        res.json({
+            success: true,
+            event: {
+                id: eventId,
+                name: name || `Event ${Date.now()}`,
+                date: date || new Date().toISOString(),
+                resultCount: results.length
+            }
+        });
+    } catch (error) {
+        logger.error('leaderboardEvent:create', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/tournaments/:tournamentId/events
+ * Get all events for a leaderboard tournament
+ */
+router.get('/:tournamentId/events', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (tournament.tournament_type !== 'leaderboard') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a leaderboard' });
+        }
+
+        const db = require('../db/tournaments-db').getDb();
+
+        const events = db.prepare(`
+            SELECT e.*, COUNT(r.id) as result_count
+            FROM tcc_leaderboard_events e
+            LEFT JOIN tcc_leaderboard_results r ON e.id = r.event_id
+            WHERE e.tournament_id = ?
+            GROUP BY e.id
+            ORDER BY e.event_date DESC
+        `).all(tournament.id);
+
+        res.json({
+            success: true,
+            events
+        });
+    } catch (error) {
+        logger.error('leaderboardEvents:list', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/tournaments/:tournamentId/leaderboard-standings
+ * Get current leaderboard standings
+ */
+router.get('/:tournamentId/leaderboard-standings', async (req, res) => {
+    try {
+        const { tournamentId } = req.params;
+
+        const tournament = isNaN(tournamentId)
+            ? tournamentDb.getBySlug(tournamentId)
+            : tournamentDb.getById(parseInt(tournamentId));
+
+        if (!tournament) {
+            return res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+
+        if (tournament.tournament_type !== 'leaderboard') {
+            return res.status(400).json({ success: false, error: 'Tournament is not a leaderboard' });
+        }
+
+        const db = require('../db/tournaments-db').getDb();
+
+        // Get all results grouped by participant
+        const standings = db.prepare(`
+            SELECT
+                p.id as participant_id,
+                p.name as participant_name,
+                COUNT(r.id) as events_played,
+                SUM(r.points_awarded) as total_points,
+                SUM(CASE WHEN r.placement = 1 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN r.placement <= 3 THEN 1 ELSE 0 END) as podiums,
+                MIN(r.placement) as best_placement,
+                AVG(r.placement) as avg_placement
+            FROM tcc_participants p
+            LEFT JOIN tcc_leaderboard_results r ON p.id = r.participant_id
+            WHERE p.tournament_id = ?
+            GROUP BY p.id
+            ORDER BY total_points DESC, wins DESC, podiums DESC
+        `).all(tournament.id);
+
+        // Assign ranks
+        standings.forEach((s, index) => {
+            s.rank = index + 1;
+        });
+
+        // Get event count
+        const eventCount = db.prepare(`
+            SELECT COUNT(*) as count FROM tcc_leaderboard_events WHERE tournament_id = ?
+        `).get(tournament.id).count;
+
+        res.json({
+            success: true,
+            standings,
+            eventCount,
+            rankingType: tournament.ranking_type || 'points'
+        });
+    } catch (error) {
+        logger.error('leaderboardStandings', error, { tournamentId: req.params.tournamentId });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
 // Helper: Transform tournament for API response
 // ============================================
 function transformTournament(t) {
