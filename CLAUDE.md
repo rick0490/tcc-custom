@@ -847,13 +847,66 @@ Standalone web-based flyer display service for browser-based displays.
 
 **Features:**
 - Fullscreen image/video display (object-fit: contain)
-- Video support (MP4) with autoplay/loop/muted
+- Video support (MP4) with configurable autoplay/loop/muted
+- Remote playback control (play/pause/restart/mute/volume)
+- Playlist mode with auto-advance and looping
+- Real-time status reporting to admin dashboard
 - Fallback to default flyer on load error
 - Real-time updates from admin dashboard via WebSocket
 - Cache-busting for Cloudflare CDN
 - Multi-tenant support (user-specific flyers)
 - Pure black background (#000)
 - Connection status indicator (debug mode)
+
+### Flyer Media Controls
+
+Remote video media controls accessible from the Displays page in the admin dashboard.
+
+**Capabilities:**
+| Feature | Description |
+|---------|-------------|
+| Playback Control | Play, pause, restart video remotely |
+| Volume Control | Mute/unmute, slider 0-100% |
+| Behavior Settings | Loop, autoplay, default muted toggles |
+| Status Display | Current media, playback state, progress bar |
+| Playlist Mode | Queue management, auto-advance, drag-drop reorder |
+
+**Database Table (system.db):**
+```sql
+CREATE TABLE flyer_media_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    loop_enabled INTEGER DEFAULT 1,
+    autoplay_enabled INTEGER DEFAULT 1,
+    default_muted INTEGER DEFAULT 1,
+    default_volume INTEGER DEFAULT 100,
+    playlist_enabled INTEGER DEFAULT 0,
+    playlist_loop INTEGER DEFAULT 1,
+    playlist_auto_advance INTEGER DEFAULT 1,
+    playlist_items_json TEXT,
+    playlist_current_index INTEGER DEFAULT 0,
+    current_flyer TEXT,
+    playback_state TEXT DEFAULT 'stopped',
+    current_time REAL DEFAULT 0,
+    duration REAL DEFAULT 0,
+    is_muted INTEGER DEFAULT 1,
+    current_volume INTEGER DEFAULT 100,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+**API Endpoints:**
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/displays/flyer/settings` | Get user's media settings |
+| PUT | `/api/displays/flyer/settings` | Update behavior settings |
+| POST | `/api/displays/flyer/control` | Play/pause/restart/mute/unmute |
+| POST | `/api/displays/flyer/volume` | Set volume 0-100 |
+| GET | `/api/displays/flyer/playlist` | Get playlist |
+| PUT | `/api/displays/flyer/playlist` | Update playlist items |
+| POST | `/api/displays/flyer/playlist/control` | Skip/goto/toggle playlist |
+| POST | `/api/displays/flyer/status` | Status report from display (no auth) |
 
 **WebSocket Events:**
 | Event | Direction | Payload | Purpose |
@@ -862,12 +915,22 @@ Standalone web-based flyer display service for browser-based displays.
 | `flyer:activated` | Server → Client | `{ flyer: 'filename.png', userId }` | Flyer changed |
 | `flyer:uploaded` | Server → Client | `{ flyer: 'filename.png', userId }` | New flyer available |
 | `flyer:deleted` | Server → Client | `{ flyer: 'filename.png', userId }` | Flyer removed |
+| `flyer:control` | Server → Client | `{ action: 'play'/'pause'/'restart'/'mute'/'unmute', userId }` | Playback control |
+| `flyer:volume` | Server → Client | `{ volume: 0-100, userId }` | Volume change |
+| `flyer:settings` | Server → Client | `{ loop, autoplay, defaultMuted, defaultVolume, userId }` | Settings update |
+| `flyer:playlist` | Server → Client | `{ items, enabled, loop, autoAdvance, currentIndex, userId }` | Playlist update |
+| `flyer:status` | Client → Server | `{ userId, filename, state, currentTime, duration, volume, muted }` | Display status |
 
 **Multi-Tenant Isolation:**
 Each user gets isolated flyer data via WebSocket rooms:
 ```javascript
 socket.join(`user:${userId}`);
 socket.join(`user:${userId}:flyer`);
+```
+
+Admin dashboards join a separate room for status updates:
+```javascript
+socket.join(`user:${userId}:admin`);
 ```
 
 **Flyer URL Construction:**

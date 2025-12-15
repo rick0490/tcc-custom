@@ -377,6 +377,33 @@ function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_backup_history_schedule ON backup_history(schedule_id, started_at);
         CREATE INDEX IF NOT EXISTS idx_backup_history_status ON backup_history(status);
 
+        -- Flyer media settings (multi-tenant video playback control)
+        CREATE TABLE IF NOT EXISTS flyer_media_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            -- Behavior Settings
+            loop_enabled INTEGER DEFAULT 1,
+            autoplay_enabled INTEGER DEFAULT 1,
+            default_muted INTEGER DEFAULT 1,
+            default_volume INTEGER DEFAULT 100,
+            -- Playlist Settings
+            playlist_enabled INTEGER DEFAULT 0,
+            playlist_loop INTEGER DEFAULT 1,
+            playlist_auto_advance INTEGER DEFAULT 1,
+            playlist_items_json TEXT,
+            playlist_current_index INTEGER DEFAULT 0,
+            -- State Tracking
+            current_flyer TEXT,
+            playback_state TEXT DEFAULT 'stopped' CHECK(playback_state IN ('playing', 'paused', 'stopped')),
+            current_time REAL DEFAULT 0,
+            duration REAL DEFAULT 0,
+            is_muted INTEGER DEFAULT 1,
+            current_volume INTEGER DEFAULT 100,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_flyer_media_settings_user ON flyer_media_settings(user_id);
+
         -- Indexes
         CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         CREATE INDEX IF NOT EXISTS idx_auth_tracking_username ON auth_tracking(username);
@@ -2021,6 +2048,204 @@ function cleanupOldBackupRecords(daysToKeep = 90) {
     return result.changes;
 }
 
+// =============================================================================
+// FLYER MEDIA SETTINGS HELPERS
+// =============================================================================
+
+/**
+ * Get flyer media settings for a user
+ * @param {number} userId - User ID
+ * @returns {Object|null} Media settings or null if not configured
+ */
+function getFlyerMediaSettings(userId) {
+    const row = getDb().prepare('SELECT * FROM flyer_media_settings WHERE user_id = ?').get(userId);
+    if (!row) return null;
+
+    // Parse JSON fields
+    return {
+        ...row,
+        playlistItems: row.playlist_items_json ? JSON.parse(row.playlist_items_json) : []
+    };
+}
+
+/**
+ * Get or create flyer media settings for a user
+ * @param {number} userId - User ID
+ * @returns {Object} Media settings (creates default if not exists)
+ */
+function getOrCreateFlyerMediaSettings(userId) {
+    let settings = getFlyerMediaSettings(userId);
+    if (!settings) {
+        getDb().prepare(`
+            INSERT INTO flyer_media_settings (user_id) VALUES (?)
+        `).run(userId);
+        settings = getFlyerMediaSettings(userId);
+    }
+    return settings;
+}
+
+/**
+ * Save flyer media settings (create or update)
+ * @param {number} userId - User ID
+ * @param {Object} data - Settings data to save
+ * @returns {Object} Updated settings
+ */
+function saveFlyerMediaSettings(userId, data) {
+    const existing = getFlyerMediaSettings(userId);
+    const now = new Date().toISOString();
+
+    // Prepare playlist items JSON
+    const playlistItemsJson = data.playlistItems !== undefined
+        ? JSON.stringify(data.playlistItems)
+        : (existing?.playlist_items_json || null);
+
+    if (existing) {
+        // Build dynamic update query
+        const updates = [];
+        const params = [];
+
+        const fieldMappings = {
+            loopEnabled: 'loop_enabled',
+            autoplayEnabled: 'autoplay_enabled',
+            defaultMuted: 'default_muted',
+            defaultVolume: 'default_volume',
+            playlistEnabled: 'playlist_enabled',
+            playlistLoop: 'playlist_loop',
+            playlistAutoAdvance: 'playlist_auto_advance',
+            playlistCurrentIndex: 'playlist_current_index',
+            currentFlyer: 'current_flyer',
+            playbackState: 'playback_state',
+            currentTime: 'current_time',
+            duration: 'duration',
+            isMuted: 'is_muted',
+            currentVolume: 'current_volume'
+        };
+
+        for (const [camelKey, snakeKey] of Object.entries(fieldMappings)) {
+            if (data[camelKey] !== undefined) {
+                updates.push(`${snakeKey} = ?`);
+                // Convert booleans to integers for SQLite
+                const value = typeof data[camelKey] === 'boolean' ? (data[camelKey] ? 1 : 0) : data[camelKey];
+                params.push(value);
+            }
+        }
+
+        // Handle playlist items separately
+        if (data.playlistItems !== undefined) {
+            updates.push('playlist_items_json = ?');
+            params.push(playlistItemsJson);
+        }
+
+        if (updates.length > 0) {
+            updates.push('updated_at = ?');
+            params.push(now);
+            params.push(userId);
+
+            getDb().prepare(`
+                UPDATE flyer_media_settings SET ${updates.join(', ')} WHERE user_id = ?
+            `).run(...params);
+        }
+    } else {
+        // Insert new record with provided values
+        getDb().prepare(`
+            INSERT INTO flyer_media_settings (
+                user_id, loop_enabled, autoplay_enabled, default_muted, default_volume,
+                playlist_enabled, playlist_loop, playlist_auto_advance, playlist_items_json,
+                playlist_current_index, current_flyer, playback_state, current_time, duration,
+                is_muted, current_volume, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            userId,
+            data.loopEnabled !== undefined ? (data.loopEnabled ? 1 : 0) : 1,
+            data.autoplayEnabled !== undefined ? (data.autoplayEnabled ? 1 : 0) : 1,
+            data.defaultMuted !== undefined ? (data.defaultMuted ? 1 : 0) : 1,
+            data.defaultVolume !== undefined ? data.defaultVolume : 100,
+            data.playlistEnabled !== undefined ? (data.playlistEnabled ? 1 : 0) : 0,
+            data.playlistLoop !== undefined ? (data.playlistLoop ? 1 : 0) : 1,
+            data.playlistAutoAdvance !== undefined ? (data.playlistAutoAdvance ? 1 : 0) : 1,
+            playlistItemsJson,
+            data.playlistCurrentIndex || 0,
+            data.currentFlyer || null,
+            data.playbackState || 'stopped',
+            data.currentTime || 0,
+            data.duration || 0,
+            data.isMuted !== undefined ? (data.isMuted ? 1 : 0) : 1,
+            data.currentVolume !== undefined ? data.currentVolume : 100,
+            now
+        );
+    }
+
+    return getFlyerMediaSettings(userId);
+}
+
+/**
+ * Update flyer playback state (lightweight update for real-time status)
+ * @param {number} userId - User ID
+ * @param {Object} state - Playback state { playbackState, currentTime, duration, currentFlyer, isMuted, currentVolume }
+ */
+function updateFlyerPlaybackState(userId, state) {
+    const updates = [];
+    const params = [];
+
+    if (state.playbackState !== undefined) {
+        updates.push('playback_state = ?');
+        params.push(state.playbackState);
+    }
+    if (state.currentTime !== undefined) {
+        updates.push('current_time = ?');
+        params.push(state.currentTime);
+    }
+    if (state.duration !== undefined) {
+        updates.push('duration = ?');
+        params.push(state.duration);
+    }
+    if (state.currentFlyer !== undefined) {
+        updates.push('current_flyer = ?');
+        params.push(state.currentFlyer);
+    }
+    if (state.isMuted !== undefined) {
+        updates.push('is_muted = ?');
+        params.push(state.isMuted ? 1 : 0);
+    }
+    if (state.currentVolume !== undefined) {
+        updates.push('current_volume = ?');
+        params.push(state.currentVolume);
+    }
+    if (state.playlistCurrentIndex !== undefined) {
+        updates.push('playlist_current_index = ?');
+        params.push(state.playlistCurrentIndex);
+    }
+
+    if (updates.length > 0) {
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(userId);
+
+        // Use INSERT OR REPLACE pattern to handle non-existent rows
+        const existing = getDb().prepare('SELECT id FROM flyer_media_settings WHERE user_id = ?').get(userId);
+        if (existing) {
+            getDb().prepare(`
+                UPDATE flyer_media_settings SET ${updates.join(', ')} WHERE user_id = ?
+            `).run(...params);
+        } else {
+            // Create with defaults then update
+            getDb().prepare('INSERT INTO flyer_media_settings (user_id) VALUES (?)').run(userId);
+            getDb().prepare(`
+                UPDATE flyer_media_settings SET ${updates.join(', ')} WHERE user_id = ?
+            `).run(...params);
+        }
+    }
+}
+
+/**
+ * Delete flyer media settings for a user
+ * @param {number} userId - User ID
+ * @returns {boolean} True if deleted
+ */
+function deleteFlyerMediaSettings(userId) {
+    const result = getDb().prepare('DELETE FROM flyer_media_settings WHERE user_id = ?').run(userId);
+    return result.changes > 0;
+}
+
 module.exports = {
     // Core functions
     initDatabase,
@@ -2146,5 +2371,12 @@ module.exports = {
     recordBackupStart,
     recordBackupComplete,
     getBackupHistory,
-    cleanupOldBackupRecords
+    cleanupOldBackupRecords,
+
+    // Flyer Media Settings
+    getFlyerMediaSettings,
+    getOrCreateFlyerMediaSettings,
+    saveFlyerMediaSettings,
+    updateFlyerPlaybackState,
+    deleteFlyerMediaSettings
 };

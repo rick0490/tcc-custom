@@ -810,3 +810,511 @@ window.filterDebugLogs = filterDebugLogs;
 window.clearDebugLogs = clearDebugLogs;
 window.copyDebugLogs = copyDebugLogs;
 window.downloadDebugLogs = downloadDebugLogs;
+
+// ============================================================================
+// Flyer Media Controls
+// ============================================================================
+
+// Media controls state
+let mediaStatus = null;
+let mediaSettings = null;
+let playlistItems = [];
+let availableFlyers = [];
+let isPlaying = false;
+let isMuted = true;
+
+// Initialize media controls on page load
+document.addEventListener('DOMContentLoaded', () => {
+	initMediaControls();
+});
+
+// Initialize media controls
+async function initMediaControls() {
+	FrontendDebug.log('Displays', 'Initializing media controls');
+
+	// Load initial settings and status
+	await loadMediaSettings();
+	await loadAvailableFlyers();
+
+	// Subscribe to flyer status updates via WebSocket
+	if (WebSocketManager && WebSocketManager.socket) {
+		// Register for admin room to receive status updates
+		WebSocketManager.socket.emit('admin:register', {
+			userId: window.currentUserId || 1  // Will be set from session
+		});
+
+		WebSocketManager.subscribe('flyer:status', handleFlyerStatusUpdate);
+	}
+}
+
+// Toggle media controls section collapse
+function toggleMediaControlsSection() {
+	const content = document.getElementById('mediaControlsContent');
+	const chevron = document.getElementById('mediaControlsChevron');
+
+	if (content && chevron) {
+		const isHidden = content.classList.contains('hidden');
+		content.classList.toggle('hidden');
+		chevron.classList.toggle('rotate-180', !isHidden);
+	}
+}
+
+// Load media settings from server
+async function loadMediaSettings() {
+	try {
+		const response = await fetch('/api/displays/flyer/settings');
+		if (!response.ok) return;
+
+		const data = await response.json();
+		if (data.success && data.settings) {
+			mediaSettings = data.settings;
+			applyMediaSettingsToUI(data.settings);
+			FrontendDebug.log('Displays', 'Media settings loaded', data.settings);
+		}
+	} catch (error) {
+		FrontendDebug.error('Displays', 'Failed to load media settings', error);
+	}
+}
+
+// Apply loaded settings to UI
+function applyMediaSettingsToUI(settings) {
+	// Behavior toggles
+	const loopEl = document.getElementById('loopEnabled');
+	const autoplayEl = document.getElementById('autoplayEnabled');
+	const mutedEl = document.getElementById('defaultMuted');
+
+	if (loopEl) loopEl.checked = settings.loopEnabled;
+	if (autoplayEl) autoplayEl.checked = settings.autoplayEnabled;
+	if (mutedEl) mutedEl.checked = settings.defaultMuted;
+
+	// Volume slider
+	const volumeSlider = document.getElementById('volumeSlider');
+	if (volumeSlider) {
+		volumeSlider.value = settings.defaultVolume || 100;
+		updateVolumeDisplay(settings.defaultVolume || 100);
+	}
+
+	// Playlist settings
+	const playlistEnabledEl = document.getElementById('playlistEnabled');
+	const playlistLoopEl = document.getElementById('playlistLoop');
+	const playlistAutoAdvanceEl = document.getElementById('playlistAutoAdvance');
+
+	if (playlistEnabledEl) playlistEnabledEl.checked = settings.playlistEnabled;
+	if (playlistLoopEl) playlistLoopEl.checked = settings.playlistLoop;
+	if (playlistAutoAdvanceEl) playlistAutoAdvanceEl.checked = settings.playlistAutoAdvance;
+
+	// Show/hide playlist containers
+	updatePlaylistUIVisibility(settings.playlistEnabled);
+
+	// Playlist items
+	playlistItems = settings.playlistItems || [];
+	renderPlaylistItems();
+
+	// Current status
+	updateStatusDisplay({
+		filename: settings.currentFlyer,
+		state: settings.playbackState,
+		currentTime: settings.currentTime,
+		duration: settings.duration,
+		volume: settings.currentVolume,
+		muted: settings.isMuted,
+		playlistIndex: settings.playlistCurrentIndex
+	});
+}
+
+// Handle real-time flyer status update from WebSocket
+function handleFlyerStatusUpdate(data) {
+	FrontendDebug.ws('Displays', 'Flyer status update', data);
+	updateStatusDisplay(data);
+}
+
+// Update status display elements
+function updateStatusDisplay(status) {
+	if (!status) return;
+
+	// Current media name
+	const mediaNameEl = document.getElementById('currentMediaName');
+	if (mediaNameEl) {
+		mediaNameEl.textContent = status.filename || 'No media';
+	}
+
+	// Playback state indicator and text
+	const stateIndicator = document.getElementById('playbackStateIndicator');
+	const stateText = document.getElementById('playbackStateText');
+
+	if (stateIndicator) {
+		stateIndicator.className = 'playback-state-dot';
+		if (status.state === 'playing') {
+			stateIndicator.classList.add('playing');
+		} else if (status.state === 'paused') {
+			stateIndicator.classList.add('paused');
+		} else {
+			stateIndicator.classList.add('stopped');
+		}
+	}
+
+	if (stateText) {
+		const stateLabels = { playing: 'Playing', paused: 'Paused', stopped: 'Stopped' };
+		stateText.textContent = stateLabels[status.state] || 'Stopped';
+	}
+
+	// Update play/pause button icon
+	isPlaying = status.state === 'playing';
+	const playIcon = document.getElementById('playIcon');
+	const pauseIcon = document.getElementById('pauseIcon');
+	if (playIcon && pauseIcon) {
+		playIcon.classList.toggle('hidden', isPlaying);
+		pauseIcon.classList.toggle('hidden', !isPlaying);
+	}
+
+	// Progress bar
+	if (status.duration > 0) {
+		const progress = (status.currentTime / status.duration) * 100;
+		const progressFill = document.getElementById('progressFill');
+		if (progressFill) {
+			progressFill.style.width = `${progress}%`;
+		}
+	}
+
+	// Time displays
+	const currentTimeEl = document.getElementById('currentTimeDisplay');
+	const durationEl = document.getElementById('durationDisplay');
+	if (currentTimeEl) currentTimeEl.textContent = formatTime(status.currentTime || 0);
+	if (durationEl) durationEl.textContent = formatTime(status.duration || 0);
+
+	// Volume display
+	const volumeDisplayEl = document.getElementById('volumeDisplay');
+	if (volumeDisplayEl) {
+		volumeDisplayEl.textContent = `${status.volume || 0}%`;
+	}
+
+	// Mute indicator
+	isMuted = status.muted;
+	const mutedIndicatorEl = document.getElementById('mutedIndicator');
+	const muteIcon = document.getElementById('muteIcon');
+	const unmuteIcon = document.getElementById('unmuteIcon');
+
+	if (mutedIndicatorEl) {
+		mutedIndicatorEl.classList.toggle('hidden', !status.muted);
+	}
+	if (muteIcon && unmuteIcon) {
+		muteIcon.classList.toggle('hidden', !status.muted);
+		unmuteIcon.classList.toggle('hidden', status.muted);
+	}
+
+	// Playlist position
+	if (playlistItems.length > 0 && status.playlistIndex !== undefined) {
+		const positionEl = document.getElementById('playlistPosition');
+		if (positionEl) {
+			positionEl.textContent = `${status.playlistIndex + 1} / ${playlistItems.length}`;
+		}
+	}
+}
+
+// Format time in MM:SS
+function formatTime(seconds) {
+	if (isNaN(seconds) || seconds < 0) return '0:00';
+	const mins = Math.floor(seconds / 60);
+	const secs = Math.floor(seconds % 60);
+	return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Send media control command
+async function sendMediaControl(action) {
+	try {
+		const response = await csrfFetch('/api/displays/flyer/control', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action })
+		});
+
+		const data = await response.json();
+		if (!data.success) {
+			showAlert(`Control failed: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// Toggle play/pause
+function togglePlayPause() {
+	sendMediaControl(isPlaying ? 'pause' : 'play');
+}
+
+// Toggle mute
+function toggleMute() {
+	sendMediaControl(isMuted ? 'unmute' : 'mute');
+}
+
+// Update volume display as slider moves
+function updateVolumeDisplay(value) {
+	const sliderValue = document.getElementById('volumeSliderValue');
+	if (sliderValue) {
+		sliderValue.textContent = `${value}%`;
+	}
+}
+
+// Set volume
+async function setVolume(value) {
+	try {
+		const response = await csrfFetch('/api/displays/flyer/volume', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ volume: parseInt(value) })
+		});
+
+		const data = await response.json();
+		if (!data.success) {
+			showAlert(`Volume failed: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// Save media settings
+async function saveMediaSettings() {
+	const loopEnabled = document.getElementById('loopEnabled')?.checked;
+	const autoplayEnabled = document.getElementById('autoplayEnabled')?.checked;
+	const defaultMuted = document.getElementById('defaultMuted')?.checked;
+
+	try {
+		const response = await csrfFetch('/api/displays/flyer/settings', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ loopEnabled, autoplayEnabled, defaultMuted })
+		});
+
+		const data = await response.json();
+		if (data.success) {
+			showAlert('Settings saved', 'success');
+		} else {
+			showAlert(`Save failed: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// ============================================================================
+// Playlist Functions
+// ============================================================================
+
+// Toggle playlist mode
+async function togglePlaylist() {
+	const enabled = document.getElementById('playlistEnabled')?.checked;
+
+	try {
+		const response = await csrfFetch('/api/displays/flyer/playlist/control', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'toggle', enabled })
+		});
+
+		const data = await response.json();
+		if (data.success) {
+			updatePlaylistUIVisibility(enabled);
+			showAlert(enabled ? 'Playlist mode enabled' : 'Playlist mode disabled', 'success');
+		} else {
+			showAlert(`Failed: ${data.error}`, 'error');
+			// Revert checkbox
+			document.getElementById('playlistEnabled').checked = !enabled;
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+		document.getElementById('playlistEnabled').checked = !enabled;
+	}
+}
+
+// Update playlist UI visibility
+function updatePlaylistUIVisibility(enabled) {
+	const container = document.getElementById('playlistContainer');
+	const controls = document.getElementById('playlistControlsContainer');
+
+	if (container) container.classList.toggle('hidden', !enabled);
+	if (controls) controls.classList.toggle('hidden', !enabled);
+}
+
+// Load available flyers for playlist dropdown
+async function loadAvailableFlyers() {
+	try {
+		const response = await fetch('/api/flyers');
+		if (!response.ok) return;
+
+		const data = await response.json();
+		if (data.success) {
+			availableFlyers = data.flyers || [];
+			updatePlaylistDropdown();
+		}
+	} catch (error) {
+		FrontendDebug.error('Displays', 'Failed to load flyers', error);
+	}
+}
+
+// Update playlist dropdown options
+function updatePlaylistDropdown() {
+	const select = document.getElementById('addToPlaylistSelect');
+	if (!select) return;
+
+	select.innerHTML = '<option value="">Select flyer to add...</option>';
+
+	availableFlyers.forEach(flyer => {
+		const option = document.createElement('option');
+		option.value = flyer.filename;
+		option.textContent = flyer.filename;
+		select.appendChild(option);
+	});
+}
+
+// Add item to playlist
+async function addToPlaylist() {
+	const select = document.getElementById('addToPlaylistSelect');
+	const filename = select?.value;
+
+	if (!filename) {
+		showAlert('Please select a flyer', 'warning');
+		return;
+	}
+
+	// Determine if it's a video or image
+	const isVideo = filename.toLowerCase().endsWith('.mp4');
+	const defaultDuration = isVideo ? 0 : 10; // Videos use their natural duration
+
+	// Add to local array
+	playlistItems.push({ filename, duration: defaultDuration });
+
+	// Save to server
+	await savePlaylist();
+
+	// Reset dropdown
+	select.value = '';
+}
+
+// Remove item from playlist
+async function removeFromPlaylist(index) {
+	playlistItems.splice(index, 1);
+	await savePlaylist();
+}
+
+// Update item duration
+async function updatePlaylistItemDuration(index, duration) {
+	playlistItems[index].duration = parseInt(duration) || 0;
+	await savePlaylist();
+}
+
+// Save playlist to server
+async function savePlaylist() {
+	const loop = document.getElementById('playlistLoop')?.checked;
+	const autoAdvance = document.getElementById('playlistAutoAdvance')?.checked;
+
+	try {
+		const response = await csrfFetch('/api/displays/flyer/playlist', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				items: playlistItems,
+				loop,
+				autoAdvance
+			})
+		});
+
+		const data = await response.json();
+		if (data.success) {
+			renderPlaylistItems();
+		} else {
+			showAlert(`Save failed: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// Save playlist settings (loop, auto-advance)
+function savePlaylistSettings() {
+	savePlaylist();
+}
+
+// Render playlist items
+function renderPlaylistItems() {
+	const container = document.getElementById('playlistItems');
+	const countEl = document.getElementById('playlistCount');
+
+	if (countEl) {
+		countEl.textContent = `${playlistItems.length} items`;
+	}
+
+	if (!container) return;
+
+	if (playlistItems.length === 0) {
+		container.innerHTML = '<div class="text-center py-4 text-gray-500 text-sm">No items in playlist</div>';
+		return;
+	}
+
+	container.innerHTML = playlistItems.map((item, index) => {
+		const isVideo = item.filename.toLowerCase().endsWith('.mp4');
+		const icon = isVideo
+			? '<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>'
+			: '<svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>';
+
+		return `
+			<div class="playlist-item flex items-center gap-2 p-2 bg-gray-600/50 rounded">
+				<span class="text-gray-400 text-xs w-5">${index + 1}.</span>
+				${icon}
+				<span class="flex-1 text-white text-sm truncate" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
+				${!isVideo ? `
+					<input type="number" value="${item.duration}" min="1" max="300"
+						onchange="updatePlaylistItemDuration(${index}, this.value)"
+						class="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white text-center"
+						title="Duration in seconds">
+					<span class="text-xs text-gray-500">sec</span>
+				` : '<span class="text-xs text-gray-500 w-20 text-center">auto</span>'}
+				<button onclick="removeFromPlaylist(${index})" class="text-red-400 hover:text-red-300 p-1" title="Remove">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					</svg>
+				</button>
+			</div>
+		`;
+	}).join('');
+
+	// Update position display
+	const positionEl = document.getElementById('playlistPosition');
+	if (positionEl && playlistItems.length > 0) {
+		const currentIndex = mediaSettings?.playlistCurrentIndex || 0;
+		positionEl.textContent = `${currentIndex + 1} / ${playlistItems.length}`;
+	}
+}
+
+// Playlist navigation
+async function playlistControl(action) {
+	try {
+		const response = await csrfFetch('/api/displays/flyer/playlist/control', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action })
+		});
+
+		const data = await response.json();
+		if (!data.success) {
+			showAlert(`Failed: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	}
+}
+
+// Export media control functions
+window.toggleMediaControlsSection = toggleMediaControlsSection;
+window.sendMediaControl = sendMediaControl;
+window.togglePlayPause = togglePlayPause;
+window.toggleMute = toggleMute;
+window.updateVolumeDisplay = updateVolumeDisplay;
+window.setVolume = setVolume;
+window.saveMediaSettings = saveMediaSettings;
+window.togglePlaylist = togglePlaylist;
+window.addToPlaylist = addToPlaylist;
+window.removeFromPlaylist = removeFromPlaylist;
+window.updatePlaylistItemDuration = updatePlaylistItemDuration;
+window.savePlaylistSettings = savePlaylistSettings;
+window.playlistControl = playlistControl;

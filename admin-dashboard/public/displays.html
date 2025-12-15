@@ -126,6 +126,207 @@
 		</div>
 	</section>
 
+	<!-- Flyer Media Controls -->
+	<section id="mediaControlsSection" class="mb-6">
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+			<!-- Collapsible Header -->
+			<button onclick="toggleMediaControlsSection()" class="w-full flex items-center justify-between text-left">
+				<div>
+					<h2 class="text-xl font-bold text-white">Flyer Media Controls</h2>
+					<p class="text-sm text-gray-400 mt-1">Remote control for video playback on flyer displays</p>
+				</div>
+				<svg id="mediaControlsChevron" class="w-5 h-5 text-gray-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+				</svg>
+			</button>
+
+			<!-- Collapsible Content -->
+			<div id="mediaControlsContent" class="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+				<!-- Column 1: Current Status -->
+				<div class="space-y-4">
+					<h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Current Status</h3>
+
+					<!-- Current Media -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<div class="flex items-center justify-between mb-2">
+							<span class="text-sm text-gray-400">Current Media</span>
+							<span id="playbackStateIndicator" class="playback-state-dot stopped"></span>
+						</div>
+						<div id="currentMediaName" class="text-white font-medium truncate">No media</div>
+						<div id="playbackStateText" class="text-sm text-gray-500 mt-1">Stopped</div>
+					</div>
+
+					<!-- Progress Bar -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<div class="flex items-center justify-between mb-2 text-sm text-gray-400">
+							<span id="currentTimeDisplay">0:00</span>
+							<span id="durationDisplay">0:00</span>
+						</div>
+						<div class="progress-bar">
+							<div id="progressFill" class="progress-fill" style="width: 0%"></div>
+						</div>
+					</div>
+
+					<!-- Volume Display -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<div class="flex items-center justify-between">
+							<span class="text-sm text-gray-400">Volume</span>
+							<span id="volumeDisplay" class="text-white">100%</span>
+						</div>
+						<div class="flex items-center gap-2 mt-2">
+							<svg id="volumeIcon" class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M6 8.997l2-2m0 0l3.5-2.497A.5.5 0 0112 4.87v14.26a.5.5 0 01-.5.37L8 17l-2-2H3a1 1 0 01-1-1V10a1 1 0 011-1h3z"></path>
+							</svg>
+							<span id="mutedIndicator" class="text-xs text-gray-500 hidden">(Muted)</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- Column 2: Playback Controls -->
+				<div class="space-y-4">
+					<h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Playback Controls</h3>
+
+					<!-- Control Buttons -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<div class="flex items-center justify-center gap-3">
+							<button onclick="sendMediaControl('restart')" class="media-control-btn" title="Restart">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"></path>
+								</svg>
+							</button>
+							<button id="playPauseBtn" onclick="togglePlayPause()" class="media-control-btn primary" title="Play/Pause">
+								<svg id="playIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+								</svg>
+								<svg id="pauseIcon" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+								</svg>
+							</button>
+							<button id="muteBtn" onclick="toggleMute()" class="media-control-btn" title="Mute/Unmute">
+								<svg id="unmuteIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M6 8.997l2-2m0 0l3.5-2.497A.5.5 0 0112 4.87v14.26a.5.5 0 01-.5.37L8 17l-2-2H3a1 1 0 01-1-1V10a1 1 0 011-1h3z"></path>
+								</svg>
+								<svg id="muteIcon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" clip-rule="evenodd"></path>
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"></path>
+								</svg>
+							</button>
+						</div>
+					</div>
+
+					<!-- Volume Slider -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<label class="text-sm text-gray-400 block mb-2">Volume</label>
+						<div class="flex items-center gap-3">
+							<input type="range" id="volumeSlider" min="0" max="100" value="100"
+								oninput="updateVolumeDisplay(this.value)"
+								onchange="setVolume(this.value)"
+								class="volume-slider flex-1">
+							<span id="volumeSliderValue" class="text-white text-sm w-12 text-right">100%</span>
+						</div>
+					</div>
+
+					<!-- Behavior Settings -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<h4 class="text-sm text-gray-400 mb-3">Video Behavior</h4>
+						<div class="space-y-3">
+							<label class="flex items-center justify-between cursor-pointer">
+								<span class="text-sm text-white">Loop Video</span>
+								<input type="checkbox" id="loopEnabled" checked onchange="saveMediaSettings()"
+									class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0">
+							</label>
+							<label class="flex items-center justify-between cursor-pointer">
+								<span class="text-sm text-white">Autoplay</span>
+								<input type="checkbox" id="autoplayEnabled" checked onchange="saveMediaSettings()"
+									class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0">
+							</label>
+							<label class="flex items-center justify-between cursor-pointer">
+								<span class="text-sm text-white">Default Muted</span>
+								<input type="checkbox" id="defaultMuted" checked onchange="saveMediaSettings()"
+									class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0">
+							</label>
+						</div>
+					</div>
+				</div>
+
+				<!-- Column 3: Playlist Mode -->
+				<div class="space-y-4">
+					<h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">Playlist Mode</h3>
+
+					<!-- Playlist Toggle -->
+					<div class="bg-gray-700/50 rounded-lg p-4">
+						<label class="flex items-center justify-between cursor-pointer">
+							<div>
+								<span class="text-sm text-white font-medium">Enable Playlist</span>
+								<p class="text-xs text-gray-500">Rotate through multiple flyers</p>
+							</div>
+							<input type="checkbox" id="playlistEnabled" onchange="togglePlaylist()"
+								class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0">
+						</label>
+					</div>
+
+					<!-- Playlist Items -->
+					<div id="playlistContainer" class="bg-gray-700/50 rounded-lg p-4 hidden">
+						<div class="flex items-center justify-between mb-3">
+							<span class="text-sm text-gray-400">Playlist Items</span>
+							<span id="playlistCount" class="text-xs text-gray-500">0 items</span>
+						</div>
+
+						<div id="playlistItems" class="space-y-2 max-h-48 overflow-y-auto mb-3">
+							<div class="text-center py-4 text-gray-500 text-sm">No items in playlist</div>
+						</div>
+
+						<!-- Add to Playlist -->
+						<div class="flex gap-2">
+							<select id="addToPlaylistSelect" class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm text-white">
+								<option value="">Select flyer to add...</option>
+							</select>
+							<button onclick="addToPlaylist()" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white">
+								Add
+							</button>
+						</div>
+					</div>
+
+					<!-- Playlist Controls -->
+					<div id="playlistControlsContainer" class="bg-gray-700/50 rounded-lg p-4 hidden">
+						<div class="flex items-center justify-center gap-3 mb-4">
+							<button onclick="playlistControl('prev')" class="media-control-btn" title="Previous">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+								</svg>
+							</button>
+							<span id="playlistPosition" class="text-white text-sm px-4">0 / 0</span>
+							<button onclick="playlistControl('next')" class="media-control-btn" title="Next">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+								</svg>
+							</button>
+						</div>
+
+						<div class="space-y-3">
+							<label class="flex items-center justify-between cursor-pointer">
+								<span class="text-sm text-white">Loop Playlist</span>
+								<input type="checkbox" id="playlistLoop" checked onchange="savePlaylistSettings()"
+									class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0">
+							</label>
+							<label class="flex items-center justify-between cursor-pointer">
+								<span class="text-sm text-white">Auto-Advance</span>
+								<input type="checkbox" id="playlistAutoAdvance" checked onchange="savePlaylistSettings()"
+									class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0">
+							</label>
+						</div>
+					</div>
+
+					<!-- Duration Note -->
+					<div class="text-xs text-gray-500 px-1">
+						<p>For images in playlist, set duration in seconds. Videos will auto-advance when finished.</p>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
 	<!-- Display Instructions -->
 	<section class="mb-6">
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">

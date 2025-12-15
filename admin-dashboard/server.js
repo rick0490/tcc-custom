@@ -653,6 +653,7 @@ localRoutes.flyers.init({ axios, requireAuthAPI, logActivity, io });
 localRoutes.sponsors.init({ axios, io, requireAuthAPI, sponsorService, logActivity });
 localRoutes.games.setSocketIO(io);
 localRoutes.bracketEditor.init({ tournamentDb, participantDb, bracketEngine, bracketRenderer, io });
+localRoutes.displays.init({ activityLogger: { logActivity }, matchPolling: null, pushNotifications: null, io });
 
 // Mount local database routes (replaces Challonge API)
 // Mount at both singular and plural paths for frontend compatibility
@@ -664,6 +665,7 @@ app.use('/api/stations', localRoutes.stations);
 app.use('/api/flyers', localRoutes.flyers);
 app.use('/api/sponsors', localRoutes.sponsors);
 app.use('/api/games', localRoutes.games);
+app.use('/api/displays', localRoutes.displays);
 app.use('/api/bracket-editor', localRoutes.bracketEditor.router);
 
 // Signup routes (public - no auth required)
@@ -2098,9 +2100,16 @@ io.on('connection', (socket) => {
 	});
 
 	// Handle admin client registration
-	socket.on('admin:register', () => {
+	socket.on('admin:register', (data) => {
 		console.log(`[WebSocket] Admin client registered: ${socket.id}`);
 		wsConnections.clients.add(socket);
+
+		// Join user-specific admin room for receiving flyer status updates
+		const userId = data?.userId || socket.request?.session?.userId;
+		if (userId) {
+			socket.join(`user:${userId}:admin`);
+			console.log(`[WebSocket] Admin joined room: user:${userId}:admin`);
+		}
 
 		// Send initial activity data
 		try {
@@ -2114,6 +2123,20 @@ io.on('connection', (socket) => {
 		} catch (error) {
 			console.error('[WebSocket] Error sending initial activity:', error.message);
 		}
+	});
+
+	// Handle flyer status updates from flyer display service
+	socket.on('flyer:status', (data) => {
+		const { userId } = data;
+		if (!userId) {
+			console.warn('[WebSocket] flyer:status received without userId');
+			return;
+		}
+		// Relay status to admin dashboard for this user
+		io.to(`user:${userId}:admin`).emit('flyer:status', {
+			...data,
+			timestamp: new Date().toISOString()
+		});
 	});
 
 	// Handle request for current data
