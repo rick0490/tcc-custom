@@ -620,6 +620,8 @@ function deleteGame(gameId) {
  * @param {string} shortCode - Optional short code
  */
 function ensureGame(userId, name, shortCode = null) {
+    if (!name) return null;  // Guard against null/undefined name
+
     const existing = getGameByName(userId, name);
     if (existing) return existing;
 

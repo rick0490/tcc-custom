@@ -105,9 +105,9 @@ function create(data, userId = null) {
     // Look up game_id from game name if needed
     // Auto-create game if it doesn't exist
     let gameId = data.game_id;
-    if (!gameId && data.game_name) {
-        const game = systemDb.getGameByName(data.game_name) ||
-                     systemDb.ensureGame(data.game_name);
+    if (!gameId && data.game_name && userId) {
+        const game = systemDb.getGameByName(userId, data.game_name) ||
+                     systemDb.ensureGame(userId, data.game_name);
         if (game) {
             gameId = game.id;
         }
@@ -119,8 +119,10 @@ function create(data, userId = null) {
             signup_cap, open_signup, check_in_duration, registration_open_at,
             starts_at, hold_third_place_match, grand_finals_modifier,
             swiss_rounds, ranked_by, show_rounds, hide_seeds, sequential_pairings,
-            private, format_settings_json, user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            private, format_settings_json, user_id,
+            group_count, advance_per_group, knockout_format,
+            players_per_match, total_rounds, points_system_json, current_stage
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -144,7 +146,17 @@ function create(data, userId = null) {
         data.sequential_pairings ? 1 : 0,
         data.private ? 1 : 0,
         data.format_settings_json ? JSON.stringify(data.format_settings_json) : null,
-        userId
+        userId,
+        // Two-stage options
+        data.group_count || null,
+        data.advance_per_group || null,
+        data.knockout_format || null,
+        // Free-for-all options
+        data.players_per_match || null,
+        data.total_rounds || null,
+        data.points_system_json || null,
+        // Stage tracking
+        data.current_stage || null
     );
 
     const tournament = getById(result.lastInsertRowid);
