@@ -667,6 +667,7 @@ app.use('/api/flyers', localRoutes.flyers);
 app.use('/api/sponsors', localRoutes.sponsors);
 app.use('/api/games', localRoutes.games);
 app.use('/api/displays', localRoutes.displays);
+app.use('/api/users', localRoutes.users);
 app.use('/api/bracket-editor', localRoutes.bracketEditor.router);
 
 // Signup routes (public - no auth required)
