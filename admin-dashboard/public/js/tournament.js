@@ -554,6 +554,43 @@ function updateActiveBanner() {
 	}
 }
 
+// Start tournament from active banner (uses activeTournament instead of selectedTournament)
+async function startActiveTournament() {
+	if (!activeTournament) return;
+	if (!confirm(`Start tournament "${activeTournament.name}"? This will lock participants and begin bracket play.`)) return;
+
+	const btn = document.getElementById('startTournamentBannerBtn');
+	if (btn) {
+		btn.disabled = true;
+		btn.textContent = 'Starting...';
+	}
+
+	try {
+		const tournamentId = activeTournament.tournamentId || activeTournament.id || activeTournament.url_slug;
+		const response = await csrfFetch(`/api/tournament/${tournamentId}/start`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' }
+		});
+
+		const data = await response.json();
+
+		if (data.success) {
+			showAlert('Tournament started successfully!', 'success');
+			// Refresh to update banner and tournament list
+			await Promise.all([refreshTournaments(), loadActiveTournament()]);
+		} else {
+			showAlert(`Failed to start: ${data.error}`, 'error');
+		}
+	} catch (error) {
+		showAlert(`Error: ${error.message}`, 'error');
+	} finally {
+		if (btn) {
+			btn.disabled = false;
+			btn.textContent = 'Start Tournament';
+		}
+	}
+}
+
 // Load system defaults
 async function loadSystemDefaults() {
 	try {
