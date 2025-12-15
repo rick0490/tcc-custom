@@ -144,10 +144,22 @@ rm admin-dashboard/cache.db
 | Double Elimination | `services/bracket-engine/double-elimination.js` | Winners + losers bracket, grand finals, BYE handling for odd counts |
 | Round Robin | `services/bracket-engine/round-robin.js` | Circle method scheduling |
 | Swiss | `services/bracket-engine/swiss.js` | Score-based pairing, Buchholz tiebreaker |
+| Two-Stage | `services/bracket-engine/two-stage.js` | Group stage (round robin) → knockout bracket |
+| Free-for-All | `services/bracket-engine/free-for-all.js` | Multi-player matches with placement points |
+| Leaderboard | `services/bracket-engine/leaderboard.js` | Ongoing rankings across multiple events |
 | Entry Point | `services/bracket-engine/index.js` | Format dispatcher |
 
 **Double Elimination BYE Handling:**
 The losers bracket handles odd participant counts by creating BYE placeholder matches. When an odd number of losers enter any losers bracket round, a BYE match is created that auto-advances the odd player. This ensures proper bracket progression for any participant count (3, 5, 6, 7, 9, 11, etc.).
+
+**Two-Stage Format:**
+FIFA World Cup style tournament with group stage followed by knockout. Options: `group_count` (2-8), `advance_per_group` (1-4), `knockout_format` (single/double elimination).
+
+**Free-for-All Format:**
+Multi-player matches where all participants compete simultaneously (racing, battle royale). Options: `players_per_match` (4-16), `total_rounds` (1-10), `points_system_json` (F1, linear, winner-take-all).
+
+**Leaderboard Format:**
+Ongoing rankings across multiple sessions/events. No matches generated - tracks cumulative points. Options stored in `format_settings_json`: `rankingType` (points/elo/wins), `decayEnabled`, `minEventsToRank`.
 
 ### Visualization
 | Service | File | Purpose |
@@ -183,7 +195,7 @@ CREATE TABLE tcc_tournaments (
     url_slug TEXT UNIQUE NOT NULL,
     game_id INTEGER,
     tournament_type TEXT CHECK(tournament_type IN
-        ('single_elimination','double_elimination','round_robin','swiss')),
+        ('single_elimination','double_elimination','round_robin','swiss','two_stage','free_for_all','leaderboard')),
     state TEXT DEFAULT 'pending' CHECK(state IN
         ('pending','underway','awaiting_review','complete')),
     signup_cap INTEGER,
@@ -197,6 +209,15 @@ CREATE TABLE tcc_tournaments (
     hide_seeds INTEGER DEFAULT 0,
     sequential_pairings INTEGER DEFAULT 0,
     format_settings_json TEXT,
+    -- Two-Stage format options
+    group_count INTEGER DEFAULT 4,
+    advance_per_group INTEGER DEFAULT 2,
+    knockout_format TEXT DEFAULT 'single_elimination',
+    current_stage TEXT DEFAULT 'group' CHECK(current_stage IN ('group', 'knockout', 'complete')),
+    -- Free-for-All format options
+    players_per_match INTEGER DEFAULT 4,
+    total_rounds INTEGER DEFAULT 3,
+    points_system_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -214,9 +235,13 @@ CREATE TABLE tcc_participants (
     checked_in INTEGER DEFAULT 0,
     checked_in_at DATETIME,
     final_rank INTEGER,
+    on_waiting_list INTEGER DEFAULT 0,
+    group_id INTEGER,               -- Two-stage: assigned group
+    group_seed INTEGER,             -- Two-stage: seed within group
     misc TEXT,
     instagram TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE
 );
 
@@ -226,6 +251,7 @@ CREATE TABLE tcc_matches (
     tournament_id INTEGER NOT NULL,
     identifier TEXT,
     round INTEGER NOT NULL,
+    group_id INTEGER,               -- Two-stage: group this match belongs to
     suggested_play_order INTEGER,
     player1_id INTEGER,
     player2_id INTEGER,
@@ -244,7 +270,13 @@ CREATE TABLE tcc_matches (
     underway_at DATETIME,
     completed_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE,
+    FOREIGN KEY (player1_id) REFERENCES tcc_participants(id),
+    FOREIGN KEY (player2_id) REFERENCES tcc_participants(id),
+    FOREIGN KEY (winner_id) REFERENCES tcc_participants(id),
+    FOREIGN KEY (loser_id) REFERENCES tcc_participants(id),
+    FOREIGN KEY (station_id) REFERENCES tcc_stations(id)
 );
 
 -- Stations
@@ -253,23 +285,77 @@ CREATE TABLE tcc_stations (
     tournament_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     active INTEGER DEFAULT 1,
+    current_match_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE
 );
 
--- Standings (for round robin/swiss)
+-- Standings (for round robin/swiss/two-stage/free-for-all)
 CREATE TABLE tcc_standings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tournament_id INTEGER NOT NULL,
     participant_id INTEGER NOT NULL,
+    group_id INTEGER,
     wins INTEGER DEFAULT 0,
     losses INTEGER DEFAULT 0,
     ties INTEGER DEFAULT 0,
     game_wins INTEGER DEFAULT 0,
     game_losses INTEGER DEFAULT 0,
+    points_scored INTEGER DEFAULT 0,
+    points_against INTEGER DEFAULT 0,
     buchholz REAL DEFAULT 0,
-    ranking INTEGER,
+    rank INTEGER,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE,
     FOREIGN KEY (participant_id) REFERENCES tcc_participants(id) ON DELETE CASCADE
+);
+
+-- Free-for-All placements (multi-player match results)
+CREATE TABLE tcc_ffa_placements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id INTEGER NOT NULL,
+    participant_id INTEGER NOT NULL,
+    placement INTEGER NOT NULL,
+    points_awarded INTEGER DEFAULT 0,
+    FOREIGN KEY (match_id) REFERENCES tcc_matches(id) ON DELETE CASCADE,
+    FOREIGN KEY (participant_id) REFERENCES tcc_participants(id) ON DELETE CASCADE
+);
+
+-- Leaderboard events (for ongoing point accumulation)
+CREATE TABLE tcc_leaderboard_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id INTEGER NOT NULL,
+    event_name TEXT,
+    event_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_complete INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE
+);
+
+-- Leaderboard event results
+CREATE TABLE tcc_leaderboard_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    participant_id INTEGER NOT NULL,
+    placement INTEGER,
+    points_awarded INTEGER DEFAULT 0,
+    FOREIGN KEY (event_id) REFERENCES tcc_leaderboard_events(id) ON DELETE CASCADE,
+    FOREIGN KEY (participant_id) REFERENCES tcc_participants(id) ON DELETE CASCADE
+);
+
+-- Waitlist for tournaments at capacity
+CREATE TABLE tcc_waitlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    position INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting', 'promoted', 'expired', 'removed')),
+    notified_at DATETIME,
+    promoted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tournament_id) REFERENCES tcc_tournaments(id) ON DELETE CASCADE
 );
 ```
 
@@ -531,7 +617,10 @@ These files from original TCC are not present in tcc-custom:
 │   │   │   ├── single-elimination.js
 │   │   │   ├── double-elimination.js
 │   │   │   ├── round-robin.js
-│   │   │   └── swiss.js
+│   │   │   ├── swiss.js
+│   │   │   ├── two-stage.js
+│   │   │   ├── free-for-all.js
+│   │   │   └── leaderboard.js
 │   │   ├── bracket-renderer.js
 │   │   ├── match-polling.js
 │   │   └── ai-seeding.js
