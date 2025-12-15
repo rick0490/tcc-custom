@@ -23,7 +23,12 @@ class WebSocketClient {
             'flyer:activated',
             'flyer:uploaded',
             'flyer:deleted',
-            'flyers:update'
+            'flyers:update',
+            // Media control events
+            'flyer:control',
+            'flyer:volume',
+            'flyer:settings',
+            'flyer:playlist'
         ];
     }
 

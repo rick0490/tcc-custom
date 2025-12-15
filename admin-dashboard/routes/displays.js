@@ -11,6 +11,7 @@ const path = require('path');
 const fsSync = require('fs');
 const { ACTIVITY_TYPES } = require('../constants');
 const { createLogger } = require('../services/debug-logger');
+const systemDb = require('../db/system-db');
 
 const logger = createLogger('routes:displays');
 
@@ -27,7 +28,13 @@ const DISPLAYS_FILE = path.join(__dirname, '..', 'displays.json');
 const WS_EVENTS = {
 	DISPLAY_REGISTERED: 'display:registered',
 	DISPLAY_UPDATED: 'display:updated',
-	DISPLAY_OFFLINE: 'display:offline'
+	DISPLAY_OFFLINE: 'display:offline',
+	// Flyer media control events
+	FLYER_CONTROL: 'flyer:control',
+	FLYER_VOLUME: 'flyer:volume',
+	FLYER_SETTINGS: 'flyer:settings',
+	FLYER_PLAYLIST: 'flyer:playlist',
+	FLYER_STATUS: 'flyer:status'
 };
 
 /**
@@ -270,6 +277,391 @@ router.post('/:id/heartbeat', async (req, res) => {
 			success: false,
 			error: 'Failed to process heartbeat'
 		});
+	}
+});
+
+// ============================================
+// FLYER MEDIA CONTROL ROUTES
+// These routes must be defined BEFORE /:id routes to avoid "flyer" being matched as an ID
+// ============================================
+
+/**
+ * Broadcast flyer media event to user's flyer display
+ */
+function broadcastFlyerMedia(userId, eventType, data = {}) {
+	if (io) {
+		io.to(`user:${userId}:flyer`).emit(eventType, { ...data, userId });
+		logger.log('broadcastFlyerMedia', { userId, eventType, data });
+	}
+}
+
+// ============================================
+// GET /api/displays/flyer/settings - Get media settings
+// Requires authentication
+// ============================================
+router.get('/flyer/settings', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const settings = systemDb.getOrCreateFlyerMediaSettings(userId);
+
+		// Transform to camelCase for frontend
+		res.json({
+			success: true,
+			settings: {
+				loopEnabled: !!settings.loop_enabled,
+				autoplayEnabled: !!settings.autoplay_enabled,
+				defaultMuted: !!settings.default_muted,
+				defaultVolume: settings.default_volume,
+				playlistEnabled: !!settings.playlist_enabled,
+				playlistLoop: !!settings.playlist_loop,
+				playlistAutoAdvance: !!settings.playlist_auto_advance,
+				playlistItems: settings.playlistItems || [],
+				playlistCurrentIndex: settings.playlist_current_index,
+				currentFlyer: settings.current_flyer,
+				playbackState: settings.playback_state,
+				currentTime: settings.current_time,
+				duration: settings.duration,
+				isMuted: !!settings.is_muted,
+				currentVolume: settings.current_volume
+			}
+		});
+	} catch (error) {
+		console.error('Get flyer settings error:', error);
+		res.status(500).json({ success: false, error: 'Failed to get flyer settings' });
+	}
+});
+
+// ============================================
+// PUT /api/displays/flyer/settings - Update media settings
+// Requires authentication
+// ============================================
+router.put('/flyer/settings', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const {
+			loopEnabled, autoplayEnabled, defaultMuted, defaultVolume,
+			playlistEnabled, playlistLoop, playlistAutoAdvance
+		} = req.body;
+
+		// Validate volume range
+		if (defaultVolume !== undefined && (defaultVolume < 0 || defaultVolume > 100)) {
+			return res.status(400).json({ success: false, error: 'Volume must be between 0 and 100' });
+		}
+
+		const settings = systemDb.saveFlyerMediaSettings(userId, {
+			loopEnabled, autoplayEnabled, defaultMuted, defaultVolume,
+			playlistEnabled, playlistLoop, playlistAutoAdvance
+		});
+
+		// Broadcast settings update to flyer display
+		broadcastFlyerMedia(userId, WS_EVENTS.FLYER_SETTINGS, {
+			loop: !!settings.loop_enabled,
+			autoplay: !!settings.autoplay_enabled,
+			defaultMuted: !!settings.default_muted,
+			defaultVolume: settings.default_volume,
+			playlistEnabled: !!settings.playlist_enabled,
+			playlistLoop: !!settings.playlist_loop,
+			playlistAutoAdvance: !!settings.playlist_auto_advance
+		});
+
+		if (activityLogger) {
+			activityLogger.logActivity(userId, req.session.username, 'flyer_settings_update', {
+				loopEnabled, autoplayEnabled, defaultMuted, defaultVolume
+			});
+		}
+
+		res.json({ success: true, message: 'Settings updated' });
+	} catch (error) {
+		console.error('Update flyer settings error:', error);
+		res.status(500).json({ success: false, error: 'Failed to update settings' });
+	}
+});
+
+// ============================================
+// POST /api/displays/flyer/control - Playback control
+// Requires authentication
+// Actions: play, pause, restart, mute, unmute
+// ============================================
+router.post('/flyer/control', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const { action } = req.body;
+		const validActions = ['play', 'pause', 'restart', 'mute', 'unmute'];
+
+		if (!action || !validActions.includes(action)) {
+			return res.status(400).json({
+				success: false,
+				error: `Invalid action. Must be one of: ${validActions.join(', ')}`
+			});
+		}
+
+		// Update state in database
+		let stateUpdate = {};
+		if (action === 'play') stateUpdate.playbackState = 'playing';
+		else if (action === 'pause') stateUpdate.playbackState = 'paused';
+		else if (action === 'restart') stateUpdate = { playbackState: 'playing', currentTime: 0 };
+		else if (action === 'mute') stateUpdate.isMuted = true;
+		else if (action === 'unmute') stateUpdate.isMuted = false;
+
+		if (Object.keys(stateUpdate).length > 0) {
+			systemDb.updateFlyerPlaybackState(userId, stateUpdate);
+		}
+
+		// Broadcast control command to flyer display
+		broadcastFlyerMedia(userId, WS_EVENTS.FLYER_CONTROL, { action });
+
+		if (activityLogger) {
+			activityLogger.logActivity(userId, req.session.username, 'flyer_control', { action });
+		}
+
+		res.json({ success: true, action });
+	} catch (error) {
+		console.error('Flyer control error:', error);
+		res.status(500).json({ success: false, error: 'Failed to send control command' });
+	}
+});
+
+// ============================================
+// POST /api/displays/flyer/volume - Set volume
+// Requires authentication
+// ============================================
+router.post('/flyer/volume', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const { volume } = req.body;
+
+		if (volume === undefined || volume < 0 || volume > 100) {
+			return res.status(400).json({ success: false, error: 'Volume must be between 0 and 100' });
+		}
+
+		// Update state in database
+		systemDb.updateFlyerPlaybackState(userId, { currentVolume: volume });
+
+		// Broadcast volume to flyer display
+		broadcastFlyerMedia(userId, WS_EVENTS.FLYER_VOLUME, { volume });
+
+		res.json({ success: true, volume });
+	} catch (error) {
+		console.error('Flyer volume error:', error);
+		res.status(500).json({ success: false, error: 'Failed to set volume' });
+	}
+});
+
+// ============================================
+// GET /api/displays/flyer/playlist - Get playlist
+// Requires authentication
+// ============================================
+router.get('/flyer/playlist', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const settings = systemDb.getOrCreateFlyerMediaSettings(userId);
+
+		res.json({
+			success: true,
+			playlist: {
+				enabled: !!settings.playlist_enabled,
+				loop: !!settings.playlist_loop,
+				autoAdvance: !!settings.playlist_auto_advance,
+				items: settings.playlistItems || [],
+				currentIndex: settings.playlist_current_index
+			}
+		});
+	} catch (error) {
+		console.error('Get playlist error:', error);
+		res.status(500).json({ success: false, error: 'Failed to get playlist' });
+	}
+});
+
+// ============================================
+// PUT /api/displays/flyer/playlist - Update playlist
+// Requires authentication
+// ============================================
+router.put('/flyer/playlist', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const { items, loop, autoAdvance, enabled } = req.body;
+
+		// Validate items if provided
+		if (items !== undefined && !Array.isArray(items)) {
+			return res.status(400).json({ success: false, error: 'Items must be an array' });
+		}
+
+		// Validate each item has required fields
+		if (items) {
+			for (const item of items) {
+				if (!item.filename) {
+					return res.status(400).json({ success: false, error: 'Each item must have a filename' });
+				}
+				if (item.duration !== undefined && (typeof item.duration !== 'number' || item.duration < 0)) {
+					return res.status(400).json({ success: false, error: 'Duration must be a positive number' });
+				}
+			}
+		}
+
+		const settings = systemDb.saveFlyerMediaSettings(userId, {
+			playlistItems: items,
+			playlistLoop: loop,
+			playlistAutoAdvance: autoAdvance,
+			playlistEnabled: enabled
+		});
+
+		// Broadcast playlist update to flyer display
+		broadcastFlyerMedia(userId, WS_EVENTS.FLYER_PLAYLIST, {
+			enabled: !!settings.playlist_enabled,
+			loop: !!settings.playlist_loop,
+			autoAdvance: !!settings.playlist_auto_advance,
+			items: settings.playlistItems || [],
+			currentIndex: settings.playlist_current_index
+		});
+
+		if (activityLogger) {
+			activityLogger.logActivity(userId, req.session.username, 'flyer_playlist_update', {
+				itemCount: items?.length || 0,
+				enabled: !!enabled
+			});
+		}
+
+		res.json({ success: true, message: 'Playlist updated' });
+	} catch (error) {
+		console.error('Update playlist error:', error);
+		res.status(500).json({ success: false, error: 'Failed to update playlist' });
+	}
+});
+
+// ============================================
+// POST /api/displays/flyer/playlist/control - Playlist navigation
+// Requires authentication
+// Actions: next, prev, goto, toggle
+// ============================================
+router.post('/flyer/playlist/control', async (req, res) => {
+	try {
+		const userId = req.session.userId;
+		if (!userId) {
+			return res.status(401).json({ success: false, error: 'Not authenticated' });
+		}
+
+		const { action, index, enabled } = req.body;
+		const validActions = ['next', 'prev', 'goto', 'toggle'];
+
+		if (!action || !validActions.includes(action)) {
+			return res.status(400).json({
+				success: false,
+				error: `Invalid action. Must be one of: ${validActions.join(', ')}`
+			});
+		}
+
+		const settings = systemDb.getOrCreateFlyerMediaSettings(userId);
+		const items = settings.playlistItems || [];
+		let currentIndex = settings.playlist_current_index || 0;
+
+		if (action === 'next') {
+			currentIndex = (currentIndex + 1) % Math.max(items.length, 1);
+		} else if (action === 'prev') {
+			currentIndex = currentIndex > 0 ? currentIndex - 1 : Math.max(items.length - 1, 0);
+		} else if (action === 'goto') {
+			if (index === undefined || index < 0 || index >= items.length) {
+				return res.status(400).json({ success: false, error: 'Invalid index' });
+			}
+			currentIndex = index;
+		} else if (action === 'toggle') {
+			systemDb.saveFlyerMediaSettings(userId, { playlistEnabled: enabled });
+			broadcastFlyerMedia(userId, WS_EVENTS.FLYER_PLAYLIST, {
+				enabled: !!enabled,
+				loop: !!settings.playlist_loop,
+				autoAdvance: !!settings.playlist_auto_advance,
+				items: items,
+				currentIndex: currentIndex,
+				action: 'toggle'
+			});
+			return res.json({ success: true, action: 'toggle', enabled: !!enabled });
+		}
+
+		// Update current index
+		systemDb.saveFlyerMediaSettings(userId, { playlistCurrentIndex: currentIndex });
+
+		// Broadcast playlist control to flyer display
+		broadcastFlyerMedia(userId, WS_EVENTS.FLYER_PLAYLIST, {
+			enabled: !!settings.playlist_enabled,
+			loop: !!settings.playlist_loop,
+			autoAdvance: !!settings.playlist_auto_advance,
+			items: items,
+			currentIndex: currentIndex,
+			action: action
+		});
+
+		res.json({ success: true, action, currentIndex });
+	} catch (error) {
+		console.error('Playlist control error:', error);
+		res.status(500).json({ success: false, error: 'Failed to control playlist' });
+	}
+});
+
+// ============================================
+// POST /api/displays/flyer/status - Status report from display
+// No auth - called by flyer display service
+// ============================================
+router.post('/flyer/status', async (req, res) => {
+	try {
+		const { userId, filename, state, currentTime, duration, volume, muted, playlistIndex } = req.body;
+
+		if (!userId) {
+			return res.status(400).json({ success: false, error: 'userId is required' });
+		}
+
+		// Update playback state in database
+		systemDb.updateFlyerPlaybackState(userId, {
+			currentFlyer: filename,
+			playbackState: state,
+			currentTime: currentTime,
+			duration: duration,
+			currentVolume: volume,
+			isMuted: muted,
+			playlistCurrentIndex: playlistIndex
+		});
+
+		// Broadcast status to admin dashboard
+		if (io) {
+			io.to(`user:${userId}:admin`).emit(WS_EVENTS.FLYER_STATUS, {
+				userId,
+				filename,
+				state,
+				currentTime,
+				duration,
+				volume,
+				muted,
+				playlistIndex,
+				timestamp: new Date().toISOString()
+			});
+		}
+
+		res.json({ success: true });
+	} catch (error) {
+		console.error('Flyer status error:', error);
+		res.status(500).json({ success: false, error: 'Failed to update status' });
 	}
 });
 

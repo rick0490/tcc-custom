@@ -3583,3 +3583,152 @@ kbd.kbd {
 	color: var(--text-muted);
 	line-height: 1.3;
 }
+
+/* ============================================================================
+   Flyer Media Controls
+   ============================================================================ */
+
+/* Playback state indicator dot */
+.playback-state-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background-color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+.playback-state-dot.playing {
+	background-color: var(--accent-green);
+	animation: pulse-playing 1.5s ease-in-out infinite;
+}
+
+.playback-state-dot.paused {
+	background-color: var(--accent-yellow);
+}
+
+.playback-state-dot.stopped {
+	background-color: var(--text-muted);
+}
+
+@keyframes pulse-playing {
+	0%, 100% {
+		box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+	}
+	50% {
+		box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+	}
+}
+
+/* Progress bar */
+.progress-bar {
+	width: 100%;
+	height: 6px;
+	background-color: var(--bg-secondary);
+	border-radius: 3px;
+	overflow: hidden;
+}
+
+.progress-fill {
+	height: 100%;
+	background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+	border-radius: 3px;
+	transition: width 0.2s ease;
+}
+
+/* Media control buttons */
+.media-control-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	background-color: var(--bg-secondary);
+	border: 1px solid var(--border-primary);
+	border-radius: 50%;
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.media-control-btn:hover {
+	background-color: var(--bg-tertiary);
+	color: var(--text-primary);
+	border-color: var(--accent-blue);
+}
+
+.media-control-btn.primary {
+	width: 48px;
+	height: 48px;
+	background-color: var(--accent-blue);
+	border-color: var(--accent-blue);
+	color: white;
+}
+
+.media-control-btn.primary:hover {
+	background-color: var(--accent-blue-dark);
+	transform: scale(1.05);
+}
+
+.media-control-btn.active {
+	background-color: var(--accent-blue);
+	border-color: var(--accent-blue);
+	color: white;
+}
+
+/* Volume slider */
+.volume-slider {
+	-webkit-appearance: none;
+	appearance: none;
+	height: 6px;
+	background: var(--bg-secondary);
+	border-radius: 3px;
+	outline: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	background: var(--accent-blue);
+	border-radius: 50%;
+	cursor: pointer;
+	transition: transform 0.1s ease;
+}
+
+.volume-slider::-webkit-slider-thumb:hover {
+	transform: scale(1.2);
+}
+
+.volume-slider::-moz-range-thumb {
+	width: 16px;
+	height: 16px;
+	background: var(--accent-blue);
+	border-radius: 50%;
+	cursor: pointer;
+	border: none;
+}
+
+/* Playlist item */
+.playlist-item {
+	transition: background-color 0.2s ease;
+}
+
+.playlist-item:hover {
+	background-color: rgba(255, 255, 255, 0.1);
+}
+
+.playlist-item.current {
+	background-color: rgba(59, 130, 246, 0.2);
+	border-left: 3px solid var(--accent-blue);
+}
+
+.playlist-item input[type="number"] {
+	-moz-appearance: textfield;
+}
+
+.playlist-item input[type="number"]::-webkit-inner-spin-button,
+.playlist-item input[type="number"]::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
