@@ -8,6 +8,74 @@
 const Joi = require('joi');
 
 // =============================================================================
+// PARAMETER SCHEMAS (URL params)
+// =============================================================================
+
+// Tournament ID can be numeric database ID or URL slug
+const tournamentIdParamSchema = Joi.object({
+	tournamentId: Joi.alternatives()
+		.try(
+			Joi.number().integer().positive(),
+			Joi.string().pattern(/^[a-z0-9_-]+$/).min(1).max(100)
+		)
+		.required()
+		.messages({
+			'alternatives.match': 'Tournament ID must be a positive integer or valid URL slug'
+		})
+});
+
+// Match ID is always a positive integer
+const matchIdParamSchema = Joi.object({
+	matchId: Joi.number().integer().positive().required()
+		.messages({
+			'number.positive': 'Match ID must be a positive integer'
+		})
+});
+
+// Combined params for routes with both tournament and match IDs
+const tournamentMatchParamsSchema = Joi.object({
+	tournamentId: Joi.alternatives()
+		.try(
+			Joi.number().integer().positive(),
+			Joi.string().pattern(/^[a-z0-9_-]+$/).min(1).max(100)
+		)
+		.required(),
+	matchId: Joi.number().integer().positive().required()
+});
+
+// Participant ID is always a positive integer
+const participantIdParamSchema = Joi.object({
+	id: Joi.number().integer().positive().required()
+		.messages({
+			'number.positive': 'Participant ID must be a positive integer'
+		})
+});
+
+// Combined params for routes with tournament ID and participant ID
+const tournamentParticipantParamsSchema = Joi.object({
+	tournamentId: Joi.alternatives()
+		.try(
+			Joi.number().integer().positive(),
+			Joi.string().pattern(/^[a-z0-9_-]+$/).min(1).max(100)
+		)
+		.required(),
+	id: Joi.number().integer().positive().required()
+});
+
+// =============================================================================
+// QUERY SCHEMAS (GET request query params)
+// =============================================================================
+
+const queryFiltersSchema = Joi.object({
+	state: Joi.string().valid('pending', 'underway', 'complete', 'all').default('all'),
+	game: Joi.string().trim().max(100).allow('', null),
+	limit: Joi.number().integer().min(1).max(500).default(50),
+	offset: Joi.number().integer().min(0).default(0),
+	days: Joi.number().integer().min(1).max(365).default(30),
+	search: Joi.string().trim().max(100).allow('', null)
+}).options({ stripUnknown: true });
+
+// =============================================================================
 // AUTHENTICATION SCHEMAS
 // =============================================================================
 
@@ -175,8 +243,12 @@ const scoreSchema = Joi.object({
 		.integer()
 		.min(0)
 		.max(999)
-		.required()
-});
+		.required(),
+	// Optional winnerId - if not provided, winner is determined from scores
+	winnerId: Joi.alternatives()
+		.try(Joi.number().integer().positive(), Joi.string().pattern(/^\d+$/))
+		.allow(null)
+}).options({ stripUnknown: true });
 
 const winnerSchema = Joi.object({
 	winnerId: Joi.alternatives()
@@ -195,47 +267,244 @@ const dqSchema = Joi.object({
 		.required()
 });
 
+// Forfeit schema - for DQ'ing a specific participant
+const forfeitSchema = Joi.object({
+	participantId: Joi.alternatives()
+		.try(Joi.number().integer().positive(), Joi.string().pattern(/^\d+$/))
+		.required()
+		.messages({
+			'alternatives.match': 'Participant ID must be a positive integer'
+		})
+}).options({ stripUnknown: true });
+
 const stationAssignSchema = Joi.object({
 	stationId: Joi.alternatives()
 		.try(Joi.number().integer().positive(), Joi.string(), null)
 		.allow(null)
 });
 
+// Batch scores schema for submitting multiple match results
+const batchScoresSchema = Joi.object({
+	scores: Joi.array()
+		.items(Joi.object({
+			matchId: Joi.alternatives()
+				.try(Joi.number().integer().positive(), Joi.string().pattern(/^\d+$/))
+				.required()
+				.messages({
+					'alternatives.match': 'Match ID must be a positive integer'
+				}),
+			winnerId: Joi.alternatives()
+				.try(Joi.number().integer().positive(), Joi.string().pattern(/^\d+$/))
+				.required()
+				.messages({
+					'alternatives.match': 'Winner ID must be a positive integer'
+				}),
+			score1: Joi.alternatives()
+				.try(
+					Joi.number().integer().min(0).max(999),
+					Joi.string().pattern(/^\d+$/).max(3)
+				)
+				.allow(null, '')
+				.messages({
+					'number.min': 'Score cannot be negative',
+					'number.max': 'Score cannot exceed 999'
+				}),
+			score2: Joi.alternatives()
+				.try(
+					Joi.number().integer().min(0).max(999),
+					Joi.string().pattern(/^\d+$/).max(3)
+				)
+				.allow(null, '')
+		}))
+		.min(1)
+		.max(100)
+		.required()
+		.messages({
+			'array.min': 'At least one score entry is required',
+			'array.max': 'Cannot submit more than 100 scores at once'
+		})
+}).options({ stripUnknown: true });
+
 // =============================================================================
 // PARTICIPANT SCHEMAS
 // =============================================================================
 
+// Helper to strip control characters from strings
+const sanitizeName = (value) => {
+	if (typeof value !== 'string') return value;
+	// Remove control characters but preserve unicode letters/numbers
+	return value.replace(/[\x00-\x1F\x7F]/g, '').trim();
+};
+
 const participantSchema = Joi.object({
 	name: Joi.string()
+		.trim()
 		.min(1)
 		.max(50)
+		.custom((value, helpers) => {
+			const sanitized = sanitizeName(value);
+			if (!sanitized || sanitized.length === 0) {
+				return helpers.error('string.empty');
+			}
+			return sanitized;
+		})
 		.required()
 		.messages({
+			'string.empty': 'Name is required',
 			'string.min': 'Name is required',
 			'string.max': 'Name cannot exceed 50 characters'
 		}),
 	email: Joi.string()
+		.trim()
 		.email()
 		.max(100)
 		.allow('', null),
-	challongeUsername: Joi.string().max(50).allow('', null),
+	challongeUsername: Joi.string().trim().max(50).allow('', null),
 	seed: Joi.number().integer().min(1).max(512).allow(null),
-	instagram: Joi.string().max(50).allow('', null),
-	misc: Joi.string().max(255).allow('', null)
-});
+	instagram: Joi.string().trim().max(50).allow('', null),
+	misc: Joi.string().trim().max(255).allow('', null)
+}).options({ stripUnknown: true });
+
+// Update participant schema (for PUT operations - all fields optional)
+const updateParticipantSchema = Joi.object({
+	name: Joi.string()
+		.trim()
+		.min(1)
+		.max(50)
+		.custom((value, helpers) => {
+			const sanitized = sanitizeName(value);
+			if (!sanitized || sanitized.length === 0) {
+				return helpers.error('string.empty');
+			}
+			return sanitized;
+		})
+		.messages({
+			'string.empty': 'Name cannot be empty',
+			'string.max': 'Name cannot exceed 50 characters'
+		}),
+	email: Joi.string()
+		.trim()
+		.email()
+		.max(100)
+		.allow('', null),
+	seed: Joi.number().integer().min(1).max(512).allow(null),
+	instagram: Joi.string().trim().max(50).allow('', null),
+	misc: Joi.string().trim().max(255).allow('', null)
+}).options({ stripUnknown: true });
 
 const bulkParticipantsSchema = Joi.object({
 	participants: Joi.array()
 		.items(Joi.object({
-			name: Joi.string().min(1).max(50).required(),
-			email: Joi.string().email().max(100).allow('', null),
+			name: Joi.string().trim().min(1).max(50).required(),
+			email: Joi.string().trim().email().max(100).allow('', null),
 			seed: Joi.number().integer().min(1).max(512).allow(null),
-			misc: Joi.string().max(255).allow('', null)
+			misc: Joi.string().trim().max(255).allow('', null)
 		}))
 		.min(1)
 		.max(512)
 		.required()
 });
+
+// Enhanced bulk participants schema with seed duplicate detection
+const bulkParticipantsSchemaEnhanced = Joi.object({
+	participants: Joi.array()
+		.items(Joi.object({
+			name: Joi.string()
+				.trim()
+				.min(1)
+				.max(50)
+				.custom((value, helpers) => {
+					const sanitized = sanitizeName(value);
+					if (!sanitized || sanitized.length === 0) {
+						return helpers.error('string.empty');
+					}
+					return sanitized;
+				})
+				.required()
+				.messages({
+					'string.empty': 'Participant name is required',
+					'string.min': 'Participant name is required',
+					'string.max': 'Participant name cannot exceed 50 characters'
+				}),
+			email: Joi.string()
+				.trim()
+				.email()
+				.max(100)
+				.allow('', null)
+				.messages({
+					'string.email': 'Invalid email format'
+				}),
+			seed: Joi.number()
+				.integer()
+				.min(1)
+				.max(512)
+				.allow(null)
+				.messages({
+					'number.min': 'Seed must be at least 1',
+					'number.max': 'Seed cannot exceed 512'
+				}),
+			misc: Joi.string().trim().max(255).allow('', null),
+			instagram: Joi.string().trim().max(50).allow('', null)
+		}))
+		.min(1)
+		.max(512)
+		.custom((value, helpers) => {
+			// Check for duplicate seeds
+			const seeds = value.filter(p => p.seed !== null && p.seed !== undefined).map(p => p.seed);
+			const uniqueSeeds = new Set(seeds);
+			if (seeds.length !== uniqueSeeds.size) {
+				// Find the duplicate seed numbers
+				const seen = new Set();
+				const duplicates = [];
+				for (const seed of seeds) {
+					if (seen.has(seed)) {
+						duplicates.push(seed);
+					}
+					seen.add(seed);
+				}
+				return helpers.error('array.duplicateSeeds', { duplicates: [...new Set(duplicates)].join(', ') });
+			}
+			return value;
+		})
+		.required()
+		.messages({
+			'array.min': 'At least one participant is required',
+			'array.max': 'Cannot add more than 512 participants at once',
+			'array.duplicateSeeds': 'Duplicate seed numbers found: {{#duplicates}}'
+		})
+}).options({ stripUnknown: true });
+
+// Seeding apply schema
+const seedingApplySchema = Joi.object({
+	seeds: Joi.array()
+		.items(Joi.object({
+			participantId: Joi.number().integer().positive().required(),
+			seed: Joi.number().integer().min(1).max(512).required()
+		}))
+		.min(1)
+		.max(512)
+		.custom((value, helpers) => {
+			// Check for duplicate seeds
+			const seeds = value.map(p => p.seed);
+			const uniqueSeeds = new Set(seeds);
+			if (seeds.length !== uniqueSeeds.size) {
+				return helpers.error('array.duplicateSeeds');
+			}
+			// Check for duplicate participant IDs
+			const ids = value.map(p => p.participantId);
+			const uniqueIds = new Set(ids);
+			if (ids.length !== uniqueIds.size) {
+				return helpers.error('array.duplicateParticipants');
+			}
+			return value;
+		})
+		.required()
+		.messages({
+			'array.min': 'At least one seed assignment is required',
+			'array.duplicateSeeds': 'Duplicate seed numbers are not allowed',
+			'array.duplicateParticipants': 'Duplicate participant IDs are not allowed'
+		})
+}).options({ stripUnknown: true });
 
 // =============================================================================
 // STATION SCHEMAS
@@ -327,6 +596,25 @@ const qrShowSchema = Joi.object({
 });
 
 // =============================================================================
+// FLYER SCHEMAS
+// =============================================================================
+
+// Flyer update/activation schema
+const flyerUpdateSchema = Joi.object({
+	filename: Joi.string()
+		.trim()
+		.min(1)
+		.max(255)
+		.pattern(/^[a-zA-Z0-9_.-]+$/)
+		.required()
+		.messages({
+			'string.empty': 'Filename is required',
+			'string.pattern.base': 'Filename contains invalid characters'
+		}),
+	isVideo: Joi.boolean().default(false)
+}).options({ stripUnknown: true });
+
+// =============================================================================
 // DISPLAY SCHEMAS
 // =============================================================================
 
@@ -403,6 +691,71 @@ const gameConfigSchema = Joi.object({
 });
 
 // =============================================================================
+// ROUND LABELS SCHEMA
+// =============================================================================
+
+const roundLabelsSchema = Joi.object({
+	winners: Joi.object()
+		.pattern(/^\d+$/, Joi.string().trim().max(50).allow('', null))
+		.allow(null),
+	losers: Joi.object()
+		.pattern(/^\d+$/, Joi.string().trim().max(50).allow('', null))
+		.allow(null)
+}).options({ stripUnknown: true });
+
+// =============================================================================
+// FREE-FOR-ALL SCHEMAS
+// =============================================================================
+
+const ffaPlacementsSchema = Joi.object({
+	placements: Joi.array()
+		.items(Joi.object({
+			participant_id: Joi.number().integer().positive().required(),
+			placement: Joi.number().integer().min(1).max(100).required()
+		}))
+		.min(1)
+		.max(100)
+		.required()
+		.messages({
+			'array.min': 'At least one placement is required',
+			'array.max': 'Cannot submit more than 100 placements'
+		})
+}).options({ stripUnknown: true });
+
+// =============================================================================
+// LEADERBOARD EVENT SCHEMAS
+// =============================================================================
+
+const leaderboardEventSchema = Joi.object({
+	name: Joi.string().trim().max(100).allow('', null),
+	date: Joi.string().isoDate().allow(null),
+	results: Joi.array()
+		.items(Joi.object({
+			participant_id: Joi.number().integer().positive().required(),
+			participant_name: Joi.string().trim().max(50).allow('', null),
+			placement: Joi.number().integer().min(1).max(1000).required()
+		}))
+		.min(1)
+		.max(512)
+		.required()
+		.messages({
+			'array.min': 'At least one result is required'
+		})
+}).options({ stripUnknown: true });
+
+// =============================================================================
+// TOURNAMENT LIST QUERY SCHEMA
+// =============================================================================
+
+const tournamentListQuerySchema = Joi.object({
+	state: Joi.string()
+		.pattern(/^(pending|underway|complete|checking_in|awaiting_review)(,(pending|underway|complete|checking_in|awaiting_review))*$/)
+		.allow('', null),
+	game_id: Joi.number().integer().positive().allow('', null),
+	limit: Joi.number().integer().min(1).max(500).default(100)
+}).options({ stripUnknown: true });
+
+// =============================================================================
 // RATE LIMIT SCHEMAS
 // =============================================================================
 
@@ -427,6 +780,16 @@ const externalActivitySchema = Joi.object({
 // =============================================================================
 
 module.exports = {
+	// URL Parameter Schemas
+	tournamentIdParamSchema,
+	matchIdParamSchema,
+	tournamentMatchParamsSchema,
+	participantIdParamSchema,
+	tournamentParticipantParamsSchema,
+
+	// Query Schemas
+	queryFiltersSchema,
+
 	// Auth
 	loginSchema,
 	changePasswordSchema,
@@ -440,11 +803,16 @@ module.exports = {
 	scoreSchema,
 	winnerSchema,
 	dqSchema,
+	forfeitSchema,
 	stationAssignSchema,
+	batchScoresSchema,
 
 	// Participant
 	participantSchema,
+	updateParticipantSchema,
 	bulkParticipantsSchema,
+	bulkParticipantsSchemaEnhanced,
+	seedingApplySchema,
 
 	// Station
 	createStationSchema,
@@ -458,6 +826,9 @@ module.exports = {
 
 	// QR
 	qrShowSchema,
+
+	// Flyer
+	flyerUpdateSchema,
 
 	// Display
 	displayRegisterSchema,
@@ -476,5 +847,17 @@ module.exports = {
 	rateModeSchema,
 
 	// Activity
-	externalActivitySchema
+	externalActivitySchema,
+
+	// Round Labels
+	roundLabelsSchema,
+
+	// Free-for-All
+	ffaPlacementsSchema,
+
+	// Leaderboard
+	leaderboardEventSchema,
+
+	// Tournament List Query
+	tournamentListQuerySchema
 };

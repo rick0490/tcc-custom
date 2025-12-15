@@ -661,6 +661,50 @@ TCC-Custom uses local SQLite database instead of external APIs. All tournament d
 | Error Handler | `services/error-handler.js` | Standardized error handling middleware |
 | Backup Scheduler | `services/backup-scheduler.js` | Automated database backup scheduling |
 
+**Input Validation Middleware:**
+
+All API endpoints use Joi schema validation via middleware in `middleware/validation.js`:
+
+| Middleware | Purpose |
+|------------|---------|
+| `validateParams(schema)` | Validates URL parameters (`:tournamentId`, `:matchId`) |
+| `validateBody(schema)` | Validates request body (POST/PUT data) |
+| `validateQuery(schema)` | Validates query string parameters |
+
+**Validation Schemas** (`validation/schemas.js`, ~850 lines):
+- **URL Params:** `tournamentIdParamSchema`, `matchIdParamSchema`, `tournamentMatchParamsSchema`
+- **Tournament:** `createTournamentSchema`, `updateTournamentSchema`, `tournamentListQuerySchema`
+- **Match:** `scoreSchema`, `winnerSchema`, `batchScoresSchema`, `forfeitSchema`
+- **Participant:** `participantSchema`, `updateParticipantSchema`, `bulkParticipantsSchemaEnhanced` (with duplicate seed detection)
+- **Misc:** `roundLabelsSchema`, `ffaPlacementsSchema`, `leaderboardEventSchema`
+
+**Usage Pattern:**
+```javascript
+const { validateParams, validateBody } = require('../middleware/validation');
+const { tournamentIdParamSchema, createTournamentSchema } = require('../validation/schemas');
+
+router.post('/:tournamentId',
+    validateParams(tournamentIdParamSchema),
+    validateBody(participantSchema),
+    asyncHandler(async (req, res) => {
+        const validatedData = req.validatedBody || req.body;
+        // Use validatedData - already trimmed and sanitized
+    })
+);
+```
+
+**Validation Error Response:**
+```json
+{
+  "success": false,
+  "error": "Validation failed",
+  "details": [
+    {"field": "name", "message": "Name is required"},
+    {"field": "seed", "message": "Duplicate seed numbers found: 1, 3"}
+  ]
+}
+```
+
 **Double Elimination BYE Handling:**
 The losers bracket supports any participant count (3, 5, 6, 7, 9, 11, etc.) by creating BYE placeholder matches when an odd number of losers enter any round. This ensures proper bracket progression:
 - W1 losers with odd count → BYE match created in L1

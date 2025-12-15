@@ -18,6 +18,8 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const sharp = require('sharp');
 const { createLogger } = require('../services/debug-logger');
+const { validateBody } = require('../middleware/validation');
+const { flyerUpdateSchema } = require('../validation/schemas');
 
 const logger = createLogger('routes:flyers');
 
@@ -576,17 +578,14 @@ router.delete('/:filename', async (req, res) => {
  * - No longer sends HTTP POST to port 2054
  * - Uses WebSocket only for real-time updates
  */
-router.post('/update', async (req, res) => {
-	const { flyer } = req.body;
+router.post('/update',
+	validateBody(flyerUpdateSchema),
+	async (req, res) => {
+	const validatedData = req.validatedBody || req.body;
+	const { filename: flyer, isVideo } = validatedData;
 	const userId = req.session?.userId;
 
-	// Validation
-	if (!flyer) {
-		return res.status(400).json({
-			success: false,
-			error: 'Flyer filename is required'
-		});
-	}
+	// Flyer filename already validated by schema
 
 	try {
 		// Broadcast to user-specific flyer room (WebSocket only, no HTTP to port 2054)

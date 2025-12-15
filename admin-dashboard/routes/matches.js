@@ -8,6 +8,16 @@
 const express = require('express');
 const router = express.Router();
 const { createLogger } = require('../services/debug-logger');
+const { validateParams, validateBody } = require('../middleware/validation');
+const {
+    tournamentIdParamSchema,
+    tournamentMatchParamsSchema,
+    scoreSchema,
+    winnerSchema,
+    forfeitSchema,
+    stationAssignSchema,
+    batchScoresSchema
+} = require('../validation/schemas');
 const {
     NotFoundError,
     ValidationError,
@@ -85,7 +95,9 @@ function getTournament(tournamentId) {
 // ============================================
 // GET /api/matches/:tournamentId - Get all matches
 // ============================================
-router.get('/:tournamentId', asyncHandler(async (req, res) => {
+router.get('/:tournamentId',
+    validateParams(tournamentIdParamSchema),
+    asyncHandler(async (req, res) => {
     const tournament = getTournament(req.params.tournamentId);
 
     if (!tournament) {
@@ -124,7 +136,9 @@ router.get('/:tournamentId', asyncHandler(async (req, res) => {
 // ============================================
 // GET /api/matches/:tournamentId/stats - Get match statistics
 // ============================================
-router.get('/:tournamentId/stats', asyncHandler(async (req, res) => {
+router.get('/:tournamentId/stats',
+    validateParams(tournamentIdParamSchema),
+    asyncHandler(async (req, res) => {
     const tournament = getTournament(req.params.tournamentId);
 
     if (!tournament) {
@@ -150,7 +164,9 @@ router.get('/:tournamentId/stats', asyncHandler(async (req, res) => {
 // ============================================
 // GET /api/matches/:tournamentId/:matchId - Get single match
 // ============================================
-router.get('/:tournamentId/:matchId', asyncHandler(async (req, res) => {
+router.get('/:tournamentId/:matchId',
+    validateParams(tournamentMatchParamsSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
     const match = matchDb.getById(parseInt(matchId));
 
@@ -168,7 +184,9 @@ router.get('/:tournamentId/:matchId', asyncHandler(async (req, res) => {
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/underway - Mark match as underway
 // ============================================
-router.post('/:tournamentId/:matchId/underway', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/underway',
+    validateParams(tournamentMatchParamsSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
     const match = matchDb.getById(parseInt(matchId));
 
@@ -218,7 +236,9 @@ router.post('/:tournamentId/:matchId/underway', asyncHandler(async (req, res) =>
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/unmark-underway - Unmark match as underway
 // ============================================
-router.post('/:tournamentId/:matchId/unmark-underway', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/unmark-underway',
+    validateParams(tournamentMatchParamsSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
     const match = matchDb.getById(parseInt(matchId));
 
@@ -255,9 +275,13 @@ router.post('/:tournamentId/:matchId/unmark-underway', asyncHandler(async (req, 
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/score - Set match scores
 // ============================================
-router.post('/:tournamentId/:matchId/score', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/score',
+    validateParams(tournamentMatchParamsSchema),
+    validateBody(scoreSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
-    const { player1Score, player2Score, winnerId } = req.body;
+    const validatedData = req.validatedBody || req.body;
+    const { player1Score, player2Score, winnerId } = validatedData;
 
     const match = matchDb.getById(parseInt(matchId));
 
@@ -355,9 +379,13 @@ router.post('/:tournamentId/:matchId/score', asyncHandler(async (req, res) => {
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/winner - Declare winner directly
 // ============================================
-router.post('/:tournamentId/:matchId/winner', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/winner',
+    validateParams(tournamentMatchParamsSchema),
+    validateBody(winnerSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
-    const { winnerId, player1Score, player2Score } = req.body;
+    const validatedData = req.validatedBody || req.body;
+    const { winnerId, player1Score, player2Score } = validatedData;
 
     const match = matchDb.getById(parseInt(matchId));
 
@@ -435,7 +463,9 @@ router.post('/:tournamentId/:matchId/winner', asyncHandler(async (req, res) => {
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/reopen - Reopen completed match
 // ============================================
-router.post('/:tournamentId/:matchId/reopen', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/reopen',
+    validateParams(tournamentMatchParamsSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
     const match = matchDb.getById(parseInt(matchId));
 
@@ -476,9 +506,13 @@ router.post('/:tournamentId/:matchId/reopen', asyncHandler(async (req, res) => {
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/dq - DQ/Forfeit a player
 // ============================================
-router.post('/:tournamentId/:matchId/dq', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/dq',
+    validateParams(tournamentMatchParamsSchema),
+    validateBody(forfeitSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
-    const { participantId } = req.body;
+    const validatedData = req.validatedBody || req.body;
+    const { participantId } = validatedData;
 
     const match = matchDb.getById(parseInt(matchId));
 
@@ -486,9 +520,7 @@ router.post('/:tournamentId/:matchId/dq', asyncHandler(async (req, res) => {
         throw new NotFoundError('Match', matchId);
     }
 
-    if (!participantId) {
-        throw new ValidationError('Participant ID is required');
-    }
+    // participantId already validated by schema
 
     const updatedMatch = matchDb.setForfeit(match.id, parseInt(participantId));
     const user = getUserInfo(req);
@@ -530,9 +562,13 @@ router.post('/:tournamentId/:matchId/dq', asyncHandler(async (req, res) => {
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/station - Assign station
 // ============================================
-router.post('/:tournamentId/:matchId/station', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/station',
+    validateParams(tournamentMatchParamsSchema),
+    validateBody(stationAssignSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
-    const { stationId } = req.body;
+    const validatedData = req.validatedBody || req.body;
+    const { stationId } = validatedData;
 
     const match = matchDb.getById(parseInt(matchId));
 
@@ -576,7 +612,9 @@ router.post('/:tournamentId/:matchId/station', asyncHandler(async (req, res) => 
 // ============================================
 // POST /api/matches/:tournamentId/:matchId/clear-scores - Clear scores without reopening
 // ============================================
-router.post('/:tournamentId/:matchId/clear-scores', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:matchId/clear-scores',
+    validateParams(tournamentMatchParamsSchema),
+    asyncHandler(async (req, res) => {
     const { matchId } = req.params;
     const match = matchDb.getById(parseInt(matchId));
 
@@ -615,18 +653,20 @@ router.post('/:tournamentId/:matchId/clear-scores', asyncHandler(async (req, res
 // ============================================
 // POST /api/matches/:tournamentId/batch-scores - Batch score entry
 // ============================================
-router.post('/:tournamentId/batch-scores', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/batch-scores',
+    validateParams(tournamentIdParamSchema),
+    validateBody(batchScoresSchema),
+    asyncHandler(async (req, res) => {
     const tournament = getTournament(req.params.tournamentId);
 
     if (!tournament) {
         throw new NotFoundError('Tournament', req.params.tournamentId);
     }
 
-    const { scores } = req.body;
+    const validatedData = req.validatedBody || req.body;
+    const { scores } = validatedData;
 
-    if (!Array.isArray(scores) || scores.length === 0) {
-        throw new ValidationError('Scores array is required');
-    }
+    // scores array already validated by schema
 
     const results = [];
     const user = getUserInfo(req);
@@ -712,7 +752,9 @@ router.post('/:tournamentId/batch-scores', asyncHandler(async (req, res) => {
 // ============================================
 // POST /:tournamentId/auto-assign - Trigger auto-assign stations
 // ============================================
-router.post('/:tournamentId/auto-assign', asyncHandler(async (req, res) => {
+router.post('/:tournamentId/auto-assign',
+    validateParams(tournamentIdParamSchema),
+    asyncHandler(async (req, res) => {
     const tournament = getTournament(req.params.tournamentId);
     if (!tournament) {
         throw new NotFoundError('Tournament', req.params.tournamentId);

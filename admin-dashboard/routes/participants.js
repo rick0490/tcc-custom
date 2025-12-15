@@ -9,6 +9,15 @@
 const express = require('express');
 const router = express.Router();
 const { requireAuthAPI } = require('../middleware/auth');
+const { validateParams, validateBody } = require('../middleware/validation');
+const {
+	tournamentIdParamSchema,
+	tournamentParticipantParamsSchema,
+	participantSchema,
+	updateParticipantSchema,
+	bulkParticipantsSchemaEnhanced,
+	seedingApplySchema
+} = require('../validation/schemas');
 const { createLogger } = require('../services/debug-logger');
 const {
     NotFoundError,
@@ -290,7 +299,9 @@ router.get('/', asyncHandler(async (req, res) => {
  * GET /api/participants/:tournamentId
  * Get participants for a specific tournament
  */
-router.get('/:tournamentId', asyncHandler(async (req, res) => {
+router.get('/:tournamentId',
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 
 	// Get tournament and participants from local DB
@@ -389,14 +400,16 @@ router.post('/', asyncHandler(async (req, res) => {
  * POST /api/participants/:tournamentId
  * Add a new participant to a specific tournament
  */
-router.post('/:tournamentId', asyncHandler(async (req, res) => {
+router.post('/:tournamentId',
+	validateParams(tournamentIdParamSchema),
+	validateBody(participantSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
-	const { participantName, name, instagram, misc, email, seed } = req.body;
+	const validatedData = req.validatedBody || req.body;
+	const { name, instagram, misc, email, seed } = validatedData;
 
-	const playerName = participantName || name;
-	if (!playerName) {
-		throw new ValidationError('Participant name is required');
-	}
+	// Name is already validated by schema
+	const playerName = name;
 
 	// Check tournament state
 	const tournament = tournamentDb.getById(tournamentId) || tournamentDb.getBySlug(tournamentId);
@@ -464,14 +477,14 @@ router.post('/:tournamentId', asyncHandler(async (req, res) => {
  * PUT /api/participants/:tournamentId/:id
  * Update a participant
  */
-router.put('/:tournamentId/:id', requireAuthAPI, asyncHandler(async (req, res) => {
+router.put('/:tournamentId/:id',
+	requireAuthAPI,
+	validateParams(tournamentParticipantParamsSchema),
+	validateBody(updateParticipantSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId, id } = req.params;
-	const { participantName, name, instagram, misc, seed, email } = req.body;
-
-	const playerName = participantName || name;
-	if (!playerName) {
-		throw new ValidationError('Participant name is required');
-	}
+	const validatedData = req.validatedBody || req.body;
+	const { name, instagram, misc, seed, email } = validatedData;
 
 	// Look up tournament by ID or slug
 	const tournament = tournamentDb.getById(tournamentId) || tournamentDb.getBySlug(tournamentId);
@@ -488,11 +501,15 @@ router.put('/:tournamentId/:id', requireAuthAPI, asyncHandler(async (req, res) =
 	// Build misc field
 	const miscField = buildMiscField(instagram, misc || existing.misc);
 
-	// Prepare update data
+	// Prepare update data (only include fields that were provided)
 	const updateData = {
-		name: playerName.trim(),
 		misc: miscField
 	};
+
+	// Name is optional for updates - only update if provided
+	if (name !== undefined) {
+		updateData.name = name;
+	}
 
 	if (instagram !== undefined) {
 		updateData.instagram = instagram ? instagram.replace(/^@/, '').trim() : null;
@@ -534,7 +551,10 @@ router.put('/:tournamentId/:id', requireAuthAPI, asyncHandler(async (req, res) =
  * POST /api/participants/:tournamentId/randomize
  * Randomize all participant seeds
  */
-router.post('/:tournamentId/randomize', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/randomize',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 
 	// Check tournament state
@@ -575,7 +595,10 @@ router.post('/:tournamentId/randomize', requireAuthAPI, asyncHandler(async (req,
  * POST /api/participants/:tournamentId/snake-draft
  * Apply snake draft seeding pattern
  */
-router.post('/:tournamentId/snake-draft', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/snake-draft',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 	const { teamCount = 2 } = req.body;
 
@@ -624,7 +647,10 @@ router.post('/:tournamentId/snake-draft', requireAuthAPI, asyncHandler(async (re
  * POST /api/participants/:tournamentId/previous-tournament-seeding
  * Apply seeding based on previous tournament results
  */
-router.post('/:tournamentId/previous-tournament-seeding', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/previous-tournament-seeding',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 	const { previousTournamentId } = req.body;
 
@@ -683,7 +709,10 @@ router.post('/:tournamentId/previous-tournament-seeding', requireAuthAPI, asyncH
  * POST /api/participants/:tournamentId/swiss-pre-round-seeding
  * Apply seeding based on Swiss pre-round tournament results
  */
-router.post('/:tournamentId/swiss-pre-round-seeding', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/swiss-pre-round-seeding',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 	const { swissTournamentId } = req.body;
 
@@ -743,13 +772,16 @@ router.post('/:tournamentId/swiss-pre-round-seeding', requireAuthAPI, asyncHandl
  * POST /api/participants/:tournamentId/bulk
  * Bulk add participants
  */
-router.post('/:tournamentId/bulk', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/bulk',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	validateBody(bulkParticipantsSchemaEnhanced),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
-	const { participants } = req.body;
+	const validatedData = req.validatedBody || req.body;
+	const { participants } = validatedData;
 
-	if (!participants || !Array.isArray(participants) || participants.length === 0) {
-		throw new ValidationError('Participants array is required');
-	}
+	// Participants array is already validated by schema
 
 	// Check tournament state
 	const tournament = tournamentDb.getById(tournamentId) || tournamentDb.getBySlug(tournamentId);
@@ -811,7 +843,10 @@ router.post('/:tournamentId/bulk', requireAuthAPI, asyncHandler(async (req, res)
  * DELETE /api/participants/:tournamentId/:id
  * Delete a participant
  */
-router.delete('/:tournamentId/:id', requireAuthAPI, asyncHandler(async (req, res) => {
+router.delete('/:tournamentId/:id',
+	requireAuthAPI,
+	validateParams(tournamentParticipantParamsSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId, id } = req.params;
 
 	// Look up tournament by ID or slug
@@ -854,7 +889,10 @@ router.delete('/:tournamentId/:id', requireAuthAPI, asyncHandler(async (req, res
  * DELETE /api/participants/:tournamentId/clear
  * Clear all participants from tournament
  */
-router.delete('/:tournamentId/clear', requireAuthAPI, asyncHandler(async (req, res) => {
+router.delete('/:tournamentId/clear',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 
 	// Check tournament state
@@ -890,7 +928,10 @@ router.delete('/:tournamentId/clear', requireAuthAPI, asyncHandler(async (req, r
  * POST /api/participants/:tournamentId/:id/check-in
  * Check in a participant
  */
-router.post('/:tournamentId/:id/check-in', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:id/check-in',
+	requireAuthAPI,
+	validateParams(tournamentParticipantParamsSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId, id } = req.params;
 
 	// Look up tournament by ID or slug
@@ -939,7 +980,10 @@ router.post('/:tournamentId/:id/check-in', requireAuthAPI, asyncHandler(async (r
  * POST /api/participants/:tournamentId/:id/undo-check-in
  * Undo check-in for a participant
  */
-router.post('/:tournamentId/:id/undo-check-in', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/:id/undo-check-in',
+	requireAuthAPI,
+	validateParams(tournamentParticipantParamsSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId, id } = req.params;
 
 	// Look up tournament by ID or slug
@@ -981,7 +1025,10 @@ router.post('/:tournamentId/:id/undo-check-in', requireAuthAPI, asyncHandler(asy
  * POST /api/participants/:tournamentId/apply-seeding
  * Apply Elo-based seeding suggestions
  */
-router.post('/:tournamentId/apply-seeding', requireAuthAPI, asyncHandler(async (req, res) => {
+router.post('/:tournamentId/apply-seeding',
+	requireAuthAPI,
+	validateParams(tournamentIdParamSchema),
+	asyncHandler(async (req, res) => {
 	const { tournamentId } = req.params;
 	const { gameId } = req.body;
 

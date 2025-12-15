@@ -12,6 +12,17 @@ const fs = require('fs').promises;
 const path = require('path');
 const { createLogger } = require('../services/debug-logger');
 const { getTenantFilter, validateTenantAccess } = require('../middleware/tenant');
+const { validateParams, validateBody, validateQuery } = require('../middleware/validation');
+const {
+	tournamentIdParamSchema,
+	tournamentMatchParamsSchema,
+	createTournamentSchema,
+	updateTournamentSchema,
+	tournamentListQuerySchema,
+	roundLabelsSchema,
+	ffaPlacementsSchema,
+	leaderboardEventSchema
+} = require('../validation/schemas');
 
 const logger = createLogger('routes:tournaments');
 
@@ -219,11 +230,14 @@ async function findMatchingFlyer(gameName, userId) {
 // GET /api/tournaments - List all tournaments
 // Filtered by tenant (user_id) unless superadmin viewing all
 // ============================================
-router.get('/', async (req, res) => {
+router.get('/',
+    validateQuery(tournamentListQuerySchema),
+    async (req, res) => {
     try {
-        const state = req.query.state;
-        const gameId = req.query.game_id;
-        const limit = parseInt(req.query.limit) || 100;
+        const validatedQuery = req.validatedQuery || req.query;
+        const state = validatedQuery.state;
+        const gameId = validatedQuery.game_id;
+        const limit = parseInt(validatedQuery.limit) || 100;
 
         const filters = { limit };
 
@@ -268,9 +282,12 @@ router.get('/', async (req, res) => {
 // ============================================
 // POST /api/tournaments/create - Create tournament
 // ============================================
-router.post('/create', async (req, res) => {
+router.post('/create',
+    validateBody(createTournamentSchema),
+    async (req, res) => {
     try {
         // Frontend sends camelCase, we map to snake_case for database
+        const validatedData = req.validatedBody || req.body;
         const {
             name,
             gameName,
@@ -305,14 +322,9 @@ router.post('/create', async (req, res) => {
             decayEnabled,
             decayRate,
             minEventsToRank
-        } = req.body;
+        } = validatedData;
 
-        if (!name) {
-            return res.status(400).json({
-                success: false,
-                error: 'Tournament name is required'
-            });
-        }
+        // Name validation handled by schema
 
         // Normalize tournament type: "single elimination" -> "single_elimination"
         const normalizedType = (tournamentType || 'double_elimination')
@@ -518,7 +530,9 @@ router.post('/activate/auto', async (req, res) => {
 
 // POST /api/tournament/activate/:tournamentId - Manually activate a tournament
 // Sets this tournament as the active one (manual override)
-router.post('/activate/:tournamentId', async (req, res) => {
+router.post('/activate/:tournamentId',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const userId = req.tenantId || req.session?.userId;
         if (!userId) {
@@ -606,7 +620,9 @@ router.post('/activate/:tournamentId', async (req, res) => {
 // GET /api/tournaments/:tournamentId - Get tournament details
 // Validates tenant access unless public or superadmin viewing all
 // ============================================
-router.get('/:tournamentId', async (req, res) => {
+router.get('/:tournamentId',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -650,7 +666,10 @@ router.get('/:tournamentId', async (req, res) => {
 // PUT /api/tournaments/:tournamentId - Update tournament
 // Validates tenant access
 // ============================================
-router.put('/:tournamentId', async (req, res) => {
+router.put('/:tournamentId',
+    validateParams(tournamentIdParamSchema),
+    validateBody(updateTournamentSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -683,6 +702,7 @@ router.put('/:tournamentId', async (req, res) => {
         }
 
         // Map camelCase from frontend to snake_case for database
+        const validatedData = req.validatedBody || req.body;
         const {
             name,
             gameName,
@@ -705,7 +725,7 @@ router.put('/:tournamentId', async (req, res) => {
             compactBracket,
             seedingSource,
             seedingConfig
-        } = req.body;
+        } = validatedData;
 
         // Build update object with snake_case keys
         const updateData = {};
@@ -796,7 +816,9 @@ router.put('/:tournamentId', async (req, res) => {
 // POST /api/tournaments/:tournamentId/start - Start tournament
 // Validates tenant access
 // ============================================
-router.post('/:tournamentId/start', async (req, res) => {
+router.post('/:tournamentId/start',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -977,7 +999,9 @@ router.post('/:tournamentId/start', async (req, res) => {
 // POST /api/tournaments/:tournamentId/reset - Reset tournament
 // Validates tenant access
 // ============================================
-router.post('/:tournamentId/reset', async (req, res) => {
+router.post('/:tournamentId/reset',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1088,7 +1112,9 @@ router.post('/:tournamentId/reset', async (req, res) => {
 // POST /api/tournaments/:tournamentId/complete - Finalize tournament
 // Validates tenant access
 // ============================================
-router.post('/:tournamentId/complete', async (req, res) => {
+router.post('/:tournamentId/complete',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1259,7 +1285,9 @@ router.post('/:tournamentId/complete', async (req, res) => {
 // DELETE /api/tournaments/:tournamentId - Delete tournament
 // Validates tenant access
 // ============================================
-router.delete('/:tournamentId', async (req, res) => {
+router.delete('/:tournamentId',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1330,7 +1358,9 @@ router.delete('/:tournamentId', async (req, res) => {
 // ============================================
 // GET /api/tournaments/:tournamentId/bracket - Get bracket visualization data
 // ============================================
-router.get('/:tournamentId/bracket', async (req, res) => {
+router.get('/:tournamentId/bracket',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1376,7 +1406,9 @@ router.get('/:tournamentId/bracket', async (req, res) => {
 // ============================================
 // GET /api/tournaments/:tournamentId/standings - Get current standings
 // ============================================
-router.get('/:tournamentId/standings', async (req, res) => {
+router.get('/:tournamentId/standings',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1418,7 +1450,9 @@ router.get('/:tournamentId/standings', async (req, res) => {
 // GET /api/tournament/:tournamentId/round-labels - Get custom round labels
 // Returns custom labels and computed defaults for each round
 // ============================================
-router.get('/:tournamentId/round-labels', async (req, res) => {
+router.get('/:tournamentId/round-labels',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1524,10 +1558,14 @@ router.get('/:tournamentId/round-labels', async (req, res) => {
 // ============================================
 // PUT /api/tournament/:tournamentId/round-labels - Update custom round labels
 // ============================================
-router.put('/:tournamentId/round-labels', async (req, res) => {
+router.put('/:tournamentId/round-labels',
+    validateParams(tournamentIdParamSchema),
+    validateBody(roundLabelsSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
-        const { winners, losers } = req.body;
+        const validatedData = req.validatedBody || req.body;
+        const { winners, losers } = validatedData;
 
         const tournament = isNaN(tournamentId)
             ? tournamentDb.getBySlug(tournamentId)
@@ -1597,7 +1635,9 @@ router.put('/:tournamentId/round-labels', async (req, res) => {
 // ============================================
 // POST /api/tournaments/:tournamentId/swiss/next-round - Generate next Swiss round
 // ============================================
-router.post('/:tournamentId/swiss/next-round', async (req, res) => {
+router.post('/:tournamentId/swiss/next-round',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1732,7 +1772,9 @@ async function clearTournamentStateFile() {
  * POST /api/tournaments/:tournamentId/transition-to-knockout
  * Transition a two-stage tournament from group stage to knockout stage
  */
-router.post('/:tournamentId/transition-to-knockout', async (req, res) => {
+router.post('/:tournamentId/transition-to-knockout',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1850,7 +1892,9 @@ router.post('/:tournamentId/transition-to-knockout', async (req, res) => {
  * GET /api/tournaments/:tournamentId/group-standings
  * Get standings for all groups in a two-stage tournament
  */
-router.get('/:tournamentId/group-standings', async (req, res) => {
+router.get('/:tournamentId/group-standings',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -1912,10 +1956,14 @@ router.get('/:tournamentId/group-standings', async (req, res) => {
  * POST /api/tournaments/:tournamentId/matches/:matchId/ffa-placements
  * Record placements for a free-for-all match
  */
-router.post('/:tournamentId/matches/:matchId/ffa-placements', async (req, res) => {
+router.post('/:tournamentId/matches/:matchId/ffa-placements',
+    validateParams(tournamentMatchParamsSchema),
+    validateBody(ffaPlacementsSchema),
+    async (req, res) => {
     try {
         const { tournamentId, matchId } = req.params;
-        const { placements } = req.body; // Array of {participant_id, placement}
+        const validatedData = req.validatedBody || req.body;
+        const { placements } = validatedData; // Array of {participant_id, placement}
 
         const tournament = isNaN(tournamentId)
             ? tournamentDb.getBySlug(tournamentId)
@@ -1938,9 +1986,7 @@ router.post('/:tournamentId/matches/:matchId/ffa-placements', async (req, res) =
             return res.status(404).json({ success: false, error: 'Match not found' });
         }
 
-        if (!Array.isArray(placements) || placements.length === 0) {
-            return res.status(400).json({ success: false, error: 'Placements array is required' });
-        }
+        // Placements array validation handled by schema
 
         // Get points system from tournament settings
         const pointsSystem = tournament.points_system_json
@@ -2014,7 +2060,9 @@ router.post('/:tournamentId/matches/:matchId/ffa-placements', async (req, res) =
  * GET /api/tournaments/:tournamentId/ffa-standings
  * Get current standings for a free-for-all tournament
  */
-router.get('/:tournamentId/ffa-standings', async (req, res) => {
+router.get('/:tournamentId/ffa-standings',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -2067,10 +2115,14 @@ router.get('/:tournamentId/ffa-standings', async (req, res) => {
  * POST /api/tournaments/:tournamentId/events
  * Add a new event to a leaderboard tournament
  */
-router.post('/:tournamentId/events', async (req, res) => {
+router.post('/:tournamentId/events',
+    validateParams(tournamentIdParamSchema),
+    validateBody(leaderboardEventSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
-        const { name, results, date } = req.body; // results: [{participant_id, placement}]
+        const validatedData = req.validatedBody || req.body;
+        const { name, results, date } = validatedData; // results: [{participant_id, placement}]
 
         const tournament = isNaN(tournamentId)
             ? tournamentDb.getBySlug(tournamentId)
@@ -2088,9 +2140,7 @@ router.post('/:tournamentId/events', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Tournament is not a leaderboard' });
         }
 
-        if (!Array.isArray(results) || results.length === 0) {
-            return res.status(400).json({ success: false, error: 'Results array is required' });
-        }
+        // Results array validation handled by schema
 
         const db = require('../db/tournaments-db').getDb();
 
@@ -2160,7 +2210,9 @@ router.post('/:tournamentId/events', async (req, res) => {
  * GET /api/tournaments/:tournamentId/events
  * Get all events for a leaderboard tournament
  */
-router.get('/:tournamentId/events', async (req, res) => {
+router.get('/:tournamentId/events',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
@@ -2201,7 +2253,9 @@ router.get('/:tournamentId/events', async (req, res) => {
  * GET /api/tournaments/:tournamentId/leaderboard-standings
  * Get current leaderboard standings
  */
-router.get('/:tournamentId/leaderboard-standings', async (req, res) => {
+router.get('/:tournamentId/leaderboard-standings',
+    validateParams(tournamentIdParamSchema),
+    async (req, res) => {
     try {
         const { tournamentId } = req.params;
 
