@@ -37,6 +37,7 @@ const discordBotService = require('./services/discord-bot');
 const activeTournamentService = require('./services/active-tournament');
 const metricsAggregator = require('./services/metrics-aggregator');
 const backupScheduler = require('./services/backup-scheduler');
+const healthCheck = require('./services/health-check');
 
 // PDF Report Color Palette
 const PDF_COLORS = {
@@ -3389,6 +3390,126 @@ app.get('/api/status', async (req, res) => {
 			}
 		});
 	} catch (error) {
+		res.status(500).json({
+			success: false,
+			error: error.message
+		});
+	}
+});
+
+// ==========================================
+// Health Check API Endpoints
+// ==========================================
+
+// Initialize health check service with dependencies
+healthCheck.init({
+	db: db,
+	getWebSocketStatus: getWebSocketStatus
+});
+
+// Quick health check (for load balancers, no auth required)
+app.get('/api/health/quick', (req, res) => {
+	try {
+		const health = healthCheck.generateQuickHealth(io);
+		const statusCode = health.status === 'healthy' ? 200 :
+		                   health.status === 'degraded' ? 200 : 503;
+		res.status(statusCode).json(health);
+	} catch (error) {
+		console.error('[Health Check] Quick check error:', error.message);
+		res.status(503).json({
+			status: 'unhealthy',
+			timestamp: new Date().toISOString(),
+			error: error.message
+		});
+	}
+});
+
+// Detailed health check (requires authentication)
+app.get('/api/health', requireAuthAPI, (req, res) => {
+	try {
+		const health = healthCheck.generateHealthReport(io);
+		const statusCode = health.status === 'healthy' ? 200 :
+		                   health.status === 'degraded' ? 200 : 503;
+		res.status(statusCode).json({
+			success: true,
+			...health
+		});
+	} catch (error) {
+		console.error('[Health Check] Detailed check error:', error.message);
+		res.status(500).json({
+			success: false,
+			status: 'unhealthy',
+			timestamp: new Date().toISOString(),
+			error: error.message
+		});
+	}
+});
+
+// Database health check
+app.get('/api/health/database', requireAuthAPI, (req, res) => {
+	try {
+		const dbHealth = healthCheck.checkDatabaseIntegrity();
+		res.json({
+			success: true,
+			timestamp: new Date().toISOString(),
+			...dbHealth
+		});
+	} catch (error) {
+		console.error('[Health Check] Database check error:', error.message);
+		res.status(500).json({
+			success: false,
+			error: error.message
+		});
+	}
+});
+
+// Disk space health check
+app.get('/api/health/disk', requireAuthAPI, (req, res) => {
+	try {
+		const diskHealth = healthCheck.checkDiskSpace();
+		res.json({
+			success: true,
+			timestamp: new Date().toISOString(),
+			...diskHealth
+		});
+	} catch (error) {
+		console.error('[Health Check] Disk check error:', error.message);
+		res.status(500).json({
+			success: false,
+			error: error.message
+		});
+	}
+});
+
+// Memory health check
+app.get('/api/health/memory', requireAuthAPI, (req, res) => {
+	try {
+		const memoryHealth = healthCheck.checkMemoryUsage();
+		res.json({
+			success: true,
+			timestamp: new Date().toISOString(),
+			...memoryHealth
+		});
+	} catch (error) {
+		console.error('[Health Check] Memory check error:', error.message);
+		res.status(500).json({
+			success: false,
+			error: error.message
+		});
+	}
+});
+
+// WebSocket health check
+app.get('/api/health/websocket', requireAuthAPI, (req, res) => {
+	try {
+		const wsHealth = healthCheck.getWebSocketStats(io);
+		res.json({
+			success: true,
+			timestamp: new Date().toISOString(),
+			...wsHealth
+		});
+	} catch (error) {
+		console.error('[Health Check] WebSocket check error:', error.message);
 		res.status(500).json({
 			success: false,
 			error: error.message
@@ -9227,7 +9348,7 @@ app.get('/api/export/:tournamentId/report/pdf', requireAuthAPI, async (req, res)
 const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 
 // Handle 404 for API routes that don't match
-app.use('/api/*', notFoundHandler);
+app.use('/api/{*path}', notFoundHandler);
 
 // Centralized error handler - catches all errors thrown by routes
 app.use(errorHandler);

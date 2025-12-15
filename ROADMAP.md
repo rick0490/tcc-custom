@@ -16,6 +16,7 @@
 | **3** | Revenue & Monetization | Week 2-3 | Pending |
 | **4** | Market Differentiation | Week 3-4 | Pending |
 | **5** | Scale & Growth | Week 4-6 | Pending |
+| **5.5** | **Pi Onboarding System** | Post-VPS | Pending |
 | **6** | Participant Experience | Week 6-8 | Pending |
 | **7** | Advanced AI Features | Week 8-10 | Pending |
 | **8** | Visual Polish & UX | Week 10-12 | Pending |
@@ -50,14 +51,16 @@ These items must be complete before launch. A single failure during a live tourn
 
 **Files:** validation/schemas.js (~850 lines), routes/participants.js, routes/matches.js, routes/tournaments.js, routes/flyers.js
 
-### 1.3 Health Check Diagnostics Enhancement
+### 1.3 Health Check Diagnostics Enhancement ✅ COMPLETED 2025-12-15
 **Effort:** 2 days | **Source:** NEW-3
 
-- [ ] Add database integrity check (PRAGMA integrity_check)
-- [ ] Check disk space for database location (warn < 10%)
-- [ ] Add memory usage monitoring (warn > 80%)
-- [ ] Check WebSocket message queue length (warn > 1000)
-- [ ] Return detailed health report JSON
+- [x] Add database integrity check (PRAGMA integrity_check)
+- [x] Check disk space for database location (warn < 10%)
+- [x] Add memory usage monitoring (warn > 80%)
+- [x] Check WebSocket message queue length (warn > 1000)
+- [x] Return detailed health report JSON
+
+**Files:** services/health-check.js, server.js (endpoints)
 
 ### 1.4 Display Offline Resilience
 **Effort:** 2 days | **Source:** NEW-5
@@ -289,6 +292,331 @@ These items must be complete before launch. A single failure during a live tourn
 
 ---
 
+## Phase 5.5: Raspberry Pi Onboarding System (Post-VPS)
+
+**Priority:** HIGH (Post-Migration)
+**Goal:** Automated multi-tenant Pi provisioning and management
+**Prerequisite:** VPS migration complete (bracketspot.com live)
+
+This feature enables customers to set up display Pis without manual configuration. Pis boot to a QR code, users scan to claim, and displays automatically bind to their account.
+
+### 5.5.1 Database Schema
+
+**Effort:** 1 day
+
+New/modified tables in `system.db`:
+
+```sql
+-- Add columns to existing displays table
+ALTER TABLE displays ADD COLUMN user_id INTEGER REFERENCES users(id);
+ALTER TABLE displays ADD COLUMN claim_status TEXT DEFAULT 'unclaimed'
+    CHECK(claim_status IN ('unclaimed', 'pending', 'claimed'));
+ALTER TABLE displays ADD COLUMN display_name TEXT;
+ALTER TABLE displays ADD COLUMN discovered_via TEXT CHECK(discovered_via IN ('qr', 'mdns', 'manual'));
+ALTER TABLE displays ADD COLUMN claimed_at DATETIME;
+ALTER TABLE displays ADD COLUMN assigned_view TEXT DEFAULT 'match'
+    CHECK(assigned_view IN ('match', 'bracket', 'flyer'));
+
+-- New table: Claim tokens (10-minute expiry, one-time use)
+CREATE TABLE display_claim_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,        -- 64-char hex (32 bytes random)
+    display_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    claimed_by INTEGER REFERENCES users(id),
+    claimed_at DATETIME,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'claimed', 'expired'))
+);
+
+-- New table: mDNS discovery cache
+CREATE TABLE display_discovery_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mac TEXT UNIQUE NOT NULL,
+    hostname TEXT,
+    ip TEXT,
+    discovered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+    discovered_by_user INTEGER REFERENCES users(id)
+);
+```
+
+**Files:** `admin-dashboard/db/system-db.js`
+
+### 5.5.2 Claim Token API Endpoints
+
+**Effort:** 2 days
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/displays/claim-token` | None | Pi requests token, gets QR URL |
+| GET | `/api/displays/claim/:token` | Session | User opens claim page |
+| POST | `/api/displays/claim/:token` | Session | User confirms claim |
+| GET | `/api/displays/claim-status/:displayId` | MAC | Pi polls claim status |
+
+**QR Claim Flow:**
+```
+Pi                          Server                      User
+|                              |                          |
+| POST /claim-token ---------> |                          |
+| <-- { token, qrUrl } --------|                          |
+|                              |                          |
+| [Show QR on screen]          |                          |
+|                              | <-- Scan QR -------------|
+|                              | --> Claim page ----------|
+|                              | <-- POST confirm --------|
+| <-- WS: display:claimed ---- |                          |
+| [Start display]              |                          |
+```
+
+**Files:** `admin-dashboard/routes/displays.js`, `admin-dashboard/services/display-onboarding.js`
+
+### 5.5.3 mDNS Auto-Discovery
+
+**Effort:** 2 days
+
+**Pi broadcasts via Avahi:**
+```xml
+<!-- /etc/avahi/services/tcc-display.service -->
+<service-group>
+  <name>TCC Display %h</name>
+  <service>
+    <type>_tcc-display._tcp</type>
+    <port>9300</port>
+    <txt-record>mac=XX:XX:XX:XX:XX:XX</txt-record>
+    <txt-record>status=unclaimed</txt-record>
+  </service>
+</service-group>
+```
+
+**Server discovers using `bonjour-service` npm package:**
+```javascript
+const Bonjour = require('bonjour-service').Bonjour;
+const browser = bonjour.find({ type: 'tcc-display' }, (service) => {
+    if (service.txt?.status === 'unclaimed') {
+        // Push to admin dashboards via WebSocket
+    }
+});
+```
+
+**Discovery Endpoints:**
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/displays/discover` | List unclaimed Pis on LAN |
+| POST | `/api/displays/discover/refresh` | Trigger mDNS scan |
+| POST | `/api/displays/discover/claim/:mac` | Claim from discovery list |
+
+**Files:** `admin-dashboard/services/mdns-discovery.js`
+
+### 5.5.4 Remote Display Mode Switching
+
+**Effort:** 1 day
+
+Admin can change Pi between match/bracket/flyer views remotely:
+
+```
+PUT /api/displays/:id/view { view: 'bracket' }
+    ↓
+Server updates DB, emits WebSocket: display:switch-view
+    ↓
+Pi receives, kills browser, restarts with new URL
+    ↓
+Pi heartbeat confirms new view
+```
+
+**View URLs:** `/u/{userId}/match`, `/u/{userId}/bracket`, `/u/{userId}/flyer`
+
+**Files:** `admin-dashboard/routes/displays.js`, Pi-side `switch-view.sh`
+
+### 5.5.5 Pi Onboarding State Machine
+
+**Effort:** 2 days
+
+```
+[Boot] → [CONNECTING] → [UNCLAIMED] → [QR_DISPLAYED] → [CLAIMING] → [CLAIMED] → [RUNNING]
+              ↑                                                                      |
+              +----------------------------------------------------------------------+
+                                                                             [DISCONNECTED]
+```
+
+| State | Actions |
+|-------|---------|
+| CONNECTING | Wait for network, show "Connecting..." |
+| UNCLAIMED | Request claim token from server |
+| QR_DISPLAYED | Show fullscreen QR, poll for claim |
+| CLAIMING | Show "Claiming..." animation |
+| CLAIMED | Transition to normal operation |
+| RUNNING | Show configured display type |
+| DISCONNECTED | Overlay "Disconnected - Reconnecting..." |
+
+**Files:** Pi-side `onboarding-manager.js`
+
+### 5.5.6 Offline Indicator Overlay
+
+**Effort:** 1 day
+
+- Monitor Socket.IO `disconnect` event
+- Inject CSS overlay via CDP (Chrome DevTools Protocol, port 9223)
+- Show "Disconnected - Reconnecting..." with dimmed display behind
+- Exponential backoff reconnect (5s → 30s max)
+- Auto-remove overlay on reconnect
+
+**Files:** Pi-side `connection-monitor.js`
+
+### 5.5.7 Pi Provisioning (Hybrid Approach)
+
+**Effort:** 3 days
+
+#### Option A: Bootstrap Script (Primary)
+
+Users flash stock Raspberry Pi OS Lite and add files to boot partition:
+
+**Files for /boot partition:**
+- `tcc-bootstrap.sh` - Main setup script
+- `tcc-config.txt` - Server URL, optional WiFi
+
+**tcc-config.txt:**
+```ini
+SERVER_URL=https://bracketspot.com
+WIFI_SSID=MyNetwork          # Optional
+WIFI_PASSWORD=MyPassword     # Optional
+HOSTNAME=tcc-display-1       # Optional (auto-generated if blank)
+```
+
+**Bootstrap workflow:**
+1. Wait for network → Set hostname
+2. `apt install chromium-browser nodejs npm avahi-daemon xserver-xorg openbox`
+3. Download setup package from `SERVER_URL/api/pi/setup-package`
+4. Install systemd services, configure autologin
+5. Reboot → boots to QR claim screen
+
+**User workflow:**
+1. Flash Raspberry Pi OS Lite (64-bit) to SD card
+2. Download `tcc-bootstrap.zip` from bracketspot.com
+3. Extract to boot partition, edit `tcc-config.txt`
+4. Boot Pi, wait ~5 mins, scan QR to claim
+
+#### Option B: Pre-Built Image (Optional)
+
+Everything pre-installed, boots to "Enter Server URL" screen:
+- Build using `pi-gen` tool
+- Host on CDN (Cloudflare R2)
+- ~1.2 GB compressed
+
+### 5.5.8 Setup Package (Served by Server)
+
+**Endpoint:** `GET /api/pi/setup-package`
+
+Returns `tcc-setup.tar.gz`:
+```
+tcc-display/
+├── package.json
+├── onboarding-manager.js     # State machine
+├── heartbeat.js              # Status reporting
+├── websocket-client.js       # Connection manager
+├── qr-display.html           # QR code template
+├── offline-overlay.html      # Disconnect overlay
+├── systemd/
+│   ├── tcc-kiosk.service
+│   ├── tcc-heartbeat.service
+│   └── tcc-onboarding.service
+└── scripts/
+    ├── start-kiosk.sh
+    ├── switch-view.sh
+    └── update-avahi-status.sh
+```
+
+**Endpoint:** `GET /api/pi/bootstrap-files`
+
+Returns `tcc-bootstrap.zip` with bootstrap script and config template.
+
+### 5.5.9 Admin Dashboard UI
+
+**Effort:** 2 days
+
+**New pages/sections:**
+- `/setup/pi` - Download page with instructions
+- `/displays` - Device management (list, status, controls)
+- Discovery panel - Shows unclaimed Pis on LAN
+
+**Display management features:**
+- View claimed displays with online/offline status
+- Switch display mode (match/bracket/flyer)
+- Rename displays
+- Unclaim/release displays
+- Reboot/refresh commands
+
+### 5.5.10 Security Measures
+
+| Threat | Mitigation |
+|--------|------------|
+| Token brute force | Rate limit: 5 tokens/hour/MAC |
+| MAC spoofing | Token bound to display_id at creation |
+| Cross-tenant access | user_id FK + ownership validation |
+| Replay attacks | One-time tokens + 10-min expiry |
+
+### 5.5.11 WebSocket Events
+
+**Pi → Server:**
+- `display:qr:shown` - Pi showing QR code
+- `display:claimed:ack` - Pi acknowledges claim
+- `display:heartbeat` - Periodic status
+
+**Server → Pi:**
+- `display:claimed` - Notify claim success
+- `display:switch-view` - Change display type
+- `display:qr:regenerate` - Token expired
+
+**Server → Admin:**
+- `display:discovered` - New device on LAN
+- `display:claim:status` - Claim status changed
+- `display:online/offline` - Connection status
+
+### Implementation Phases
+
+| Phase | Effort | Description |
+|-------|--------|-------------|
+| 1 | 1 day | Database migration + claim token table |
+| 2 | 2 days | Claim API endpoints + QR flow |
+| 3 | 2 days | Pi setup package + systemd services |
+| 4 | 1 day | Bootstrap script + testing |
+| 5 | 2 days | mDNS discovery (server + Pi) |
+| 6 | 1 day | Display switching + offline overlay |
+| 7 | 2 days | Admin dashboard UI |
+| 8 | 1 day | Testing edge cases |
+
+**Total Effort:** ~12 days
+
+### Files to Create
+
+```
+admin-dashboard/
+├── services/
+│   ├── display-onboarding.js    # Token management
+│   └── mdns-discovery.js        # Bonjour browser
+├── public/
+│   ├── claim.html               # Claim landing page
+│   ├── js/claim.js              # Claim page logic
+│   └── pi-setup/
+│       ├── tcc-bootstrap.sh
+│       └── tcc-config.txt
+
+Pi-side (in setup package):
+├── onboarding-manager.js
+├── qr-display.html
+├── offline-overlay.html
+└── systemd/*.service
+```
+
+### Files to Modify
+
+- `admin-dashboard/db/system-db.js` - Add tables
+- `admin-dashboard/routes/displays.js` - Add claim endpoints
+- `admin-dashboard/validation/schemas.js` - Add claim schemas
+- `admin-dashboard/server.js` - Add WebSocket events
+
+---
+
 ## Phase 6: Participant Experience
 
 **Priority:** MEDIUM
@@ -501,6 +829,8 @@ Features completed as of 2025-12-15:
 | Three New Tournament Formats | 2025-12-15 |
 | Bracket Editor Improvements | 2025-12-15 |
 | Error Handling Standardization | 2025-12-15 |
+| Input Validation Completion | 2025-12-15 |
+| Health Check Diagnostics | 2025-12-15 |
 
 See **COMPLETED_IMPROVEMENTS.txt** for full details.
 
@@ -514,11 +844,17 @@ See **COMPLETED_IMPROVEMENTS.txt** for full details.
 - **Discord:** Bot token and OAuth app for integration
 - **start.gg:** Developer API access (application required)
 - **Cloudflare:** Zone ID and API token for cache purging
+- **Cloudflare R2:** (Optional) CDN hosting for pre-built Pi images
 
 ### Infrastructure Requirements
 - VPS migration to bracketspot.com (target: Jan 5, 2026)
 - SSL certificates for all subdomains
 - Database backup automation
+
+### Pi Onboarding Requirements (Phase 5.5)
+- **npm packages:** `bonjour-service` (mDNS discovery), `qrcode` (QR generation)
+- **Pi prerequisites:** Raspberry Pi OS Lite (64-bit), network access during setup
+- **Server requirements:** Port 9300 available for mDNS (LAN discovery only)
 
 ---
 
