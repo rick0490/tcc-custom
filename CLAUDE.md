@@ -9,6 +9,20 @@
 | RAM | 2.0 GB |
 | Disk | 32 GB (29 GB available) |
 
+## Upcoming Migration
+
+> **Domain Acquired:** The production domain **bracketspot.com** has been purchased for TCC-Custom. By **January 5th, 2026**, this project will be migrated to a dedicated VPS and the new domain will be fully implemented.
+
+### [VPS Migration Plan](VPS_MIGRATION.md)
+Complete migration guide including:
+- Vultr VPS provisioning ($12/mo, 2GB RAM)
+- Cloudflare DNS/CDN setup
+- Path-based URL routing (all services under www.bracketspot.com)
+- Nginx reverse proxy configuration
+- Systemd service files
+- Data backup and restore procedures
+- Testing checklists and rollback plan
+
 ---
 
 # CLAUDE.md - TCC Custom
