@@ -1219,9 +1219,9 @@ function populateDiscordForm(settings) {
 	}
 	toggleIntegrationType();
 
-	// Channel/Guild IDs
-	document.getElementById('channelId').value = settings.channel_id || '';
-	document.getElementById('guildId').value = settings.guild_id || '';
+	// Channel ID (Guild ID is auto-detected by bot)
+	const channelIdEl = document.getElementById('channelId');
+	if (channelIdEl) channelIdEl.value = settings.channel_id || '';
 
 	// Event notifications
 	document.getElementById('notifyTournamentStart').checked = settings.notify_tournament_start;
