@@ -143,6 +143,7 @@ class BracketDisplay {
 			'tournament:update': (data) => this.onTournamentUpdate(data),
 			'tournament:deployed': (data) => this.onTournamentDeployed(data),
 			'tournament:started': (data) => this.onTournamentStarted(data),
+			'tournament:activated': (data) => this.onTournamentActivated(data),
 			'tournament:completed': (data) => this.onTournamentCompleted(data),
 			'tournament:reset': (data) => this.onTournamentReset(data),
 
@@ -621,6 +622,46 @@ class BracketDisplay {
 			this.renderBracket();
 		} else {
 			this.fetchBracketData();
+		}
+	}
+
+	onTournamentActivated(data) {
+		this.log('tournament:activated', {
+			hasTournament: !!data.tournament,
+			hasMatches: !!data.matches,
+			matchCount: data.matches?.length || 0,
+			mode: data.mode
+		});
+
+		// Use tournament data from event
+		if (data.tournament) {
+			this.state.tournament = data.tournament;
+		}
+
+		// Use matches from event - this is the key data for bracket rendering
+		if (data.matches && data.matches.length > 0) {
+			this.state.matches = data.matches;
+
+			// Build participants cache from match data if not already populated
+			if (this.state.participants.length === 0) {
+				const participantsCache = {};
+				data.matches.forEach(m => {
+					if (m.player1Id && m.player1Name && m.player1Name !== 'TBD') {
+						participantsCache[m.player1Id] = { id: m.player1Id, name: m.player1Name };
+					}
+					if (m.player2Id && m.player2Name && m.player2Name !== 'TBD') {
+						participantsCache[m.player2Id] = { id: m.player2Id, name: m.player2Name };
+					}
+				});
+				this.state.participants = Object.values(participantsCache);
+			}
+		}
+
+		// Render bracket if we have data
+		if (this.state.tournament && this.state.matches.length > 0) {
+			this.hidePlaceholder();
+			this.hideLoading();
+			this.renderBracket();
 		}
 	}
 
