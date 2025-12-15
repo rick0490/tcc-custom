@@ -15,6 +15,7 @@ const sponsorService = require('./sponsor');
 const aiSeedingService = require('./ai-seeding');
 const tournamentNarratorService = require('./tournament-narrator');
 const discordBotService = require('./discord-bot');
+const errorHandlerService = require('./error-handler');
 
 // Existing services (not extracted from server.js)
 const containerService = require('./container');
@@ -32,6 +33,7 @@ module.exports = {
 	aiSeeding: aiSeedingService,
 	tournamentNarrator: tournamentNarratorService,
 	discordBot: discordBotService,
+	errorHandler: errorHandlerService,
 
 	// Existing services
 	container: containerService,

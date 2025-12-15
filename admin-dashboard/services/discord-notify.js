@@ -8,6 +8,12 @@
 const crypto = require('crypto');
 const systemDb = require('../db/system-db');
 const { createLogger } = require('./debug-logger');
+const {
+    withRetry,
+    circuitBreakers,
+    ExternalServiceError,
+    RateLimitError
+} = require('./error-handler');
 
 const logger = createLogger('discord-notify');
 
@@ -195,6 +201,7 @@ async function validateWebhookUrlWithConnectivity(webhookUrl) {
 
 /**
  * Send notification via Discord webhook
+ * Uses circuit breaker and retry logic for resilience
  * @param {string} webhookUrl - Discord webhook URL
  * @param {Object} embed - Discord embed object
  * @param {string|null} mentionRoleId - Role ID to mention
@@ -210,16 +217,46 @@ async function sendWebhookNotification(webhookUrl, embed, mentionRoleId = null) 
         payload.content = `<@&${mentionRoleId}>`;
     }
 
-    const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    // Execute through circuit breaker with retry logic
+    await circuitBreakers.discord.execute(async () => {
+        return withRetry(async () => {
+            const response = await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`);
-    }
+            if (!response.ok) {
+                const errorText = await response.text();
+
+                // Handle rate limiting specially
+                if (response.status === 429) {
+                    const retryAfter = response.headers.get('Retry-After');
+                    const error = new RateLimitError(
+                        `Discord rate limited: ${errorText}`,
+                        retryAfter ? parseInt(retryAfter, 10) : 60
+                    );
+                    error.statusCode = 429;
+                    throw error;
+                }
+
+                // Create error with status code for retry logic
+                const error = new ExternalServiceError(
+                    'Discord',
+                    `Webhook failed: ${response.status} - ${errorText}`
+                );
+                error.statusCode = response.status;
+                throw error;
+            }
+
+            return response;
+        }, {
+            maxRetries: 2,
+            initialDelayMs: 1000,
+            backoffMultiplier: 2,
+            maxDelayMs: 5000
+        });
+    });
 
     logger.log('sendWebhookNotification', 'Notification sent successfully');
 }

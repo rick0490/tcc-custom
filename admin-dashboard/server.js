@@ -9221,6 +9221,17 @@ app.get('/api/export/:tournamentId/report/pdf', requireAuthAPI, async (req, res)
 	}
 });
 
+// =============================================================================
+// ERROR HANDLING MIDDLEWARE (must be registered AFTER all routes)
+// =============================================================================
+const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
+
+// Handle 404 for API routes that don't match
+app.use('/api/*', notFoundHandler);
+
+// Centralized error handler - catches all errors thrown by routes
+app.use(errorHandler);
+
 // Start server with WebSocket support (only when run directly, not when imported for testing)
 if (require.main === module) {
 	httpServer.listen(PORT, '0.0.0.0', () => {
