@@ -539,7 +539,7 @@ const BracketCanvas = (function() {
 	 * Draw a single match box
 	 */
 	function drawMatch(match, x, y, roundIndex, totalRounds) {
-		const isBye = match.isBye || (!match.player1 && !match.player2);
+		const isBye = match.isBye || (!match.player1?.id && !match.player2?.id);
 		const isFirstRound = roundIndex === 0; // First round matches are draggable
 
 		// Match background
@@ -552,7 +552,7 @@ const BracketCanvas = (function() {
 		ctx.stroke();
 
 		// Player 1 (top half)
-		drawPlayer(match.player1, x, y, match.winnerId, isFirstRound);
+		drawPlayer(match.player1, x, y, match.winnerId, isFirstRound, isBye);
 
 		// Divider line
 		ctx.strokeStyle = COLORS.matchBorder;
@@ -562,7 +562,7 @@ const BracketCanvas = (function() {
 		ctx.stroke();
 
 		// Player 2 (bottom half)
-		drawPlayer(match.player2, x, y + PLAYER_HEIGHT, match.winnerId, isFirstRound);
+		drawPlayer(match.player2, x, y + PLAYER_HEIGHT, match.winnerId, isFirstRound, isBye);
 
 		// Match identifier badge
 		if (match.identifier) {
@@ -581,13 +581,16 @@ const BracketCanvas = (function() {
 	 * @param {number} y - Y position
 	 * @param {number} winnerId - Winner's participant ID
 	 * @param {boolean} isFirstRound - Whether this is a first-round match (draggable)
+	 * @param {boolean} isBye - Whether this match is a BYE match
 	 */
-	function drawPlayer(player, x, y, winnerId, isFirstRound = false) {
-		if (!player) {
-			// TBD slot
+	function drawPlayer(player, x, y, winnerId, isFirstRound = false, isBye = false) {
+		// Check for empty slot (no player object or player with no ID)
+		if (!player || !player.id) {
+			// Display BYE for bye matches, TBD for matches waiting on prerequisites
+			const label = isBye ? 'BYE' : 'TBD';
 			ctx.fillStyle = COLORS.textMuted;
 			ctx.font = 'italic 12px Inter, sans-serif';
-			ctx.fillText('TBD', x + 8, y + 19);
+			ctx.fillText(label, x + 8, y + 19);
 			return;
 		}
 
