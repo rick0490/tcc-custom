@@ -516,33 +516,54 @@
 						<label class="block text-sm font-medium text-gray-300 mb-2">
 							Tournament Format <span class="text-red-500">*</span>
 						</label>
-						<div class="grid grid-cols-2 gap-3">
+						<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
 							<label class="format-option cursor-pointer">
 								<input type="radio" name="tournamentType" value="single elimination" checked class="hidden">
-								<div class="p-4 bg-gray-700 border-2 border-blue-500 rounded-lg text-center hover:border-blue-400 transition">
+								<div class="h-full p-4 bg-gray-700 border-2 border-blue-500 rounded-lg text-center hover:border-blue-400 transition flex flex-col justify-center min-h-[76px]">
 									<div class="text-white font-medium">Single Elimination</div>
 									<div class="text-xs text-gray-400 mt-1">Lose once, you're out</div>
 								</div>
 							</label>
 							<label class="format-option cursor-pointer">
 								<input type="radio" name="tournamentType" value="double elimination" class="hidden">
-								<div class="p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition">
+								<div class="h-full p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition flex flex-col justify-center min-h-[76px]">
 									<div class="text-white font-medium">Double Elimination</div>
 									<div class="text-xs text-gray-400 mt-1">Losers bracket included</div>
 								</div>
 							</label>
 							<label class="format-option cursor-pointer">
 								<input type="radio" name="tournamentType" value="round robin" class="hidden">
-								<div class="p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition">
+								<div class="h-full p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition flex flex-col justify-center min-h-[76px]">
 									<div class="text-white font-medium">Round Robin</div>
 									<div class="text-xs text-gray-400 mt-1">Everyone plays everyone</div>
 								</div>
 							</label>
 							<label class="format-option cursor-pointer">
 								<input type="radio" name="tournamentType" value="swiss" class="hidden">
-								<div class="p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition">
+								<div class="h-full p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition flex flex-col justify-center min-h-[76px]">
 									<div class="text-white font-medium">Swiss</div>
-									<div class="text-xs text-gray-400 mt-1">Fixed rounds, ranked by wins</div>
+									<div class="text-xs text-gray-400 mt-1">Score-based pairing</div>
+								</div>
+							</label>
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="two_stage" class="hidden">
+								<div class="h-full p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition flex flex-col justify-center min-h-[76px]">
+									<div class="text-white font-medium">Two-Stage</div>
+									<div class="text-xs text-gray-400 mt-1">Groups then knockout</div>
+								</div>
+							</label>
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="free_for_all" class="hidden">
+								<div class="h-full p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition flex flex-col justify-center min-h-[76px]">
+									<div class="text-white font-medium">Free-for-All</div>
+									<div class="text-xs text-gray-400 mt-1">Multi-player matches</div>
+								</div>
+							</label>
+							<label class="format-option cursor-pointer">
+								<input type="radio" name="tournamentType" value="leaderboard" class="hidden">
+								<div class="h-full p-4 bg-gray-700 border-2 border-gray-600 rounded-lg text-center hover:border-gray-500 transition flex flex-col justify-center min-h-[76px]">
+									<div class="text-white font-medium">Leaderboard</div>
+									<div class="text-xs text-gray-400 mt-1">Ongoing rankings</div>
 								</div>
 							</label>
 						</div>
@@ -658,6 +679,109 @@
 									class="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm">
 							</div>
 						</div>
+					</div>
+
+					<!-- Two-Stage Options -->
+					<div id="twoStageOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600 hidden space-y-4">
+						<div class="text-sm font-medium text-gray-300">Two-Stage Settings</div>
+						<p class="text-xs text-gray-400">FIFA World Cup style: Group stage (round robin) followed by knockout bracket</p>
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Number of Groups</label>
+								<select id="wizardGroupCount" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="2">2 Groups</option>
+									<option value="4" selected>4 Groups</option>
+									<option value="6">6 Groups</option>
+									<option value="8">8 Groups</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Advance Per Group</label>
+								<select id="wizardAdvancePerGroup" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="1">Top 1</option>
+									<option value="2" selected>Top 2</option>
+									<option value="3">Top 3</option>
+									<option value="4">Top 4</option>
+								</select>
+							</div>
+						</div>
+						<div>
+							<label class="block text-xs text-gray-400 mb-1">Knockout Format</label>
+							<select id="wizardKnockoutFormat" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+								<option value="single_elimination" selected>Single Elimination</option>
+								<option value="double_elimination">Double Elimination</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- Free-for-All Options -->
+					<div id="ffaOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600 hidden space-y-4">
+						<div class="text-sm font-medium text-gray-300">Free-for-All Settings</div>
+						<p class="text-xs text-gray-400">Multi-player matches with points by placement (racing, battle royale)</p>
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Players Per Match</label>
+								<select id="wizardPlayersPerMatch" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="4">4 Players</option>
+									<option value="6">6 Players</option>
+									<option value="8" selected>8 Players</option>
+									<option value="10">10 Players</option>
+									<option value="12">12 Players</option>
+									<option value="16">16 Players</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Total Rounds</label>
+								<select id="wizardTotalRounds" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="1">1 Round</option>
+									<option value="2">2 Rounds</option>
+									<option value="3" selected>3 Rounds</option>
+									<option value="4">4 Rounds</option>
+									<option value="5">5 Rounds</option>
+								</select>
+							</div>
+						</div>
+						<div>
+							<label class="block text-xs text-gray-400 mb-1">Points System</label>
+							<select id="wizardPointsSystem" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+								<option value="f1" selected>F1 Style (25-18-15-12-10-8-6-4-2-1)</option>
+								<option value="linear">Linear (10-9-8-7-6-5-4-3-2-1)</option>
+								<option value="winner">Winner Take All (10-5-3-1)</option>
+								<option value="fortnite">Fortnite Style (Top-heavy)</option>
+							</select>
+						</div>
+					</div>
+
+					<!-- Leaderboard Options -->
+					<div id="leaderboardOptions" class="bg-gray-750 p-4 rounded-lg border border-gray-600 hidden space-y-4">
+						<div class="text-sm font-medium text-gray-300">Leaderboard Settings</div>
+						<p class="text-xs text-gray-400">Ongoing rankings across multiple events/sessions</p>
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Ranking Type</label>
+								<select id="wizardRankingType" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="points" selected>Points (placement-based)</option>
+									<option value="elo">ELO Rating</option>
+									<option value="wins">Win Count</option>
+								</select>
+							</div>
+							<div>
+								<label class="block text-xs text-gray-400 mb-1">Min Events to Rank</label>
+								<select id="wizardMinEvents" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white text-sm focus:ring-2 focus:ring-blue-500">
+									<option value="1" selected>1 Event</option>
+									<option value="2">2 Events</option>
+									<option value="3">3 Events</option>
+									<option value="5">5 Events</option>
+								</select>
+							</div>
+						</div>
+						<label class="flex items-center gap-3 cursor-pointer">
+							<input type="checkbox" id="wizardDecayEnabled" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500">
+							<div>
+								<div class="text-white text-sm font-medium">Enable Point Decay</div>
+								<div class="text-xs text-gray-400">Points decrease over time for inactive players</div>
+							</div>
+						</label>
 					</div>
 
 					<!-- Group Stage Options (for elimination formats) -->
@@ -801,33 +925,33 @@
 						<p class="text-xs text-gray-400 mt-1">Central Time - when the tournament is scheduled to begin</p>
 					</div>
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-2">
-								Check-in Duration (minutes)
+						<div class="flex flex-col">
+							<label class="block text-sm font-medium text-gray-300 mb-1 min-h-[40px]">
+								Check-in Duration<br><span class="text-xs font-normal text-gray-400">(minutes)</span>
 							</label>
 							<input type="number" id="wizardCheckIn" placeholder="e.g., 30" min="0" max="1440"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
 							<p class="text-xs text-gray-400 mt-1">Leave empty to skip</p>
 						</div>
-						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-2">
-								Registration Window (hours)
+						<div class="flex flex-col">
+							<label class="block text-sm font-medium text-gray-300 mb-1 min-h-[40px]">
+								Registration Window<br><span class="text-xs font-normal text-gray-400">(hours before start)</span>
 							</label>
 							<input type="number" id="wizardRegistrationWindow" value="48" min="1" max="336"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
-							<p class="text-xs text-gray-400 mt-1">Hours before start</p>
+							<p class="text-xs text-gray-400 mt-1">When signup opens</p>
 						</div>
-						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-2">
-								Participant Cap
+						<div class="flex flex-col">
+							<label class="block text-sm font-medium text-gray-300 mb-1 min-h-[40px]">
+								Participant Cap<br><span class="text-xs font-normal text-gray-400">(max players)</span>
 							</label>
 							<input type="number" id="wizardSignupCap" placeholder="Unlimited" min="2" max="512"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">
-							<p class="text-xs text-gray-400 mt-1">Max participants</p>
+							<p class="text-xs text-gray-400 mt-1">Leave empty for no limit</p>
 						</div>
-						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-2">
-								Entry Fee ($)
+						<div class="flex flex-col">
+							<label class="block text-sm font-medium text-gray-300 mb-1 min-h-[40px]">
+								Entry Fee<br><span class="text-xs font-normal text-gray-400">(USD)</span>
 							</label>
 							<input type="number" id="wizardEntryFee" placeholder="Free" min="0" max="1000" step="0.01"
 								class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-blue-500">

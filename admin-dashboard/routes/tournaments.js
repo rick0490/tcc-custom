@@ -291,7 +291,20 @@ router.post('/create', async (req, res) => {
             byeStrategy,
             compactBracket,
             seedingSource,
-            seedingConfig
+            seedingConfig,
+            // Two-stage tournament options
+            groupCount,
+            advancePerGroup,
+            knockoutFormat,
+            // Free-for-all options
+            playersPerMatch,
+            totalRounds,
+            pointsSystem,
+            // Leaderboard options
+            rankingType,
+            decayEnabled,
+            decayRate,
+            minEventsToRank
         } = req.body;
 
         if (!name) {
@@ -342,7 +355,26 @@ router.post('/create', async (req, res) => {
             sequential_pairings: !!sequentialPairings,
             show_rounds: !!showRounds,
             auto_assign: !!autoAssign,
-            format_settings_json: Object.keys(formatSettings).length > 0 ? formatSettings : null
+            // Two-stage tournament options
+            group_count: groupCount,
+            advance_per_group: advancePerGroup,
+            knockout_format: knockoutFormat,
+            // Free-for-all options
+            players_per_match: playersPerMatch,
+            total_rounds: totalRounds,
+            points_system_json: pointsSystem ? JSON.stringify(pointsSystem) : null,
+            // Format settings - combine all format-specific options
+            format_settings_json: (() => {
+                const settings = { ...formatSettings };
+                // Add leaderboard options if applicable
+                if (normalizedType === 'leaderboard') {
+                    settings.rankingType = rankingType || 'points';
+                    settings.decayEnabled = !!decayEnabled;
+                    settings.decayRate = decayRate || 10;
+                    settings.minEventsToRank = minEventsToRank || 1;
+                }
+                return Object.keys(settings).length > 0 ? JSON.stringify(settings) : null;
+            })()
         }, userId);
 
         logger.log('create:success', {

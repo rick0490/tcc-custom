@@ -914,6 +914,9 @@ function updateFormatSelection() {
 	const doubleElimOptions = document.getElementById('doubleElimOptions');
 	const roundRobinOptions = document.getElementById('roundRobinOptions');
 	const swissOptions = document.getElementById('swissOptions');
+	const twoStageOptions = document.getElementById('twoStageOptions');
+	const ffaOptions = document.getElementById('ffaOptions');
+	const leaderboardOptions = document.getElementById('leaderboardOptions');
 	const showRoundsOption = document.getElementById('showRoundsOption');
 	const groupStageSection = document.getElementById('wizardGroupStageSection');
 
@@ -921,6 +924,9 @@ function updateFormatSelection() {
 	doubleElimOptions.classList.toggle('hidden', selected !== 'double elimination');
 	roundRobinOptions.classList.toggle('hidden', selected !== 'round robin');
 	swissOptions.classList.toggle('hidden', selected !== 'swiss');
+	if (twoStageOptions) twoStageOptions.classList.toggle('hidden', selected !== 'two_stage');
+	if (ffaOptions) ffaOptions.classList.toggle('hidden', selected !== 'free_for_all');
+	if (leaderboardOptions) leaderboardOptions.classList.toggle('hidden', selected !== 'leaderboard');
 
 	// Show round labels option only for elimination formats
 	const isElimination = selected === 'single elimination' || selected === 'double elimination';
@@ -1077,6 +1083,21 @@ async function createTournament() {
 	const swissGameWin = document.getElementById('wizardSwissGameWin').value;
 	const swissGameTie = document.getElementById('wizardSwissGameTie').value;
 
+	// Two-Stage options
+	const groupCount = document.getElementById('wizardGroupCount')?.value;
+	const advancePerGroup = document.getElementById('wizardAdvancePerGroup')?.value;
+	const knockoutFormat = document.getElementById('wizardKnockoutFormat')?.value;
+
+	// Free-for-All options
+	const playersPerMatch = document.getElementById('wizardPlayersPerMatch')?.value;
+	const totalRounds = document.getElementById('wizardTotalRounds')?.value;
+	const pointsSystem = document.getElementById('wizardPointsSystem')?.value;
+
+	// Leaderboard options
+	const rankingType = document.getElementById('wizardRankingType')?.value;
+	const minEventsToRank = document.getElementById('wizardMinEvents')?.value;
+	const decayEnabled = document.getElementById('wizardDecayEnabled')?.checked;
+
 	// Seeding & Display options
 	const hideSeeds = document.getElementById('wizardHideSeeds').checked;
 	const sequentialPairings = document.getElementById('wizardSequentialPairings').checked;
@@ -1181,6 +1202,21 @@ async function createTournament() {
 			swissBye: parseFloat(swissBye),
 			swissGameWin: parseFloat(swissGameWin),
 			swissGameTie: parseFloat(swissGameTie),
+
+			// Two-Stage options
+			groupCount: groupCount ? parseInt(groupCount) : null,
+			advancePerGroup: advancePerGroup ? parseInt(advancePerGroup) : null,
+			knockoutFormat: knockoutFormat || null,
+
+			// Free-for-All options
+			playersPerMatch: playersPerMatch ? parseInt(playersPerMatch) : null,
+			totalRounds: totalRounds ? parseInt(totalRounds) : null,
+			pointsSystem: pointsSystem || null,
+
+			// Leaderboard options
+			rankingType: rankingType || null,
+			minEventsToRank: minEventsToRank ? parseInt(minEventsToRank) : null,
+			decayEnabled: decayEnabled || false,
 
 			// Seeding & Display
 			hideSeeds,
