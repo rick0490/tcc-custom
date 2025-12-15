@@ -8,6 +8,15 @@
 
 const crypto = require('crypto');
 const secrets = require('../config/secrets');
+const {
+	withRetry,
+	circuitBreakers,
+	ExternalServiceError,
+	RateLimitError
+} = require('./error-handler');
+const { createLogger } = require('./debug-logger');
+
+const logger = createLogger('ai-seeding');
 
 // Dependencies (set by init)
 let io = null;
@@ -298,57 +307,62 @@ IMPORTANT:
 
 /**
  * Call Claude API for seeding suggestions
+ * Uses circuit breaker and retry logic for resilience
  * @param {string} prompt - The formatted prompt
  * @returns {Object|null} Parsed AI response or null on failure
  */
 async function callClaudeForSeeding(prompt) {
 	const client = getAnthropicClient();
 	if (!client) {
-		console.error('[AI Seeding] Anthropic client not available');
+		logger.error('callClaudeForSeeding', new Error('Anthropic client not available'));
 		return null;
 	}
 
 	if (!checkRateLimit()) {
-		console.warn('[AI Seeding] Rate limit exceeded, waiting...');
+		logger.warn('callClaudeForSeeding', 'Rate limit exceeded, waiting...');
 		await new Promise(resolve => setTimeout(resolve, 5000));
 	}
 
 	try {
-		console.log('[AI Seeding] Calling Claude API...');
-		console.log('[AI Seeding] ========== PROMPT START ==========');
-		console.log(prompt);
-		console.log('[AI Seeding] ========== PROMPT END ==========');
+		logger.log('callClaudeForSeeding', 'Calling Claude API...');
 		const startTime = Date.now();
 
-		const response = await client.messages.create({
-			model: 'claude-sonnet-4-20250514',
-			max_tokens: 4096,
-			messages: [
-				{
-					role: 'user',
-					content: prompt
-				}
-			]
+		// Execute through circuit breaker with retry logic
+		const response = await circuitBreakers.anthropic.execute(async () => {
+			return withRetry(async () => {
+				const result = await client.messages.create({
+					model: 'claude-sonnet-4-20250514',
+					max_tokens: 4096,
+					messages: [
+						{
+							role: 'user',
+							content: prompt
+						}
+					]
+				});
+				return result;
+			}, {
+				maxRetries: 2,
+				initialDelayMs: 2000,
+				backoffMultiplier: 2,
+				maxDelayMs: 10000
+			});
 		});
 
 		const duration = Date.now() - startTime;
-		console.log(`[AI Seeding] Claude API responded in ${duration}ms`);
+		logger.log('callClaudeForSeeding', `Claude API responded in ${duration}ms`);
 
 		// Extract text content
 		const textContent = response.content.find(c => c.type === 'text');
 		if (!textContent) {
-			console.error('[AI Seeding] No text content in response');
+			logger.error('callClaudeForSeeding', new Error('No text content in response'));
 			return null;
 		}
-
-		console.log('[AI Seeding] ========== CLAUDE RESPONSE START ==========');
-		console.log(textContent.text);
-		console.log('[AI Seeding] ========== CLAUDE RESPONSE END ==========');
 
 		// Parse JSON from response
 		const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
 		if (!jsonMatch) {
-			console.error('[AI Seeding] No JSON found in response');
+			logger.error('callClaudeForSeeding', new Error('No JSON found in response'));
 			return null;
 		}
 
@@ -356,7 +370,13 @@ async function callClaudeForSeeding(prompt) {
 		return parsed;
 
 	} catch (error) {
-		console.error('[AI Seeding] Claude API error:', error.message);
+		// Log the error with structured logging
+		logger.error('callClaudeForSeeding', error, {
+			errorType: error.code || error.name,
+			service: 'Anthropic'
+		});
+
+		// Return null to trigger fallback seeding
 		return null;
 	}
 }

@@ -107,6 +107,9 @@ const DEV_MODE_POLL_INTERVAL_MS = 5000;    // 5 seconds (dev mode)
 // WebSocket delivery settings
 const WS_HTTP_FALLBACK_DELAY_MS = 30000;   // 30 seconds before HTTP fallback
 
+// Re-export ERROR_CODES from error-handler for convenience
+const { ERROR_CODES } = require('../services/error-handler');
+
 module.exports = {
 	PDF_COLORS,
 	ACTIVITY_TYPES,
@@ -117,5 +120,6 @@ module.exports = {
 	STALE_TOURNAMENT_THRESHOLD_MS,
 	MATCH_POLL_INTERVAL_MS,
 	DEV_MODE_POLL_INTERVAL_MS,
-	WS_HTTP_FALLBACK_DELAY_MS
+	WS_HTTP_FALLBACK_DELAY_MS,
+	ERROR_CODES
 };
