@@ -25,6 +25,7 @@ const exportsRoutes = require('./exports');
 const apiRoutes = require('./api');
 const bracketEditorRoutes = require('./bracket-editor');
 const publicTournamentRoutes = require('./public-tournament');
+const discordBotRoutes = require('./discord-bot');
 
 module.exports = {
 	auth: authRoutes,
@@ -46,5 +47,6 @@ module.exports = {
 	exports: exportsRoutes,
 	api: apiRoutes,
 	bracketEditor: bracketEditorRoutes,
-	publicTournament: publicTournamentRoutes
+	publicTournament: publicTournamentRoutes,
+	discordBot: discordBotRoutes
 };

@@ -439,6 +439,33 @@ function initDatabase() {
         console.error('[System DB] Error adding active_tournament_id column:', err.message);
     }
 
+    // Migration: Add bot columns to discord_settings table for full bot integration
+    try {
+        const discordColumns = db.prepare("PRAGMA table_info(discord_settings)").all();
+        const hasBotEnabled = discordColumns.some(col => col.name === 'bot_enabled');
+        if (!hasBotEnabled) {
+            db.exec('ALTER TABLE discord_settings ADD COLUMN bot_enabled INTEGER DEFAULT 0');
+            console.log('[System DB] Added bot_enabled column to discord_settings table');
+        }
+        const hasBotStatus = discordColumns.some(col => col.name === 'bot_status');
+        if (!hasBotStatus) {
+            db.exec("ALTER TABLE discord_settings ADD COLUMN bot_status TEXT DEFAULT 'disconnected'");
+            console.log('[System DB] Added bot_status column to discord_settings table');
+        }
+        const hasBotLastConnected = discordColumns.some(col => col.name === 'bot_last_connected');
+        if (!hasBotLastConnected) {
+            db.exec('ALTER TABLE discord_settings ADD COLUMN bot_last_connected DATETIME');
+            console.log('[System DB] Added bot_last_connected column to discord_settings table');
+        }
+        const hasCommandsEnabled = discordColumns.some(col => col.name === 'commands_enabled');
+        if (!hasCommandsEnabled) {
+            db.exec("ALTER TABLE discord_settings ADD COLUMN commands_enabled TEXT DEFAULT '[\"bracket\",\"matches\",\"standings\"]'");
+            console.log('[System DB] Added commands_enabled column to discord_settings table');
+        }
+    } catch (err) {
+        console.error('[System DB] Error adding bot columns to discord_settings:', err.message);
+    }
+
     console.log('[System DB] Database initialized at', DB_PATH);
     return db;
 }
@@ -1522,7 +1549,8 @@ function saveDiscordSettings(userId, data) {
             'notify_match_complete', 'notify_participant_signup',
             'notify_participant_checkin', 'notify_dq_timer',
             'mention_role_id', 'embed_color', 'include_bracket_link',
-            'is_enabled', 'last_test_at', 'last_error'
+            'is_enabled', 'last_test_at', 'last_error',
+            'bot_enabled', 'bot_status', 'bot_last_connected', 'commands_enabled'
         ];
 
         for (const field of allowedFields) {
@@ -1554,7 +1582,8 @@ function saveDiscordSettings(userId, data) {
             'notify_match_complete', 'notify_participant_signup',
             'notify_participant_checkin', 'notify_dq_timer',
             'mention_role_id', 'embed_color', 'include_bracket_link',
-            'is_enabled', 'last_test_at', 'last_error'
+            'is_enabled', 'last_test_at', 'last_error',
+            'bot_enabled', 'bot_status', 'bot_last_connected', 'commands_enabled'
         ];
 
         for (const field of allowedFields) {
@@ -1599,6 +1628,60 @@ function getEnabledDiscordUsers() {
         JOIN users u ON ds.user_id = u.id
         WHERE ds.is_enabled = 1
     `).all();
+}
+
+/**
+ * Get all users with Discord bot enabled (for startup reconnection)
+ * @returns {Array} Array of Discord settings with bot enabled
+ */
+function getBotEnabledUsers() {
+    return getDb().prepare(`
+        SELECT ds.*, u.username
+        FROM discord_settings ds
+        JOIN users u ON ds.user_id = u.id
+        WHERE ds.bot_enabled = 1 AND ds.bot_token_encrypted IS NOT NULL
+    `).all();
+}
+
+/**
+ * Update bot status for a user
+ * @param {number} userId - User ID
+ * @param {string} status - Bot status ('connecting', 'connected', 'disconnected', 'error')
+ * @param {string|null} error - Error message if status is 'error'
+ */
+function updateBotStatus(userId, status, error = null) {
+    const now = new Date().toISOString();
+    const updates = ['bot_status = ?', 'updated_at = ?'];
+    const params = [status, now];
+
+    if (status === 'connected') {
+        updates.push('bot_last_connected = ?');
+        params.push(now);
+    }
+
+    if (error) {
+        updates.push('last_error = ?');
+        params.push(error);
+    }
+
+    params.push(userId);
+
+    getDb().prepare(`
+        UPDATE discord_settings SET ${updates.join(', ')} WHERE user_id = ?
+    `).run(...params);
+}
+
+/**
+ * Get bot status for a user
+ * @param {number} userId - User ID
+ * @returns {Object|null} Bot status info
+ */
+function getBotStatus(userId) {
+    return getDb().prepare(`
+        SELECT bot_enabled, bot_status, bot_last_connected, commands_enabled, last_error
+        FROM discord_settings
+        WHERE user_id = ?
+    `).get(userId);
 }
 
 // =============================================================================
@@ -2338,6 +2421,9 @@ module.exports = {
     saveDiscordSettings,
     deleteDiscordSettings,
     getEnabledDiscordUsers,
+    getBotEnabledUsers,
+    updateBotStatus,
+    getBotStatus,
 
     // Phase 2: Metrics
     recordMetric,

@@ -33,6 +33,7 @@ const sponsorService = require('./services/sponsor');
 const bracketEngine = require('./services/bracket-engine');
 const bracketRenderer = require('./services/bracket-renderer');
 const discordNotify = require('./services/discord-notify');
+const discordBotService = require('./services/discord-bot');
 const activeTournamentService = require('./services/active-tournament');
 const metricsAggregator = require('./services/metrics-aggregator');
 const backupScheduler = require('./services/backup-scheduler');
@@ -677,6 +678,10 @@ app.use('/api/public', localRoutes.publicTournament);
 
 // Platform/Admin routes (superadmin only - god mode)
 app.use('/api/admin', localRoutes.platform);
+
+// Discord bot routes
+localRoutes.discordBot.init({ discordBot: discordBotService, io });
+app.use('/api/discord/bot', localRoutes.discordBot);
 
 // Station settings aliases for frontend compatibility
 // Frontend calls /api/tournament/:id/station-settings but local routes use /api/stations/settings/:id
@@ -7843,6 +7848,22 @@ discordNotify.init({
 	}
 });
 
+// Initialize Discord bot service
+discordBotService.init({
+	io,
+	tournamentDb,
+	matchDb,
+	participantDb
+});
+
+// Start Discord bot service (auto-reconnects enabled bots)
+discordBotService.start().catch(err => {
+	console.error('Failed to start Discord bot service:', err);
+});
+
+// Set bot service reference on discord-notify for bot notifications
+discordNotify.setDiscordBotService(discordBotService);
+
 // Initialize settings routes with Discord notification service and Socket.IO
 localRoutes.settings.init({
 	rateLimiter: null,  // Not used in tcc-custom
@@ -9264,6 +9285,42 @@ if (require.main === module) {
 			console.error('[Backup Scheduler] Failed to initialize:', err.message);
 		}
 	});
+
+	// Graceful shutdown handler
+	const gracefulShutdown = async (signal) => {
+		console.log(`\n[Server] Received ${signal}, starting graceful shutdown...`);
+
+		// Stop Discord bot service
+		try {
+			await discordBotService.stop();
+			console.log('[Discord Bot] All bots disconnected');
+		} catch (err) {
+			console.error('[Discord Bot] Error stopping bots:', err.message);
+		}
+
+		// Close database connections
+		try {
+			db.closeAll();
+			console.log('[Database] All connections closed');
+		} catch (err) {
+			console.error('[Database] Error closing connections:', err.message);
+		}
+
+		// Close HTTP server
+		httpServer.close(() => {
+			console.log('[Server] HTTP server closed');
+			process.exit(0);
+		});
+
+		// Force exit after 10 seconds
+		setTimeout(() => {
+			console.error('[Server] Forced shutdown after timeout');
+			process.exit(1);
+		}, 10000);
+	};
+
+	process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+	process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 // Export for testing

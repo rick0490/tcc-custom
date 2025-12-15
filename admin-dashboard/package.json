@@ -27,6 +27,7 @@
 		"axios": "^1.7.2",
 		"bcrypt": "^6.0.0",
 		"better-sqlite3": "^12.5.0",
+		"discord.js": "^14.25.1",
 		"dotenv": "^16.4.5",
 		"express": "^5.1.0",
 		"express-basic-auth": "^1.2.1",

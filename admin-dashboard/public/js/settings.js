@@ -1007,27 +1007,83 @@ function renderDiscordTab() {
 					<!-- Bot Section -->
 					<div id="botSection" class="bg-gray-750 rounded-lg p-4 hidden">
 						<div class="space-y-4">
+							<!-- Bot Token Input -->
 							<div>
 								<label for="botToken" class="block text-sm font-medium text-gray-300 mb-2">
 									Bot Token
 								</label>
-								<input type="password" id="botToken" placeholder="Enter bot token..."
-									class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-								<p class="text-xs text-gray-500 mt-1">Your bot must have MESSAGE_SEND permission</p>
+								<div class="flex gap-2">
+									<input type="password" id="botToken" placeholder="Enter bot token..."
+										class="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+									<button type="button" onclick="testBotToken()" id="testBotTokenBtn"
+										class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-md transition text-sm">
+										Test Token
+									</button>
+								</div>
+								<p class="text-xs text-gray-500 mt-1">
+									<a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">
+										Create a bot at Discord Developer Portal
+									</a>
+								</p>
+								<div id="botTokenValidationResult" class="mt-2 hidden"></div>
 							</div>
+
+							<!-- Bot Connection Status -->
+							<div id="botConnectionStatus" class="bg-gray-700 rounded-lg p-3">
+								<div class="flex items-center justify-between mb-2">
+									<span class="text-sm font-medium text-gray-300">Bot Status</span>
+									<span id="botStatusBadge" class="px-2 py-1 text-xs rounded bg-gray-600 text-gray-300">Not Connected</span>
+								</div>
+								<div id="botGuildList" class="text-sm text-gray-400 hidden">
+									<!-- Populated by loadBotStatus -->
+								</div>
+								<div class="flex gap-2 mt-3">
+									<button type="button" onclick="connectBot()" id="connectBotBtn"
+										class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition text-sm">
+										Connect Bot
+									</button>
+									<button type="button" onclick="disconnectBot()" id="disconnectBotBtn"
+										class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition text-sm hidden">
+										Disconnect Bot
+									</button>
+								</div>
+							</div>
+
+							<!-- Channel ID for Notifications -->
 							<div>
 								<label for="channelId" class="block text-sm font-medium text-gray-300 mb-2">
-									Channel ID
+									Notification Channel ID
 								</label>
 								<input type="text" id="channelId" placeholder="123456789012345678"
 									class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+								<p class="text-xs text-gray-500 mt-1">Channel where tournament notifications will be sent</p>
 							</div>
+
+							<!-- Bot Commands -->
 							<div>
-								<label for="guildId" class="block text-sm font-medium text-gray-300 mb-2">
-									Guild (Server) ID <span class="text-gray-500">(optional)</span>
-								</label>
-								<input type="text" id="guildId" placeholder="123456789012345678"
-									class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+								<label class="block text-sm font-medium text-gray-300 mb-2">Slash Commands</label>
+								<div class="space-y-2 text-sm">
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input type="checkbox" id="cmdBracket" checked
+											class="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500">
+										<span class="text-gray-300">/bracket - View tournament bracket</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input type="checkbox" id="cmdMatches" checked
+											class="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500">
+										<span class="text-gray-300">/matches - List open matches</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input type="checkbox" id="cmdStandings" checked
+											class="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500">
+										<span class="text-gray-300">/standings - View standings</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input type="checkbox" id="cmdSignup" checked
+											class="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500">
+										<span class="text-gray-300">/signup - Get signup link</span>
+									</label>
+								</div>
 							</div>
 						</div>
 					</div>
@@ -1208,14 +1264,25 @@ function updateDiscordStatusSection(settings) {
 
 	let html = '<div class="space-y-1">';
 
-	if (settings.has_webhook) {
-		html += '<p><span class="text-green-400">Webhook configured</span></p>';
-	}
-	if (settings.has_bot_token) {
-		html += '<p><span class="text-green-400">Bot token configured</span></p>';
-	}
-	if (!settings.has_webhook && !settings.has_bot_token) {
-		html += '<p><span class="text-gray-500">No credentials configured</span></p>';
+	if (settings.integration_type === 'webhook') {
+		if (settings.has_webhook) {
+			html += '<p><span class="text-green-400">Webhook configured</span></p>';
+		} else {
+			html += '<p><span class="text-gray-500">No webhook configured</span></p>';
+		}
+	} else if (settings.integration_type === 'bot') {
+		if (settings.has_bot_token) {
+			html += '<p><span class="text-green-400">Bot token configured</span></p>';
+			if (settings.bot_enabled) {
+				html += '<p><span class="text-blue-400">Bot auto-connect enabled</span></p>';
+			}
+		} else {
+			html += '<p><span class="text-gray-500">No bot token configured</span></p>';
+		}
+	} else {
+		if (!settings.has_webhook && !settings.has_bot_token) {
+			html += '<p><span class="text-gray-500">No credentials configured</span></p>';
+		}
 	}
 
 	if (settings.last_test_at) {
@@ -1253,6 +1320,8 @@ function toggleIntegrationType() {
 	} else {
 		webhookSection.classList.add('hidden');
 		botSection.classList.remove('hidden');
+		// Load bot status when switching to bot mode
+		loadBotStatus();
 	}
 }
 
@@ -1336,8 +1405,7 @@ async function saveDiscordSettings() {
 			mention_role_id: document.getElementById('mentionRoleId').value.trim() || null,
 			embed_color: document.getElementById('embedColor').value,
 			include_bracket_link: document.getElementById('includeBracketLink').checked,
-			channel_id: document.getElementById('channelId').value.trim() || null,
-			guild_id: document.getElementById('guildId').value.trim() || null
+			channel_id: document.getElementById('channelId').value.trim() || null
 		};
 
 		// Only send credentials if they're new (not empty)
@@ -1346,6 +1414,16 @@ async function saveDiscordSettings() {
 		}
 		if (botToken) {
 			settings.bot_token = botToken;
+		}
+
+		// Collect enabled commands for bot mode
+		if (!isWebhook) {
+			const enabledCommands = [];
+			if (document.getElementById('cmdBracket')?.checked) enabledCommands.push('bracket');
+			if (document.getElementById('cmdMatches')?.checked) enabledCommands.push('matches');
+			if (document.getElementById('cmdStandings')?.checked) enabledCommands.push('standings');
+			if (document.getElementById('cmdSignup')?.checked) enabledCommands.push('signup');
+			settings.commands_enabled = enabledCommands;
 		}
 
 		const response = await csrfFetch('/api/settings/discord', {
@@ -1434,6 +1512,195 @@ async function removeDiscordIntegration() {
 	} finally {
 		btn.disabled = false;
 		btn.textContent = 'Remove Integration';
+	}
+}
+
+// ============================================
+// DISCORD BOT FUNCTIONS
+// ============================================
+
+// Test bot token validity
+async function testBotToken() {
+	const token = document.getElementById('botToken').value.trim();
+	const btn = document.getElementById('testBotTokenBtn');
+	const resultDiv = document.getElementById('botTokenValidationResult');
+
+	if (!token) {
+		showSettingsToast('Please enter a bot token', 'error');
+		return;
+	}
+
+	btn.disabled = true;
+	btn.textContent = 'Testing...';
+	resultDiv.classList.add('hidden');
+
+	try {
+		const response = await csrfFetch('/api/discord/bot/test', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ bot_token: token })
+		});
+
+		const data = await response.json();
+
+		resultDiv.classList.remove('hidden');
+		if (data.success && data.valid) {
+			resultDiv.innerHTML = `
+				<div class="flex items-center gap-2 text-green-400">
+					<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+					</svg>
+					<span>Valid token for bot: ${escapeHtml(data.botInfo?.username || 'Unknown')}</span>
+				</div>
+			`;
+		} else {
+			resultDiv.innerHTML = `
+				<div class="flex items-center gap-2 text-red-400">
+					<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+						<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+					</svg>
+					<span>${escapeHtml(data.error || 'Invalid bot token')}</span>
+				</div>
+			`;
+		}
+	} catch (error) {
+		resultDiv.classList.remove('hidden');
+		resultDiv.innerHTML = `
+			<div class="flex items-center gap-2 text-red-400">
+				<span>Error testing bot token</span>
+			</div>
+		`;
+	} finally {
+		btn.disabled = false;
+		btn.textContent = 'Test Token';
+	}
+}
+
+// Connect the Discord bot
+async function connectBot() {
+	const btn = document.getElementById('connectBotBtn');
+	btn.disabled = true;
+	btn.textContent = 'Connecting...';
+
+	try {
+		const response = await csrfFetch('/api/discord/bot/connect', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' }
+		});
+
+		const data = await response.json();
+
+		if (data.success) {
+			showSettingsToast(data.message || 'Bot connecting...', 'success');
+			// Wait a moment for the bot to connect, then reload status
+			setTimeout(() => loadBotStatus(), 2000);
+		} else {
+			showSettingsToast(data.error || 'Failed to connect bot', 'error');
+		}
+	} catch (error) {
+		FrontendDebug.error('Settings', 'Failed to connect bot', error);
+		showSettingsToast('Error connecting bot', 'error');
+	} finally {
+		btn.disabled = false;
+		btn.textContent = 'Connect Bot';
+	}
+}
+
+// Disconnect the Discord bot
+async function disconnectBot() {
+	const btn = document.getElementById('disconnectBotBtn');
+	btn.disabled = true;
+	btn.textContent = 'Disconnecting...';
+
+	try {
+		const response = await csrfFetch('/api/discord/bot/disconnect', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' }
+		});
+
+		const data = await response.json();
+
+		if (data.success) {
+			showSettingsToast('Bot disconnected', 'success');
+			loadBotStatus();
+		} else {
+			showSettingsToast(data.error || 'Failed to disconnect bot', 'error');
+		}
+	} catch (error) {
+		FrontendDebug.error('Settings', 'Failed to disconnect bot', error);
+		showSettingsToast('Error disconnecting bot', 'error');
+	} finally {
+		btn.disabled = false;
+		btn.textContent = 'Disconnect Bot';
+	}
+}
+
+// Load bot connection status
+async function loadBotStatus() {
+	try {
+		const response = await fetch('/api/discord/bot/status');
+		const data = await response.json();
+
+		if (data.success) {
+			updateBotStatusUI(data);
+		}
+	} catch (error) {
+		FrontendDebug.error('Settings', 'Failed to load bot status', error);
+	}
+}
+
+// Update bot status UI
+function updateBotStatusUI(data) {
+	const statusBadge = document.getElementById('botStatusBadge');
+	const guildList = document.getElementById('botGuildList');
+	const connectBtn = document.getElementById('connectBotBtn');
+	const disconnectBtn = document.getElementById('disconnectBotBtn');
+
+	if (!statusBadge) return;
+
+	if (data.connected) {
+		statusBadge.className = 'px-2 py-1 text-xs rounded bg-green-600 text-white';
+		statusBadge.textContent = 'Connected';
+
+		// Show guilds
+		if (data.guilds && data.guilds.length > 0) {
+			guildList.classList.remove('hidden');
+			guildList.innerHTML = `
+				<p class="text-xs text-gray-500 mb-1">Connected to ${data.guildCount} server(s):</p>
+				<ul class="list-disc list-inside text-xs">
+					${data.guilds.map(g => `<li>${escapeHtml(g.name)}</li>`).join('')}
+				</ul>
+			`;
+		} else {
+			guildList.classList.add('hidden');
+		}
+
+		// Toggle buttons
+		connectBtn.classList.add('hidden');
+		disconnectBtn.classList.remove('hidden');
+	} else {
+		statusBadge.className = 'px-2 py-1 text-xs rounded bg-gray-600 text-gray-300';
+		statusBadge.textContent = data.status === 'connecting' ? 'Connecting...' : 'Not Connected';
+
+		guildList.classList.add('hidden');
+
+		// Toggle buttons
+		connectBtn.classList.remove('hidden');
+		disconnectBtn.classList.add('hidden');
+	}
+
+	// Update command checkboxes if available
+	if (data.commandsEnabled) {
+		const commands = data.commandsEnabled;
+		const cmdBracket = document.getElementById('cmdBracket');
+		const cmdMatches = document.getElementById('cmdMatches');
+		const cmdStandings = document.getElementById('cmdStandings');
+		const cmdSignup = document.getElementById('cmdSignup');
+
+		if (cmdBracket) cmdBracket.checked = commands.includes('bracket');
+		if (cmdMatches) cmdMatches.checked = commands.includes('matches');
+		if (cmdStandings) cmdStandings.checked = commands.includes('standings');
+		if (cmdSignup) cmdSignup.checked = commands.includes('signup');
 	}
 }
 

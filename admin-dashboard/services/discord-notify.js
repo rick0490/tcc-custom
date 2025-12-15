@@ -14,6 +14,7 @@ const logger = createLogger('discord-notify');
 // Dependencies (set by init)
 let io = null;
 let activityLogger = null;
+let discordBotService = null;
 
 // Rate limiting per user (Map of userId -> { requests, lastReset })
 const rateLimits = new Map();
@@ -47,6 +48,16 @@ function init(deps) {
     }
 
     logger.log('init', 'Discord notification service initialized');
+}
+
+/**
+ * Set the Discord bot service reference
+ * Called after discord-bot service is initialized
+ * @param {Object} botService - Discord bot service
+ */
+function setDiscordBotService(botService) {
+    discordBotService = botService;
+    logger.log('setDiscordBotService', 'Discord bot service reference set');
 }
 
 // =============================================================================
@@ -436,9 +447,20 @@ async function sendNotification(userId, embed, eventType) {
                 return true;
             }
         } else if (settings.integration_type === 'bot' && settings.bot_token_encrypted) {
-            // Bot mode - would require discord.js for full implementation
-            logger.warn('sendNotification', 'Bot mode not yet fully implemented');
-            return false;
+            // Bot mode - send via Discord.js bot client
+            if (!discordBotService) {
+                logger.warn('sendNotification', 'Discord bot service not initialized');
+                return false;
+            }
+
+            // Check if channel_id is configured
+            if (!settings.channel_id) {
+                logger.warn('sendNotification', `No channel configured for user ${userId}`);
+                return false;
+            }
+
+            const sent = await sendBotNotification(userId, settings.channel_id, embed, settings.mention_role_id);
+            return sent;
         }
 
         return false;
@@ -447,6 +469,47 @@ async function sendNotification(userId, embed, eventType) {
 
         // Save error to database
         systemDb.saveDiscordSettings(userId, { last_error: error.message });
+        return false;
+    }
+}
+
+/**
+ * Send notification via Discord bot
+ * @param {number} userId - User ID
+ * @param {string} channelId - Discord channel ID
+ * @param {Object} embed - Discord embed object
+ * @param {string|null} mentionRoleId - Role ID to mention
+ * @returns {Promise<boolean>} True if sent successfully
+ */
+async function sendBotNotification(userId, channelId, embed, mentionRoleId = null) {
+    if (!discordBotService) {
+        logger.warn('sendBotNotification', 'Discord bot service not available');
+        return false;
+    }
+
+    const botInfo = discordBotService.getBot(userId);
+    if (!botInfo || !botInfo.client || botInfo.status !== 'connected') {
+        logger.warn('sendBotNotification', `Bot not connected for user ${userId}`);
+        return false;
+    }
+
+    try {
+        const channel = await botInfo.client.channels.fetch(channelId);
+        if (!channel || !channel.isTextBased()) {
+            logger.warn('sendBotNotification', `Channel ${channelId} not found or not text-based`);
+            return false;
+        }
+
+        const messageOptions = { embeds: [embed] };
+        if (mentionRoleId) {
+            messageOptions.content = `<@&${mentionRoleId}>`;
+        }
+
+        await channel.send(messageOptions);
+        logger.log('sendBotNotification', `Notification sent to channel ${channelId} for user ${userId}`);
+        return true;
+    } catch (error) {
+        logger.error('sendBotNotification', error, { userId, channelId });
         return false;
     }
 }
@@ -598,7 +661,30 @@ async function sendTestMessage(userId) {
             last_error: null
         });
     } else if (settings.integration_type === 'bot') {
-        throw new Error('Bot mode test not yet implemented');
+        if (!settings.bot_token_encrypted) {
+            throw new Error('Bot token not configured');
+        }
+
+        if (!settings.channel_id) {
+            throw new Error('No notification channel configured');
+        }
+
+        if (!discordBotService) {
+            throw new Error('Discord bot service not available');
+        }
+
+        const embed = buildTestEmbed(settings);
+        const sent = await sendBotNotification(userId, settings.channel_id, embed, null);
+
+        if (!sent) {
+            throw new Error('Failed to send test message via bot. Check bot is connected and channel is accessible.');
+        }
+
+        // Update last test timestamp
+        systemDb.saveDiscordSettings(userId, {
+            last_test_at: new Date().toISOString(),
+            last_error: null
+        });
     } else {
         throw new Error('Invalid integration type');
     }
@@ -630,6 +716,7 @@ function isAvailable(userId) {
 
 module.exports = {
     init,
+    setDiscordBotService,
 
     // Encryption
     encryptCredential,
@@ -645,6 +732,7 @@ module.exports = {
 
     // Notification functions
     sendNotification,
+    sendBotNotification,
     sendTestMessage,
 
     // Event-specific
