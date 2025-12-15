@@ -523,6 +523,8 @@ function updateActiveBanner() {
 	const stateEl = document.getElementById('activeTournamentState');
 	const modeEl = document.getElementById('activeTournamentMode');
 	const revertBtn = document.getElementById('revertToAutoBtn');
+	const startBtn = document.getElementById('startTournamentBannerBtn');
+	const completeBtn = document.getElementById('completeTournamentBannerBtn');
 
 	if (activeTournament) {
 		if (nameEl) nameEl.textContent = activeTournament.name;
@@ -531,6 +533,21 @@ function updateActiveBanner() {
 		if (revertBtn) {
 			revertBtn.classList.toggle('hidden', activeMode !== 'manual');
 		}
+
+		// Show appropriate button based on tournament state
+		const state = activeTournament.state;
+		if (state === 'pending') {
+			if (startBtn) startBtn.classList.remove('hidden');
+			if (completeBtn) completeBtn.classList.add('hidden');
+		} else if (['underway', 'awaiting_review'].includes(state)) {
+			if (startBtn) startBtn.classList.add('hidden');
+			if (completeBtn) completeBtn.classList.remove('hidden');
+		} else {
+			// complete or other states - hide both
+			if (startBtn) startBtn.classList.add('hidden');
+			if (completeBtn) completeBtn.classList.add('hidden');
+		}
+
 		if (banner) banner.classList.remove('hidden');
 	} else {
 		if (banner) banner.classList.add('hidden');
