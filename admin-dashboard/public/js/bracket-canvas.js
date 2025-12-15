@@ -184,7 +184,8 @@ const BracketCanvas = (function() {
 			currentY: 0,
 			hoverSlot: null    // Slot being hovered over
 		},
-		onSwapCallback: null   // Callback when players are swapped
+		onSwapCallback: null,  // Callback when players are swapped
+		readOnly: false        // When true, disable drag-drop editing
 	};
 
 	/**
@@ -253,6 +254,13 @@ const BracketCanvas = (function() {
 	 */
 	function setSwapCallback(callback) {
 		state.onSwapCallback = callback;
+	}
+
+	/**
+	 * Set read-only mode (disables drag-drop editing)
+	 */
+	function setReadOnly(readOnly) {
+		state.readOnly = readOnly;
 	}
 
 	/**
@@ -799,8 +807,8 @@ const BracketCanvas = (function() {
 		const canvasPos = screenToCanvas(e.clientX, e.clientY);
 		const slot = findSlotAtPosition(canvasPos.x, canvasPos.y);
 
-		if (slot) {
-			// Start drag-drop
+		if (slot && !state.readOnly) {
+			// Start drag-drop (only if not read-only)
 			state.dragState.isDragging = true;
 			state.dragState.sourceSlot = slot;
 			state.dragState.currentX = e.clientX;
@@ -917,8 +925,8 @@ const BracketCanvas = (function() {
 			const canvasPos = screenToCanvas(touchStartX, touchStartY);
 			const slot = findSlotAtPosition(canvasPos.x, canvasPos.y);
 
-			if (slot) {
-				// Start drag-drop on touch
+			if (slot && !state.readOnly) {
+				// Start drag-drop on touch (only if not read-only)
 				state.dragState.isDragging = true;
 				state.dragState.sourceSlot = slot;
 				state.dragState.currentX = touchStartX;
@@ -1021,6 +1029,7 @@ const BracketCanvas = (function() {
 		setTheme,
 		getTheme,
 		getThemes,
-		setSwapCallback
+		setSwapCallback,
+		setReadOnly
 	};
 })();

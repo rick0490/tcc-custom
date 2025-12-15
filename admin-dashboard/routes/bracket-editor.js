@@ -16,6 +16,7 @@ const logger = createLogger('routes:bracket-editor');
 // References set by init
 let tournamentDb = null;
 let participantDb = null;
+let matchDb = null;
 let bracketEngine = null;
 let bracketRenderer = null;
 let io = null;
@@ -29,9 +30,10 @@ const WS_EVENTS = {
  * Initialize the bracket-editor routes with dependencies
  * @param {Object} options - Configuration options
  */
-function init({ tournamentDb: tDb, participantDb: pDb, bracketEngine: engine, bracketRenderer: renderer, io: socketIo }) {
+function init({ tournamentDb: tDb, participantDb: pDb, matchDb: mDb, bracketEngine: engine, bracketRenderer: renderer, io: socketIo }) {
 	tournamentDb = tDb;
 	participantDb = pDb;
+	matchDb = mDb;
 	bracketEngine = engine;
 	bracketRenderer = renderer;
 	io = socketIo;
@@ -221,6 +223,61 @@ router.get('/status/:tournamentId', requireAuthAPI, async (req, res) => {
 	} catch (error) {
 		logger.error('Error getting bracket editor status', error);
 		res.status(500).json({ error: 'Failed to get status' });
+	}
+});
+
+/**
+ * GET /api/bracket-editor/live/:tournamentId
+ * Get live bracket visualization from actual match data
+ * Works for both pending and underway tournaments
+ */
+router.get('/live/:tournamentId', requireAuthAPI, async (req, res) => {
+	try {
+		const { tournamentId } = req.params;
+
+		logger.log('Fetching live bracket', { tournamentId });
+
+		// Get tournament
+		const tournament = getTournament(tournamentId);
+		if (!tournament) {
+			return res.status(404).json({ error: 'Tournament not found' });
+		}
+
+		// Get participants
+		const participants = participantDb.getByTournament(tournament.id);
+
+		// Get actual matches from database
+		const matches = matchDb.getByTournament(tournament.id);
+
+		if (!matches || matches.length === 0) {
+			// No matches yet - return empty visualization
+			return res.json({
+				type: tournament.tournament_type,
+				rounds: [],
+				dimensions: { width: 0, height: 0 },
+				empty: true
+			});
+		}
+
+		// Generate visualization from actual match data
+		const visualization = bracketRenderer.generateVisualization(
+			tournament.tournament_type,
+			matches,
+			participants,
+			{ tournamentName: tournament.name }
+		);
+
+		logger.log('Live bracket generated', {
+			tournamentId,
+			type: visualization.type,
+			matchCount: matches.length
+		});
+
+		res.json(visualization);
+
+	} catch (error) {
+		logger.error('Error fetching live bracket', error);
+		res.status(500).json({ error: 'Failed to fetch live bracket', details: error.message });
 	}
 });
 

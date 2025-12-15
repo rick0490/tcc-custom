@@ -653,7 +653,7 @@ localRoutes.stations.init({ io });
 localRoutes.flyers.init({ axios, requireAuthAPI, logActivity, io });
 localRoutes.sponsors.init({ axios, io, requireAuthAPI, sponsorService, logActivity });
 localRoutes.games.setSocketIO(io);
-localRoutes.bracketEditor.init({ tournamentDb, participantDb, bracketEngine, bracketRenderer, io });
+localRoutes.bracketEditor.init({ tournamentDb, participantDb, matchDb, bracketEngine, bracketRenderer, io });
 localRoutes.displays.init({ activityLogger: { logActivity }, matchPolling: null, pushNotifications: null, io });
 
 // Mount local database routes (replaces Challonge API)

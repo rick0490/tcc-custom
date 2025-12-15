@@ -13,7 +13,8 @@ const BracketEditor = (function() {
 		originalSeeds: new Map(),  // participant.id -> original seed
 		currentSeeds: new Map(),   // participant.id -> current seed
 		isLoading: false,
-		isSaving: false  // Prevent concurrent saves
+		isSaving: false,  // Prevent concurrent saves
+		isReadOnly: false // True for underway tournaments (view-only mode)
 	};
 
 	// DOM Elements
@@ -107,21 +108,24 @@ const BracketEditor = (function() {
 	}
 
 	/**
-	 * Load pending tournaments from API
+	 * Load tournaments from API (pending and underway)
 	 */
 	async function loadTournaments() {
 		try {
 			FrontendDebug.api('BracketEditor', 'Loading tournaments');
-			const response = await csrfFetch('/api/tournaments?state=pending');
+			const response = await csrfFetch('/api/tournaments');
 			if (!response.ok) throw new Error('Failed to load tournaments');
 
 			const data = await response.json();
 			// API returns { tournaments: { pending: [...], inProgress: [...], completed: [...] } }
-			state.tournaments = data.tournaments?.pending || [];
+			// Combine pending and inProgress tournaments for bracket editor
+			const pending = (data.tournaments?.pending || []).map(t => ({ ...t, _state: 'pending' }));
+			const inProgress = (data.tournaments?.inProgress || []).map(t => ({ ...t, _state: 'underway' }));
+			state.tournaments = [...pending, ...inProgress];
 
 			renderTournamentOptions();
 
-			// Auto-select active tournament if it's pending
+			// Auto-select active tournament
 			await selectActiveTournament();
 
 			FrontendDebug.log('BracketEditor', 'Tournaments loaded', { count: state.tournaments.length });
@@ -132,7 +136,7 @@ const BracketEditor = (function() {
 	}
 
 	/**
-	 * Auto-select the active tournament if it's in the pending state
+	 * Auto-select the active tournament
 	 */
 	async function selectActiveTournament() {
 		try {
@@ -140,8 +144,8 @@ const BracketEditor = (function() {
 			if (!response.ok) return;
 
 			const data = await response.json();
-			if (data.success && data.tournament && data.tournament.state === 'pending') {
-				// Check if active tournament is in our dropdown (pending tournaments only)
+			if (data.success && data.tournament) {
+				// Check if active tournament is in our dropdown (pending or underway)
 				const tournamentId = data.tournament.id;
 				const option = Array.from(elements.tournamentSelect.options).find(opt =>
 					opt.value === String(tournamentId)
@@ -151,6 +155,7 @@ const BracketEditor = (function() {
 					elements.tournamentSelect.value = option.value;
 					FrontendDebug.log('BracketEditor', 'Auto-selected active tournament', {
 						tournament: data.tournament.name,
+						state: data.tournament.state,
 						mode: data.mode
 					});
 					// Trigger load
@@ -173,7 +178,8 @@ const BracketEditor = (function() {
 			// API uses 'participants' not 'participant_count'
 			const participantCount = t.participants || t.participant_count || 0;
 			const format = formatTournamentType(t.tournamentType || t.tournament_type);
-			options.push(`<option value="${t.id}">${escapeHtml(t.name)} (${participantCount} players, ${format})</option>`);
+			const stateLabel = t._state === 'underway' ? '[LIVE] ' : '';
+			options.push(`<option value="${t.id}">${stateLabel}${escapeHtml(t.name)} (${participantCount} players, ${format})</option>`);
 		});
 
 		elements.tournamentSelect.innerHTML = options.join('');
@@ -216,12 +222,9 @@ const BracketEditor = (function() {
 			// Extract tournament from response
 			state.selectedTournament = tournamentData.tournament;
 
-			// Verify tournament is pending
-			if (state.selectedTournament.state !== 'pending') {
-				showAlert('Only pending tournaments can be edited', 'warning');
-				clearEditor();
-				return;
-			}
+			// Set read-only mode for non-pending tournaments
+			state.isReadOnly = state.selectedTournament.state !== 'pending';
+			BracketCanvas.setReadOnly(state.isReadOnly);
 
 			// Fetch participants
 			const participantsRes = await csrfFetch(`/api/participants/${tournamentId}`);
@@ -239,12 +242,20 @@ const BracketEditor = (function() {
 
 			// Update UI
 			updateFormatBadge();
-			await generateBracketPreview();
+
+			// For underway tournaments, fetch live bracket data
+			if (state.isReadOnly) {
+				await loadLiveBracket();
+			} else {
+				await generateBracketPreview();
+			}
+
 			showEditorUI();
 
 			FrontendDebug.log('BracketEditor', 'Tournament loaded', {
 				name: state.selectedTournament.name,
-				participants: state.participants.length
+				participants: state.participants.length,
+				readOnly: state.isReadOnly
 			});
 
 		} catch (error) {
@@ -252,6 +263,31 @@ const BracketEditor = (function() {
 			showAlert('Failed to load tournament data', 'error');
 		} finally {
 			state.isLoading = false;
+		}
+	}
+
+	/**
+	 * Load live bracket data for underway tournaments
+	 */
+	async function loadLiveBracket() {
+		if (!state.selectedTournament) return;
+
+		try {
+			FrontendDebug.api('BracketEditor', 'Loading live bracket');
+
+			const response = await csrfFetch(`/api/bracket-editor/live/${state.selectedTournament.id}`);
+			if (!response.ok) throw new Error('Failed to load live bracket');
+
+			const visualization = await response.json();
+
+			elements.emptyState.classList.add('hidden');
+			BracketCanvas.render(visualization, state.participants, state.currentSeeds, state.originalSeeds);
+
+			FrontendDebug.log('BracketEditor', 'Live bracket loaded', { type: visualization.type });
+
+		} catch (error) {
+			FrontendDebug.error('BracketEditor', 'Error loading live bracket', error);
+			showAlert('Failed to load live bracket', 'error');
 		}
 	}
 
@@ -491,7 +527,12 @@ const BracketEditor = (function() {
 	 */
 	function showEditorUI() {
 		elements.emptyState.classList.add('hidden');
-		elements.seedingTools.classList.remove('hidden');
+		// Hide seeding tools for read-only mode (underway tournaments)
+		if (state.isReadOnly) {
+			elements.seedingTools.classList.add('hidden');
+		} else {
+			elements.seedingTools.classList.remove('hidden');
+		}
 	}
 
 	/**
