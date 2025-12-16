@@ -1166,9 +1166,7 @@ const BracketRenderer = (function() {
 	 */
 	function drawPlayer(player, x, y, winnerId) {
 		if (!player) {
-			ctx.fillStyle = COLORS.textMuted;
-			ctx.font = 'italic 14px Inter, sans-serif';
-			ctx.fillText('TBD', x + 10, y + 24);
+			// Leave future match slots blank - no "TBD" text
 			return;
 		}
 
@@ -1203,12 +1201,20 @@ const BracketRenderer = (function() {
 
 		ctx.fillText(displayName, nameX, y + 24);
 
-		// Score
+		// Score - with visual divider
 		if (player.score !== undefined && player.score !== null) {
+			// Draw score background box for visual separation
+			const scoreBoxWidth = 32;
+			const scoreBoxX = x + MATCH_WIDTH - scoreBoxWidth - 6;
+			ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+			roundRect(ctx, scoreBoxX, y + 6, scoreBoxWidth, PLAYER_HEIGHT - 12, 4);
+			ctx.fill();
+
+			// Draw score text
 			ctx.fillStyle = isWinner ? COLORS.winner : COLORS.textSecondary;
 			ctx.font = 'bold 14px JetBrains Mono, monospace';
-			ctx.textAlign = 'right';
-			ctx.fillText(player.score.toString(), x + MATCH_WIDTH - 10, y + 24);
+			ctx.textAlign = 'center';
+			ctx.fillText(player.score.toString(), scoreBoxX + scoreBoxWidth / 2, y + 24);
 			ctx.textAlign = 'left';
 		}
 	}

@@ -594,11 +594,7 @@ const BracketCanvas = (function() {
 	function drawPlayer(player, x, y, winnerId, isFirstRound = false, isBye = false) {
 		// Check for empty slot (no player object or player with no ID)
 		if (!player || !player.id) {
-			// Display BYE for bye matches, TBD for matches waiting on prerequisites
-			const label = isBye ? 'BYE' : 'TBD';
-			ctx.fillStyle = COLORS.textMuted;
-			ctx.font = 'italic 12px Inter, sans-serif';
-			ctx.fillText(label, x + 8, y + 19);
+			// Leave future match slots blank - no "BYE" or "TBD" text
 			return;
 		}
 
@@ -670,12 +666,20 @@ const BracketCanvas = (function() {
 
 		ctx.fillText(displayName, nameX, y + 19);
 
-		// Score if exists
+		// Score if exists - with visual divider
 		if (player.score !== undefined && player.score !== null) {
+			// Draw score background box for visual separation
+			const scoreBoxWidth = 28;
+			const scoreBoxX = x + MATCH_WIDTH - scoreBoxWidth - 4;
+			ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+			roundRect(ctx, scoreBoxX, y + 4, scoreBoxWidth, PLAYER_HEIGHT - 8, 3);
+			ctx.fill();
+
+			// Draw score text
 			ctx.fillStyle = isWinner ? COLORS.winner : COLORS.textSecondary;
 			ctx.font = 'bold 12px JetBrains Mono, monospace';
-			ctx.textAlign = 'right';
-			ctx.fillText(player.score.toString(), x + MATCH_WIDTH - 8, y + 19);
+			ctx.textAlign = 'center';
+			ctx.fillText(player.score.toString(), scoreBoxX + scoreBoxWidth / 2, y + 19);
 			ctx.textAlign = 'left';
 		}
 
