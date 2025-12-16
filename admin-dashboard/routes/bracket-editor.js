@@ -10,6 +10,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAuthAPI } = require('../middleware/auth');
 const { createLogger } = require('../services/debug-logger');
+const settingsService = require('../services/settings');
 
 const logger = createLogger('routes:bracket-editor');
 
@@ -105,13 +106,18 @@ router.post('/preview/:tournamentId', requireAuthAPI, async (req, res) => {
 			{ tournamentName: tournament.name }
 		);
 
+		// Get bracket theme from settings
+		const settings = settingsService.getAll();
+		const theme = settings?.bracketDisplay?.theme || 'midnight';
+
 		logger.log('Preview generated', {
 			tournamentId,
 			type: visualization.type,
-			matchCount: matches.length
+			matchCount: matches.length,
+			theme
 		});
 
-		res.json(visualization);
+		res.json({ ...visualization, theme });
 
 	} catch (error) {
 		logger.error('Error generating bracket preview', error);
@@ -267,13 +273,18 @@ router.get('/live/:tournamentId', requireAuthAPI, async (req, res) => {
 			{ tournamentName: tournament.name }
 		);
 
+		// Get bracket theme from settings
+		const settings = settingsService.getAll();
+		const theme = settings?.bracketDisplay?.theme || 'midnight';
+
 		logger.log('Live bracket generated', {
 			tournamentId,
 			type: visualization.type,
-			matchCount: matches.length
+			matchCount: matches.length,
+			theme
 		});
 
-		res.json(visualization);
+		res.json({ ...visualization, theme });
 
 	} catch (error) {
 		logger.error('Error fetching live bracket', error);

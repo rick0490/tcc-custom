@@ -810,11 +810,12 @@ const BracketRenderer = (function() {
 		}
 
 		// Default behavior for winners/single elimination
+		// Round 1 is always "Round 1", special names only for later rounds
 		if (format === 'single_elimination' || format === 'winners' || format === 'double_elimination') {
 			const remaining = totalRounds - round + 1;
 			if (remaining === 1) return 'Finals';
-			if (remaining === 2) return 'Semi-Finals';
-			if (remaining === 3) return 'Quarter-Finals';
+			if (remaining === 2 && round > 1) return 'Semi-Finals';
+			if (remaining === 3 && round > 1) return 'Quarter-Finals';
 		}
 
 		return `Round ${round}`;

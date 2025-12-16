@@ -612,15 +612,14 @@ function getRoundName(round, maxRound, bracketType, customLabels = null) {
 	}
 
 	// Default behavior
+	// Round 1 is always "Round 1", special names only for later rounds
 	const roundsFromEnd = maxRound - round;
 
 	if (bracketType === 'single' || bracketType === 'winners') {
-		switch (roundsFromEnd) {
-			case 0: return 'Finals';
-			case 1: return 'Semi-Finals';
-			case 2: return 'Quarter-Finals';
-			default: return `Round ${round}`;
-		}
+		if (roundsFromEnd === 0) return 'Finals';
+		if (roundsFromEnd === 1 && round > 1) return 'Semi-Finals';
+		if (roundsFromEnd === 2 && round > 1) return 'Quarter-Finals';
+		return `Round ${round}`;
 	}
 
 	return `Losers Round ${round}`;

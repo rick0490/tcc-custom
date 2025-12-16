@@ -281,9 +281,15 @@ const BracketEditor = (function() {
 			const visualization = await response.json();
 
 			elements.emptyState.classList.add('hidden');
+
+			// Apply theme from server settings if provided
+			if (visualization.theme) {
+				BracketCanvas.setTheme(visualization.theme);
+			}
+
 			BracketCanvas.render(visualization, state.participants, state.currentSeeds, state.originalSeeds);
 
-			FrontendDebug.log('BracketEditor', 'Live bracket loaded', { type: visualization.type });
+			FrontendDebug.log('BracketEditor', 'Live bracket loaded', { type: visualization.type, theme: visualization.theme });
 
 		} catch (error) {
 			FrontendDebug.error('BracketEditor', 'Error loading live bracket', error);
@@ -322,9 +328,15 @@ const BracketEditor = (function() {
 			const visualization = await response.json();
 
 			elements.emptyState.classList.add('hidden');
+
+			// Apply theme from server settings if provided
+			if (visualization.theme) {
+				BracketCanvas.setTheme(visualization.theme);
+			}
+
 			BracketCanvas.render(visualization, state.participants, state.currentSeeds, state.originalSeeds);
 
-			FrontendDebug.log('BracketEditor', 'Preview generated', { type: visualization.type });
+			FrontendDebug.log('BracketEditor', 'Preview generated', { type: visualization.type, theme: visualization.theme });
 
 		} catch (error) {
 			FrontendDebug.error('BracketEditor', 'Error generating preview', error);
