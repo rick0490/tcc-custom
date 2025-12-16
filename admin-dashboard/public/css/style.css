@@ -10,24 +10,25 @@
 	--font-display: 'Oswald', 'Inter', sans-serif;
 	--font-mono: 'JetBrains Mono', 'Courier New', monospace;
 
-	/* Light theme (default) */
-	--bg-primary: #ffffff;
-	--bg-secondary: #f3f4f6;
-	--bg-tertiary: #e5e7eb;
-	--bg-hover: #d1d5db;
+	/* Light theme (default) - improved for better contrast and depth */
+	--bg-primary: #f8fafc;
+	--bg-secondary: #f1f5f9;
+	--bg-tertiary: #e2e8f0;
+	--bg-hover: #cbd5e1;
 	--bg-selected: #dbeafe;
 	--bg-card: #ffffff;
 
-	--text-primary: #111827;
-	--text-secondary: #374151;
-	--text-muted: #6b7280;
+	--text-primary: #0f172a;
+	--text-secondary: #334155;
+	--text-muted: #64748b;
 	--text-inverse: #ffffff;
 
-	--border-color: #d1d5db;
-	--border-light: #e5e7eb;
-	--border-dark: #9ca3af;
+	--border-color: #cbd5e1;
+	--border-light: #e2e8f0;
+	--border-dark: #94a3b8;
 
-	--shadow-color: rgba(0, 0, 0, 0.1);
+	--shadow-color: rgba(0, 0, 0, 0.08);
+	--shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
 	--overlay-bg: rgba(0, 0, 0, 0.5);
 
 	/* Accent colors (same for both themes) */
@@ -42,6 +43,12 @@
 	--accent-yellow-light: rgba(245, 158, 11, 0.2);
 	--accent-gray: #6b7280;
 	--accent-gray-light: rgba(107, 114, 128, 0.2);
+
+	/* Button colors for light theme */
+	--btn-primary-bg: #1e293b;
+	--btn-primary-hover: #334155;
+	--btn-secondary-bg: #475569;
+	--btn-secondary-hover: #64748b;
 }
 
 [data-theme="dark"] {
@@ -63,7 +70,14 @@
 	--border-dark: #6b7280;
 
 	--shadow-color: rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
 	--overlay-bg: rgba(0, 0, 0, 0.7);
+
+	/* Button colors for dark theme */
+	--btn-primary-bg: #3b82f6;
+	--btn-primary-hover: #2563eb;
+	--btn-secondary-bg: #4b5563;
+	--btn-secondary-hover: #6b7280;
 }
 
 /* Theme-aware body styling */
@@ -194,10 +208,201 @@ body {
 	color: var(--accent-yellow) !important;
 }
 
+/* ============================================
+   LIGHT MODE - Button & Card Enhancements
+   ============================================ */
+
+/* Light mode - Primary action buttons (dark bg for contrast) */
+[data-theme="light"] button.bg-blue-600,
+[data-theme="light"] button.bg-blue-500,
+[data-theme="light"] .btn-primary,
+[data-theme="light"] button[type="submit"]:not(.filter-btn):not(.tab-button) {
+	background-color: var(--accent-blue) !important;
+	color: var(--text-inverse) !important;
+}
+
+[data-theme="light"] button.bg-blue-600:hover,
+[data-theme="light"] button.bg-blue-500:hover,
+[data-theme="light"] .btn-primary:hover,
+[data-theme="light"] button[type="submit"]:not(.filter-btn):not(.tab-button):hover {
+	background-color: var(--accent-blue-hover) !important;
+}
+
+/* Light mode - Secondary buttons (slate/gray buttons need dark bg) */
+[data-theme="light"] button.bg-gray-800,
+[data-theme="light"] button.bg-gray-700,
+[data-theme="light"] button.bg-gray-600 {
+	background-color: var(--btn-primary-bg) !important;
+	color: var(--text-inverse) !important;
+}
+
+[data-theme="light"] button.bg-gray-800:hover,
+[data-theme="light"] button.bg-gray-700:hover,
+[data-theme="light"] button.bg-gray-600:hover {
+	background-color: var(--btn-primary-hover) !important;
+}
+
+/* Light mode - Danger buttons */
+[data-theme="light"] button.bg-red-600,
+[data-theme="light"] button.bg-red-500 {
+	background-color: var(--accent-red) !important;
+	color: var(--text-inverse) !important;
+}
+
+/* Light mode - Success buttons */
+[data-theme="light"] button.bg-green-600,
+[data-theme="light"] button.bg-green-500 {
+	background-color: var(--accent-green) !important;
+	color: var(--text-inverse) !important;
+}
+
+/* Light mode - Cards with elevation */
+[data-theme="light"] .card,
+[data-theme="light"] .status-card-compact,
+[data-theme="light"] .match-card,
+[data-theme="light"] .flyer-card,
+[data-theme="light"] .display-card,
+[data-theme="light"] section > div.bg-gray-800,
+[data-theme="light"] section > div.bg-gray-900,
+[data-theme="light"] div.rounded-lg.bg-gray-800,
+[data-theme="light"] div.rounded-lg.bg-gray-900 {
+	background-color: var(--bg-card) !important;
+	border: 1px solid var(--border-color) !important;
+	box-shadow: var(--shadow-md) !important;
+}
+
+/* Light mode - Section headers */
+[data-theme="light"] section h2,
+[data-theme="light"] section h3,
+[data-theme="light"] .section-title {
+	color: var(--text-primary);
+}
+
+/* Light mode - Subtle button variant (outline style) */
+[data-theme="light"] .btn-subtle,
+[data-theme="light"] button.border.border-gray-600,
+[data-theme="light"] button.border.border-gray-700 {
+	background-color: transparent !important;
+	border-color: var(--border-dark) !important;
+	color: var(--text-secondary) !important;
+}
+
+[data-theme="light"] .btn-subtle:hover,
+[data-theme="light"] button.border.border-gray-600:hover,
+[data-theme="light"] button.border.border-gray-700:hover {
+	background-color: var(--bg-tertiary) !important;
+	color: var(--text-primary) !important;
+}
+
+/* Light mode - Navigation active state */
+[data-theme="light"] .nav-item[data-page].active,
+[data-theme="light"] .nav-item[data-page]:hover {
+	background-color: var(--bg-tertiary) !important;
+}
+
+/* Light mode - Table styling */
+[data-theme="light"] table {
+	background-color: var(--bg-card);
+	border: 1px solid var(--border-color);
+}
+
+[data-theme="light"] table thead {
+	background-color: var(--bg-secondary);
+}
+
+[data-theme="light"] table tbody tr {
+	border-bottom: 1px solid var(--border-light);
+}
+
+[data-theme="light"] table tbody tr:hover {
+	background-color: var(--bg-secondary);
+}
+
+/* Light mode - Sidebar */
+[data-theme="light"] .sidebar {
+	background-color: var(--bg-card) !important;
+	border-right: 1px solid var(--border-color) !important;
+}
+
+/* Light mode - Dropdown menus */
+[data-theme="light"] select {
+	background-color: var(--bg-card) !important;
+	border-color: var(--border-color) !important;
+}
+
+/* Light mode - Form containers with bg-gray-700/50 */
+[data-theme="light"] .bg-gray-700\/50,
+[data-theme="light"] [class*="bg-gray-700/50"] {
+	background-color: var(--bg-secondary) !important;
+}
+
+/* Light mode - Status indicators */
+[data-theme="light"] .status-indicator {
+	box-shadow: 0 0 0 2px var(--bg-card);
+}
+
+/* Light mode - Badges and pills */
+[data-theme="light"] .badge,
+[data-theme="light"] span.bg-gray-600,
+[data-theme="light"] span.bg-gray-700 {
+	background-color: var(--bg-tertiary) !important;
+	color: var(--text-secondary) !important;
+}
+
+/* Light mode - Dividers */
+[data-theme="light"] hr,
+[data-theme="light"] .divide-gray-700 > * {
+	border-color: var(--border-light) !important;
+}
+
+/* Light mode - Modal overlay */
+[data-theme="light"] .modal-backdrop,
+[data-theme="light"] .fixed.inset-0.bg-black {
+	background-color: rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Light mode - Focus rings */
+[data-theme="light"] button:focus-visible,
+[data-theme="light"] input:focus-visible,
+[data-theme="light"] select:focus-visible,
+[data-theme="light"] a:focus-visible {
+	outline: 2px solid var(--accent-blue);
+	outline-offset: 2px;
+}
+
+/* Light mode - Disabled buttons */
+[data-theme="light"] button:disabled {
+	background-color: var(--bg-tertiary) !important;
+	color: var(--text-muted) !important;
+	cursor: not-allowed;
+}
+
+/* Light mode - Yellow/warning buttons */
+[data-theme="light"] button.bg-yellow-600,
+[data-theme="light"] button.bg-yellow-500 {
+	background-color: var(--accent-yellow) !important;
+	color: var(--text-primary) !important;
+}
+
+/* Light mode - Filter buttons in their inactive state */
+[data-theme="light"] .filter-btn:not(.active),
+[data-theme="light"] button[data-filter]:not(.active) {
+	background-color: var(--bg-secondary) !important;
+	color: var(--text-secondary) !important;
+	border: 1px solid var(--border-color) !important;
+}
+
+[data-theme="light"] .filter-btn:not(.active):hover,
+[data-theme="light"] button[data-filter]:not(.active):hover {
+	background-color: var(--bg-tertiary) !important;
+	color: var(--text-primary) !important;
+}
+
 /* Login Page Theme Overrides */
 .login-card {
-	background-color: var(--bg-secondary);
-	border-color: var(--border-color);
+	background-color: var(--bg-card);
+	border: 1px solid var(--border-color);
+	box-shadow: var(--shadow-md);
 }
 
 .login-card h1 {

@@ -138,7 +138,7 @@ let sessionMonitor = {
 function getCurrentPageId() {
 	const path = window.location.pathname;
 	if (path === '/' || path === '/index.html') return 'dashboard';
-	const match = path.match(/\/(\w+)\.html/);
+	const match = path.match(/\/([\w-]+)\.html/);
 	return match ? match[1] : 'dashboard';
 }
 

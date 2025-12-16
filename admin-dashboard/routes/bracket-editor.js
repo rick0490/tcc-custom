@@ -107,7 +107,7 @@ router.post('/preview/:tournamentId', requireAuthAPI, async (req, res) => {
 		);
 
 		// Get bracket theme from settings
-		const settings = settingsService.getAll();
+		const settings = settingsService.loadSystemSettings();
 		const theme = settings?.bracketDisplay?.theme || 'midnight';
 
 		logger.log('Preview generated', {
@@ -274,7 +274,7 @@ router.get('/live/:tournamentId', requireAuthAPI, async (req, res) => {
 		);
 
 		// Get bracket theme from settings
-		const settings = settingsService.getAll();
+		const settings = settingsService.loadSystemSettings();
 		const theme = settings?.bracketDisplay?.theme || 'midnight';
 
 		logger.log('Live bracket generated', {
