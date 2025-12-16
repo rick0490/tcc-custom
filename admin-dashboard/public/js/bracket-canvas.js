@@ -572,12 +572,12 @@ const BracketCanvas = (function() {
 		// Player 2 (bottom half)
 		drawPlayer(match.player2, x, y + PLAYER_HEIGHT, match.winnerId, isFirstRound, isBye);
 
-		// Match identifier badge
+		// Match identifier badge (positioned left of score area)
 		if (match.identifier) {
 			ctx.fillStyle = COLORS.textMuted;
 			ctx.font = '9px JetBrains Mono, monospace';
 			ctx.textAlign = 'right';
-			ctx.fillText(match.identifier, x + MATCH_WIDTH - 5, y + 11);
+			ctx.fillText(match.identifier, x + MATCH_WIDTH - 36, y + 11);
 			ctx.textAlign = 'left';
 		}
 	}
