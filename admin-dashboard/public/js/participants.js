@@ -1132,6 +1132,12 @@ async function updateMultipleSeeds(updates) {
 
 // Open bulk add modal
 function openBulkAddModal() {
+	// Block if tournament is in progress
+	if (currentTournament && currentTournament.state === 'underway') {
+		showAlert('Cannot add participants while tournament is in progress', 'error');
+		return;
+	}
+
 	document.getElementById('bulkAddModal').classList.remove('hidden');
 	document.getElementById('bulkAddModal').classList.add('flex');
 	document.getElementById('bulkAddTextarea').value = '';
@@ -1315,6 +1321,12 @@ async function undoCheckInParticipant(participantId, participantName) {
 async function confirmClearAllParticipants() {
 	if (!selectedTournamentId) {
 		showAlert('Please select a tournament first', 'error');
+		return;
+	}
+
+	// Block if tournament is in progress
+	if (currentTournament && currentTournament.state === 'underway') {
+		showAlert('Cannot clear participants while tournament is in progress', 'error');
 		return;
 	}
 
