@@ -1486,6 +1486,48 @@
 		</div>
 	</div>
 
+	<!-- Delete User Modal -->
+	<div id="deleteUserModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+		<div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-red-600">
+			<div class="flex items-center justify-between mb-6">
+				<h3 class="text-xl font-bold text-red-400">Delete User</h3>
+				<button onclick="closeDeleteUserModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+			</div>
+			<div class="space-y-4">
+				<div class="bg-red-900/30 border border-red-700 rounded-lg p-4">
+					<p class="text-red-300 font-semibold mb-2">Warning: This action cannot be undone!</p>
+					<p class="text-gray-300 text-sm">
+						You are about to permanently delete user <strong id="deleteUserUsername" class="text-white"></strong> and ALL their data:
+					</p>
+					<ul class="text-gray-400 text-sm mt-2 list-disc list-inside">
+						<li>All tournaments and matches</li>
+						<li>All participants</li>
+						<li>All games and configurations</li>
+						<li>All user settings</li>
+					</ul>
+				</div>
+				<div>
+					<label class="block text-sm text-gray-400 mb-1">
+						Type the username to confirm deletion:
+					</label>
+					<input type="text" id="deleteUserConfirmInput"
+						oninput="validateDeleteUserInput()"
+						placeholder="Enter username"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:border-red-500 focus:ring-red-500">
+				</div>
+				<div class="flex gap-3 pt-4">
+					<button type="button" id="deleteUserBtn" onclick="deleteUser()" disabled
+						class="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-2 rounded-md">
+						Delete User
+					</button>
+					<button type="button" onclick="closeDeleteUserModal()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+						Cancel
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
 	<!-- Image Preview Modal -->
 	<div id="imagePreviewModal" class="hidden fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50" onclick="closeImagePreview(event)">
 		<div class="relative max-w-6xl w-full mx-4" onclick="event.stopPropagation()">
@@ -1690,7 +1732,7 @@
 	<script src="js/utils.js?v=4"></script>
 	<script src="js/nav.js?v=3"></script>
 	<script src="js/pwa.js?v=3"></script>
-	<script src="js/platform-admin.js?v=13"></script>
+	<script src="js/platform-admin.js?v=16"></script>
 	<script>
 		document.addEventListener('DOMContentLoaded', () => {
 			initNavigation('Platform Admin');

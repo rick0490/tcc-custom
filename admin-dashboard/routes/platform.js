@@ -199,6 +199,99 @@ router.put('/users/:id/status', (req, res) => {
     }
 });
 
+/**
+ * DELETE /api/admin/users/:id
+ * Permanently delete user and all their data (cascade delete)
+ */
+router.delete('/users/:id', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+
+        const user = usersDb.getUserById(userId);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found'
+            });
+        }
+
+        // Cannot delete superadmin
+        if (usersDb.isSuperadmin(userId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Cannot delete superadmin account'
+            });
+        }
+
+        // Cannot delete yourself
+        if (userId === req.session.userId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Cannot delete your own account'
+            });
+        }
+
+        // Collect stats for logging
+        const deletionStats = {
+            tournaments: 0,
+            matches: 0,
+            participants: 0,
+            games: 0
+        };
+
+        // Get user's tournaments
+        const tournaments = tournamentDb.listByUser(userId);
+        deletionStats.tournaments = tournaments.length;
+
+        // Delete each tournament and its data
+        for (const tournament of tournaments) {
+            // Get match and participant counts before deletion
+            const matches = matchDb.getByTournament(tournament.id);
+            const participants = participantDb.getByTournament(tournament.id);
+            deletionStats.matches += matches.length;
+            deletionStats.participants += participants.length;
+
+            // Delete tournament (cascade deletes matches, participants, stations, etc.)
+            tournamentDb.delete(tournament.id);
+        }
+
+        // Delete user's games
+        const games = db.system.getAllGamesForUser(userId);
+        deletionStats.games = games.length;
+        for (const game of games) {
+            db.system.deleteGame(game.id);
+        }
+
+        // Delete the user (CASCADE handles notification_preferences, discord_settings, etc.)
+        usersDb.deleteUser(userId);
+
+        // Log the deletion
+        activityLogger.logActivity(req.session.userId, req.session.username, 'user_deleted', {
+            targetUserId: userId,
+            targetUsername: user.username,
+            deletionStats
+        });
+
+        logger.log('deleteUser', {
+            targetUserId: userId,
+            targetUsername: user.username,
+            deletionStats
+        });
+
+        res.json({
+            success: true,
+            message: `User "${user.username}" and all their data deleted`,
+            stats: deletionStats
+        });
+    } catch (error) {
+        logger.error('deleteUser', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // ============================================
 // PLATFORM SETTINGS
 // ============================================
@@ -2946,28 +3039,47 @@ router.get('/metrics/current', async (req, res) => {
 /**
  * GET /api/admin/metrics/history
  * Get historical metrics for charts
+ * If type is specified, returns history for that type only
+ * If type is omitted, returns history for all metric types
  */
 router.get('/metrics/history', (req, res) => {
     try {
         const { type, hours = 24 } = req.query;
+        const aggregator = getMetricsAggregator();
+        const hoursInt = parseInt(hours);
 
-        if (!type) {
-            return res.status(400).json({
-                success: false,
-                error: 'Metric type is required'
+        if (type) {
+            // Single metric type
+            const history = aggregator.getMetricsHistory(type, hoursInt);
+            res.json({
+                success: true,
+                type,
+                hours: hoursInt,
+                dataPoints: history.length,
+                history
+            });
+        } else {
+            // All metric types
+            const metricTypes = [
+                'memory_usage', 'cpu_usage', 'disk_usage',
+                'api_latency', 'api_status',
+                'display_online', 'display_offline'
+            ];
+            const metrics = {};
+
+            for (const metricType of metricTypes) {
+                const history = aggregator.getMetricsHistory(metricType, hoursInt);
+                if (history && history.length > 0) {
+                    metrics[metricType] = history;
+                }
+            }
+
+            res.json({
+                success: true,
+                hours: hoursInt,
+                metrics
             });
         }
-
-        const aggregator = getMetricsAggregator();
-        const history = aggregator.getMetricsHistory(type, parseInt(hours));
-
-        res.json({
-            success: true,
-            type,
-            hours: parseInt(hours),
-            dataPoints: history.length,
-            history
-        });
     } catch (error) {
         logger.error('metrics:history', error);
         res.status(500).json({
@@ -3176,28 +3288,22 @@ router.put('/alert-thresholds/:metricType', (req, res) => {
  */
 router.get('/displays', (req, res) => {
     try {
-        const { status, type, userId } = req.query;
+        const { status, type } = req.query;
         const systemDb = db.system.getDb();
 
         let sql = `
-            SELECT d.*, u.username as owner_username
-            FROM displays d
-            LEFT JOIN users u ON d.user_id = u.id
+            SELECT *
+            FROM displays
             WHERE 1=1
         `;
         const params = [];
 
-        if (userId) {
-            sql += ' AND d.user_id = ?';
-            params.push(parseInt(userId));
-        }
-
         if (type) {
-            sql += ' AND d.current_view = ?';
+            sql += ' AND current_view = ?';
             params.push(type);
         }
 
-        sql += ' ORDER BY d.last_heartbeat DESC';
+        sql += ' ORDER BY last_heartbeat DESC';
 
         const displays = systemDb.prepare(sql).all(...params);
 
@@ -3328,9 +3434,8 @@ router.post('/displays/:id/command', (req, res) => {
 router.get('/displays/commands', (req, res) => {
     try {
         const { displayId, limit = 100, offset = 0 } = req.query;
-        const systemDb = db.system.getDb();
 
-        const commands = systemDb.getDisplayCommands({
+        const commands = db.system.getDisplayCommands({
             displayId,
             limit: parseInt(limit),
             offset: parseInt(offset)

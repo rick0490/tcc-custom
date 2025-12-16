@@ -302,6 +302,9 @@ function renderUsers(users) {
                         <button onclick="showSubscriptionModal(${user.id})" class="text-purple-400 hover:text-purple-300 text-sm">
                             Subscription
                         </button>
+                        <button onclick="confirmDeleteUser(${user.id}, '${escapeHtml(user.username)}')" class="text-red-500 hover:text-red-400 text-sm">
+                            Delete
+                        </button>
                     ` : ''}
                 </div>
             </td>
@@ -433,6 +436,85 @@ async function toggleUserStatus(userId, isActive) {
     } catch (error) {
         FrontendDebug.error('PlatformAdmin', 'Failed to toggle user status', error);
         showAlert('Failed to update user status', 'error');
+    }
+}
+
+// Delete user state
+let deleteUserState = { userId: null, username: '' };
+
+/**
+ * Show delete user confirmation modal
+ */
+function confirmDeleteUser(userId, username) {
+    deleteUserState = { userId, username };
+    document.getElementById('deleteUserUsername').textContent = username;
+    document.getElementById('deleteUserConfirmInput').value = '';
+    document.getElementById('deleteUserBtn').disabled = true;
+    document.getElementById('deleteUserModal').classList.remove('hidden');
+}
+
+function closeDeleteUserModal() {
+    document.getElementById('deleteUserModal').classList.add('hidden');
+    deleteUserState = { userId: null, username: '' };
+}
+
+function validateDeleteUserInput() {
+    const input = document.getElementById('deleteUserConfirmInput').value;
+    const btn = document.getElementById('deleteUserBtn');
+    btn.disabled = input !== deleteUserState.username;
+}
+
+/**
+ * Delete user and all their data
+ */
+async function deleteUser() {
+    const { userId, username } = deleteUserState;
+    if (!userId) return;
+
+    const input = document.getElementById('deleteUserConfirmInput').value;
+    if (input !== username) {
+        showAlert('Username does not match', 'error');
+        return;
+    }
+
+    try {
+        const btn = document.getElementById('deleteUserBtn');
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
+
+        const response = await csrfFetch(`/api/admin/users/${userId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            closeDeleteUserModal();
+            showAlert(data.message, 'success');
+            loadUsers();
+
+            // Show deletion stats
+            if (data.stats) {
+                const stats = data.stats;
+                const details = [];
+                if (stats.tournaments > 0) details.push(`${stats.tournaments} tournaments`);
+                if (stats.matches > 0) details.push(`${stats.matches} matches`);
+                if (stats.participants > 0) details.push(`${stats.participants} participants`);
+                if (stats.games > 0) details.push(`${stats.games} games`);
+                if (details.length > 0) {
+                    showAlert(`Deleted: ${details.join(', ')}`, 'info', 5000);
+                }
+            }
+        } else {
+            showAlert(data.error || 'Failed to delete user', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Delete User';
+        }
+    } catch (error) {
+        FrontendDebug.error('PlatformAdmin', 'Failed to delete user', error);
+        showAlert('Failed to delete user', 'error');
+        document.getElementById('deleteUserBtn').disabled = false;
+        document.getElementById('deleteUserBtn').textContent = 'Delete User';
     }
 }
 
@@ -3308,22 +3390,27 @@ async function loadCurrentMetrics() {
         if (data.success && data.snapshot) {
             const snapshot = data.snapshot;
 
-            // Update system metrics
-            updateMetricCard('cpuValue', 'cpuProgress', snapshot.system?.cpu_usage_system || 0, '%');
-            updateMetricCard('memoryValue', 'memoryProgress', snapshot.system?.memory_usage_system || 0, '%');
-            updateMetricCard('diskValue', 'diskProgress', snapshot.system?.disk_usage_root || 0, '%');
+            // Update system metrics (using correct HTML element IDs)
+            updateMetricCard('metricCpu', 'cpuBar', snapshot.system?.cpu_usage_system || 0, '%');
+            updateMetricCard('metricMemory', 'memoryBar', snapshot.system?.memory_usage_system || 0, '%');
+            updateMetricCard('metricDisk', 'diskBar', snapshot.system?.disk_usage_root || 0, '%');
 
             // Update display metrics
             const displaysOnline = snapshot.displays?.display_online || 0;
             const displaysOffline = snapshot.displays?.display_offline || 0;
             const displayTotal = displaysOnline + displaysOffline;
-            const displayPct = displayTotal > 0 ? (displaysOnline / displayTotal * 100) : 0;
-            updateMetricCard('displaysValue', 'displaysProgress', displayPct, '', `${displaysOnline}/${displayTotal}`);
+            updateMetricCard('metricDisplays', null, 0, '', `${displaysOnline} online`);
 
-            // Update API latency metrics
-            updateApiCard('matchLatency', 'matchStatus', snapshot.api?.match_display);
-            updateApiCard('bracketLatency', 'bracketStatus', snapshot.api?.bracket_display);
-            updateApiCard('flyerLatency', 'flyerStatus', snapshot.api?.flyer_display);
+            // Update displays detail
+            const displaysDetailEl = document.getElementById('displaysDetail');
+            if (displaysDetailEl) {
+                displaysDetailEl.textContent = `${displaysOnline} online / ${displaysOffline} offline`;
+            }
+
+            // Update API latency metrics (using correct HTML element IDs)
+            updateApiCard('matchApiLatency', 'matchApiStatus', snapshot.api?.match_display);
+            updateApiCard('bracketApiLatency', 'bracketApiStatus', snapshot.api?.bracket_display);
+            updateApiCard('flyerApiLatency', 'flyerApiStatus', snapshot.api?.flyer_display);
 
             // Update timestamp
             const timestampEl = document.getElementById('metricsTimestamp');
@@ -3368,18 +3455,17 @@ function updateApiCard(latencyId, statusId, apiData) {
 
     if (latencyEl) {
         if (apiData?.latencyMs !== undefined) {
-            latencyEl.textContent = `${apiData.latencyMs}ms`;
+            latencyEl.textContent = `${apiData.latencyMs} ms`;
         } else {
-            latencyEl.textContent = 'N/A';
+            latencyEl.textContent = '-- ms';
         }
     }
     if (statusEl) {
+        // Status is a colored dot indicator
         if (apiData?.online) {
-            statusEl.textContent = 'Online';
-            statusEl.className = 'text-xs text-green-400';
+            statusEl.className = 'w-3 h-3 rounded-full bg-green-500';
         } else {
-            statusEl.textContent = 'Offline';
-            statusEl.className = 'text-xs text-red-400';
+            statusEl.className = 'w-3 h-3 rounded-full bg-red-500';
         }
     }
 }
@@ -3424,7 +3510,7 @@ async function toggleMetricsCollection() {
 
     try {
         const action = toggle?.checked ? 'start' : 'stop';
-        const response = await csrfFetch(`/api/admin/metrics/collection/${action}`, {
+        const response = await csrfFetch(`/api/admin/metrics/${action}`, {
             method: 'POST'
         });
         const data = await response.json();
@@ -3453,7 +3539,7 @@ async function toggleMetricsCollection() {
  */
 async function loadMetricsCollectionStatus() {
     try {
-        const response = await csrfFetch('/api/admin/metrics/collection/status');
+        const response = await csrfFetch('/api/admin/metrics/status');
         const data = await response.json();
 
         if (data.success) {
@@ -3481,7 +3567,7 @@ async function loadMetricsHistory(hours = 24) {
         const response = await csrfFetch(`/api/admin/metrics/history?hours=${hours}`);
         const data = await response.json();
 
-        const contentEl = document.getElementById('historyContent');
+        const contentEl = document.getElementById('metricsHistoryContainer');
         if (!contentEl) return;
 
         if (data.success && data.metrics) {
@@ -3513,10 +3599,14 @@ async function loadMetricsHistory(hours = 24) {
             html += '</div>';
             contentEl.innerHTML = html;
         } else {
-            contentEl.innerHTML = '<div class="text-gray-400">No historical data available</div>';
+            contentEl.innerHTML = '<div class="text-gray-400 text-center py-4">No metrics history - start collection to begin recording</div>';
         }
     } catch (error) {
         FrontendDebug.error('PlatformAdmin', 'Failed to load metrics history', error);
+        const contentEl = document.getElementById('metricsHistoryContainer');
+        if (contentEl) {
+            contentEl.innerHTML = '<div class="text-gray-400 text-center py-4">No metrics history - start collection to begin recording</div>';
+        }
     }
 }
 
@@ -3650,7 +3740,7 @@ async function saveThresholds() {
  * Load alert history
  */
 async function loadAlertHistory() {
-    const contentEl = document.getElementById('alertHistoryContent');
+    const contentEl = document.getElementById('alertHistoryList');
     if (!contentEl) return;
 
     try {
@@ -3684,10 +3774,14 @@ async function loadAlertHistory() {
                 </table>
             `;
         } else {
-            contentEl.innerHTML = '<div class="text-gray-400">No alert history</div>';
+            contentEl.innerHTML = '<div class="text-gray-400 text-center py-4">No alert history</div>';
         }
     } catch (error) {
         FrontendDebug.error('PlatformAdmin', 'Failed to load alert history', error);
+        const contentEl = document.getElementById('alertHistoryList');
+        if (contentEl) {
+            contentEl.innerHTML = '<div class="text-gray-400 text-center py-4">No alert history</div>';
+        }
     }
 }
 
