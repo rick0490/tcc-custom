@@ -290,6 +290,7 @@ function onTournamentChange() {
 		document.getElementById('loadingState').classList.add('hidden');
 		document.getElementById('tableContainer').classList.add('hidden');
 		document.getElementById('emptyState').classList.remove('hidden');
+		updateActionButtonStates(null);
 		return;
 	}
 
@@ -299,6 +300,7 @@ function onTournamentChange() {
 		currentTournament = tournament;
 		document.getElementById('tournamentInfo').classList.remove('hidden');
 		document.getElementById('tournamentGame').textContent = tournament.game || '--';
+		updateActionButtonStates(tournament);
 	}
 
 	// Load participants for selected tournament
@@ -306,6 +308,49 @@ function onTournamentChange() {
 	document.getElementById('tableContainer').classList.add('hidden');
 	document.getElementById('emptyState').classList.add('hidden');
 	loadParticipants();
+}
+
+// ============================================
+// ACTION BUTTON STATE MANAGEMENT
+// ============================================
+
+// Update action button states based on tournament state
+// Buttons should be disabled when tournament is in progress (underway)
+function updateActionButtonStates(tournament) {
+	const isInProgress = tournament && tournament.state === 'underway';
+
+	const randomizeSeedsBtn = document.getElementById('randomizeSeedsBtn');
+	const addParticipantBtn = document.getElementById('addParticipantBtn');
+	const bulkAddBtn = document.getElementById('bulkAddBtn');
+	const clearAllBtn = document.getElementById('clearAllBtn');
+
+	if (randomizeSeedsBtn) {
+		randomizeSeedsBtn.disabled = isInProgress;
+		randomizeSeedsBtn.title = isInProgress
+			? 'Cannot randomize seeds while tournament is in progress'
+			: 'Randomly shuffle all participant seeds';
+	}
+
+	if (addParticipantBtn) {
+		addParticipantBtn.disabled = isInProgress;
+		addParticipantBtn.title = isInProgress
+			? 'Cannot add participants while tournament is in progress'
+			: 'Add a new participant';
+	}
+
+	if (bulkAddBtn) {
+		bulkAddBtn.disabled = isInProgress;
+		bulkAddBtn.title = isInProgress
+			? 'Cannot add participants while tournament is in progress'
+			: 'Add multiple participants at once';
+	}
+
+	if (clearAllBtn) {
+		clearAllBtn.disabled = isInProgress;
+		clearAllBtn.title = isInProgress
+			? 'Cannot clear participants while tournament is in progress'
+			: 'Delete all participants (only before tournament starts)';
+	}
 }
 
 // ============================================
@@ -606,6 +651,12 @@ function sortTable(column) {
 // ============================================
 
 function openAddParticipantModal() {
+	// Block if tournament is in progress
+	if (currentTournament && currentTournament.state === 'underway') {
+		showAlert('Cannot add participants while tournament is in progress', 'error');
+		return;
+	}
+
 	document.getElementById('addParticipantModal').classList.remove('hidden');
 	document.getElementById('addParticipantModal').classList.add('flex');
 	document.getElementById('newParticipantName').value = '';
@@ -882,6 +933,12 @@ function showToast(message, type = 'info') {
 async function randomizeSeeds() {
 	if (!selectedTournamentId) {
 		showAlert('Please select a tournament first', 'error');
+		return;
+	}
+
+	// Block if tournament is in progress
+	if (currentTournament && currentTournament.state === 'underway') {
+		showAlert('Cannot randomize seeds while tournament is in progress', 'error');
 		return;
 	}
 
